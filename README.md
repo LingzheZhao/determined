@@ -1,5 +1,11 @@
 <p align="center"><img width="400" src="determined-logo.svg" alt="Determined AI Logo"></p>
 
+> **Community fork:** Development in `LingzheZhao/determined` focuses on maintaining
+> research clusters, starting with the agent/Docker path. See the
+> [maintenance plan](docs/maintenance/README.md) for milestones, validation status,
+> and contribution guidance. The installation commands below describe the upstream
+> distribution; a separately validated fork release is not available yet.
+
 Determined is an all-in-one deep learning platform, compatible with PyTorch and TensorFlow.
 
 It takes care of:

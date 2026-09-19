@@ -15,7 +15,7 @@ import urllib3
 
 import determined as det
 from determined import constants, gpu
-from determined.common import api
+from determined.common import api, tarfile_utils
 from determined.common.api import authentication, bindings, certs
 
 logger = logging.getLogger("determined")
@@ -32,12 +32,8 @@ def download_context_directory(sess: api.Session, info: det.ClusterInfo) -> None
 
     tgz = base64.b64decode(b64_tgz)
     with tarfile.open(fileobj=io.BytesIO(tgz), mode="r:gz") as context_directory:
-        # Ensure all members of the tarball resolve to subdirectories.
-        for path in context_directory.getnames():
-            if os.path.relpath(path).startswith("../"):
-                raise ValueError(f"'{path}' in tarball would expand to a parent directory")
-        context_directory.extractall(path=constants.MANAGED_TRAINING_MODEL_COPY)
-        context_directory.extractall(path=".")
+        tarfile_utils.safe_extractall(context_directory, constants.MANAGED_TRAINING_MODEL_COPY)
+        tarfile_utils.safe_extractall(context_directory, ".")
 
     # pre-0.18.3 code wrote tensorboard stuff under /tmp/tensorboard
     if is_trial(info):
