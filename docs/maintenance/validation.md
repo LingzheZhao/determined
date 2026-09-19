@@ -40,8 +40,12 @@ not claimed.
 
 The harness wheel also built locally with `VERSION=0.38.1+fork.local` and
 `pip wheel --no-deps --no-build-isolation ./harness`. Its contents include the new
-extractor and both updated download modules. This temporary local wheel is a
-packaging check, not a release artifact or a full independent distribution.
+extractor and both updated download modules. Installing that wheel into an isolated
+directory and running the same suite with `--import-mode=importlib` also passed all
+27 tests; the module paths confirmed that the installed wheel was exercised. The
+workflow uses this import mode and checks the import origin explicitly. This
+temporary local wheel is a packaging check, not a release artifact or a full
+independent distribution.
 
 Go formatting and `git diff --check` passed. The focused local Go authorization
 test did **not** complete: the cold dependency download was stopped after about

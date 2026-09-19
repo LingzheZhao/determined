@@ -139,10 +139,20 @@ jobs:
       - name: Install focused test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install 'pytest>=6.0.1,<8' 'responses!=0.23.2' harness/dist/*.whl
-      - name: Run archive safety tests
+          python -m pip install 'pytest>=6.0.1,<8' 'responses!=0.23.2'
+          python -m pip install \
+            --target "$RUNNER_TEMP/determined-wheel" \
+            harness/dist/*.whl
+      - name: Verify tests import the wheel
+        env:
+          PYTHONPATH: ${{ runner.temp }}/determined-wheel
         run: |
-          python -m pytest -q \
+          python -c 'import os, pathlib, determined; target = (pathlib.Path(os.environ["RUNNER_TEMP"]) / "determined-wheel").resolve(); imported = pathlib.Path(determined.__file__).resolve(); assert target in imported.parents, f"expected {target}, imported {imported}"; print(f"testing {imported}")'
+      - name: Run archive safety tests
+        env:
+          PYTHONPATH: ${{ runner.temp }}/determined-wheel
+        run: |
+          python -m pytest -q --import-mode=importlib \
             harness/tests/common/test_tarfile_utils.py \
             harness/tests/checkpoints/test_checkpoint.py \
             harness/tests/exec/test_prep_container.py
