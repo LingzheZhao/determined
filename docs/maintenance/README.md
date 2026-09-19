@@ -65,8 +65,10 @@ running jobs must state their effects on task identity, ownership, and reservati
 
 ## Current work queue
 
-1. Close the two targeted security regressions and validate their public call paths.
-2. Run the fork baseline workflow and resolve real failures; record results here.
+1. Completed in the baseline branch: targeted task-control and archive security
+   fixes, public-path regressions, and a successful fork baseline workflow. See
+   [validation.md](validation.md) for the tested revision and CI evidence.
+2. Keep those checks green while completing the remaining M0 work below.
 3. Produce the complete M0 artifact set without upstream private services. Use an
    explicit fork version and image destination; do not reuse upstream publish jobs
    with their default organization or claim that the upstream PyPI package is this fork.

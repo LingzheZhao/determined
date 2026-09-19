@@ -54,19 +54,41 @@ or test pass is claimed. PostgreSQL-backed tests also require generated mocks an
 a running database; the fork workflow provides both.
 
 Actionlint 1.7.7 passed for the three changed workflows. YAML parsing passed as
-well, and maintenance-document links resolve locally. A successful remote CI run
-has not yet been recorded.
+well, and maintenance-document links resolve locally.
+
+## Remote CI
+
+The final implementation/workflow commit is
+`ffa1dd9dc53e5df4defce10fa89393daa22ca28a`. Its
+[Fork baseline run](https://github.com/LingzheZhao/determined/actions/runs/35467726024)
+completed successfully:
+
+- Master and agent Linux builds, with an explicit fork version and checksums.
+- Basic task-control policy unit tests and existing Go archive tests.
+- Eight selected PostgreSQL-backed task authorization/traversal tests with the
+  race detector, including root/descendant denial and exact-snapshot mutation.
+- Harness wheel build and candidate artifact upload.
+- Python 3.8 and 3.12 archive suites, including an assertion that the tested module
+  comes from the downloaded wheel and `--import-mode=importlib` to avoid source
+  checkout shadowing.
+
+The [initial implementation run](https://github.com/LingzheZhao/determined/actions/runs/35467384948)
+for `1131962fac093120f6ed1c28670fcc285a6602d5` also passed. Its downloaded wheel
+metadata was checked locally: version `0.38.1+fork.1131962fac09`, with the safe
+extractor included. Candidate artifacts are retained by these workflows for seven
+days. The binaries are uploaded inside a tarball to retain executable permissions.
+
+Subsequent documentation-only commits may use `[skip ci]`; the exact tested code
+revision and successful run above remain the evidence, rather than implying that
+an untested code change passed.
 
 ## Remaining release gates
 
-- A successful remote run of the new fork workflow, attached to an exact commit.
-- PostgreSQL-backed authorization regressions, including forbidden tree cascades.
-- Supported Python compatibility checks for extraction and packaged call sites.
 - Complete independent artifact set: master/agent images, Python wheel, front-end
   static assets, deployment documentation, checksums and source manifest.
 - Real research workload regression and a rehearsed rollback on agent/Docker.
 - Fork version, registry/package destinations, and production compatibility matrix.
 
 The online pool lifecycle and control-plane fault-injection matrices belong to M1
-and M2. Neither is validated by this baseline. No GitHub Actions run, production
-deployment, or published fork release is implied by adding a workflow file.
+and M2. Neither is validated by this baseline. Successful CI does not constitute a
+production deployment or a published fork release.
