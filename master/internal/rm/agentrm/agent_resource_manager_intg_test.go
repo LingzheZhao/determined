@@ -13,11 +13,24 @@ import (
 	"github.com/determined-ai/determined/master/internal/config"
 	"github.com/determined-ai/determined/master/internal/sproto"
 	"github.com/determined-ai/determined/master/internal/user"
-	"github.com/determined-ai/determined/master/pkg/syncx/queue"
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
 	"github.com/determined-ai/determined/proto/pkg/jobv1"
 	"github.com/determined-ai/determined/proto/pkg/resourcepoolv1"
 )
+
+func readyTestPoolRegistry(
+	t *testing.T,
+	configs []config.ResourcePoolConfig,
+	pools map[string]*resourcePool,
+) *poolRegistry {
+	t.Helper()
+	registry, err := newPoolRegistry(configs)
+	require.NoError(t, err)
+	for _, cfg := range configs {
+		require.NoError(t, registry.publishReady(cfg.PoolName, pools[cfg.PoolName]))
+	}
+	return registry
+}
 
 func TestAgentRMRoutingTaskRelatedMessages(t *testing.T) {
 	// This is required only due to the resource manager needing
@@ -51,14 +64,13 @@ func TestAgentRMRoutingTaskRelatedMessages(t *testing.T) {
 		t, nil, &config.ResourcePoolConfig{PoolName: "gpu-pool"},
 		nil, nil, []*MockAgent{{ID: "agent2", Slots: 4}},
 	)
+	pools := map[string]*resourcePool{
+		"cpu-pool": cpuPoolRef,
+		"gpu-pool": gpuPoolRef,
+	}
 	agentRM := &ResourceManager{
-		config:      cfg.ResourceManagers()[0].ResourceManager.AgentRM,
-		poolsConfig: cfg.ResourceManagers()[0].ResourcePools,
-		pools: map[string]*resourcePool{
-			"cpu-pool": cpuPoolRef,
-			"gpu-pool": gpuPoolRef,
-		},
-		agentUpdates: queue.New[agentUpdatedEvent](),
+		config:   cfg.ResourceManagers()[0].ResourceManager.AgentRM,
+		registry: readyTestPoolRegistry(t, cfg.ResourceManagers()[0].ResourcePools, pools),
 	}
 
 	// Check if there are tasks.
@@ -194,14 +206,13 @@ func TestGetResourcePools(t *testing.T) {
 		t, nil, &config.ResourcePoolConfig{PoolName: "gpu-pool"},
 		nil, nil, []*MockAgent{{ID: "agent2", Slots: 4}},
 	)
+	pools := map[string]*resourcePool{
+		"cpu-pool": cpuPoolRef,
+		"gpu-pool": gpuPoolRef,
+	}
 	agentRM := &ResourceManager{
-		config:      cfg.ResourceManagers()[0].ResourceManager.AgentRM,
-		poolsConfig: cfg.ResourceManagers()[0].ResourcePools,
-		pools: map[string]*resourcePool{
-			"cpu-pool": cpuPoolRef,
-			"gpu-pool": gpuPoolRef,
-		},
-		agentUpdates: queue.New[agentUpdatedEvent](),
+		config:   cfg.ResourceManagers()[0].ResourceManager.AgentRM,
+		registry: readyTestPoolRegistry(t, cfg.ResourceManagers()[0].ResourcePools, pools),
 	}
 
 	resp, err := agentRM.GetResourcePools()
@@ -244,17 +255,17 @@ func TestGetResourcePools(t *testing.T) {
 }
 
 func TestGetJobQueueStatsRequest(t *testing.T) {
+	configs := []config.ResourcePoolConfig{{PoolName: "pool1"}, {PoolName: "pool2"}}
+	pools := map[string]*resourcePool{
+		"pool1": setupResourcePool(
+			t, nil, &configs[0], nil, nil, []*MockAgent{{ID: "agent1", Slots: 0}},
+		),
+		"pool2": setupResourcePool(
+			t, nil, &configs[1], nil, nil, []*MockAgent{{ID: "agent2", Slots: 0}},
+		),
+	}
 	agentRM := &ResourceManager{
-		pools: map[string]*resourcePool{
-			"pool1": setupResourcePool(
-				t, nil, &config.ResourcePoolConfig{PoolName: "pool1"},
-				nil, nil, []*MockAgent{{ID: "agent1", Slots: 0}},
-			),
-			"pool2": setupResourcePool(
-				t, nil, &config.ResourcePoolConfig{PoolName: "pool2"},
-				nil, nil, []*MockAgent{{ID: "agent2", Slots: 0}},
-			),
-		},
+		registry: readyTestPoolRegistry(t, configs, pools),
 	}
 
 	cases := []struct {

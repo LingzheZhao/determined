@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/determined-ai/determined/master/internal/config"
+	"github.com/determined-ai/determined/master/internal/rm"
 	"github.com/determined-ai/determined/master/internal/workspace"
 	"github.com/determined-ai/determined/proto/pkg/jobv1"
 )
@@ -38,7 +39,7 @@ func (e *internalExperiment) ToV1Job() (*jobv1.Job, error) {
 	}
 
 	j.ResourcePool = e.activeConfig.Resources().ResourcePool()
-	j.IsPreemptible = config.ReadRMPreemptionStatus(j.ResourcePool)
+	j.IsPreemptible = rm.ReadRMPreemptionStatus(e.rm, j.ResourcePool)
 	j.Priority = int32(config.ReadPriority(j.ResourcePool, &e.activeConfig))
 	j.Weight = config.ReadWeight(j.ResourcePool, &e.activeConfig)
 

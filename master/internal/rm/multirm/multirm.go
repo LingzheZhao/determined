@@ -7,6 +7,7 @@ import (
 	"golang.org/x/exp/maps"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/determined-ai/determined/master/internal/config"
 	"github.com/determined-ai/determined/master/internal/rm"
 	"github.com/determined-ai/determined/master/internal/rm/rmerrors"
 	"github.com/determined-ai/determined/master/internal/sproto"
@@ -557,4 +558,16 @@ func (m *MultiRMRouter) SmallerValueIsHigherPriority() (bool, error) {
 		set = true
 	}
 	return smallerIsHigher, nil
+}
+
+// ResourcePoolSchedulerConfig looks up configuration without taking scheduler or job locks.
+func (m *MultiRMRouter) ResourcePoolSchedulerConfig(poolName string) (*config.SchedulerConfig, bool) {
+	for _, manager := range m.rms {
+		if provider, ok := manager.(rm.ResourcePoolSchedulerConfigProvider); ok {
+			if scheduler, exists := provider.ResourcePoolSchedulerConfig(poolName); exists {
+				return scheduler, true
+			}
+		}
+	}
+	return nil, false
 }

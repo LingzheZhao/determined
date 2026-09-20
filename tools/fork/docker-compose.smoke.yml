@@ -53,6 +53,25 @@ services:
     networks:
       - cluster
 
+  dynamic-agent:
+    profiles: ["dynamic-pool"]
+    image: ${FORK_AGENT_IMAGE:?set FORK_AGENT_IMAGE}
+    depends_on:
+      determined-master:
+        condition: service_started
+    environment:
+      DET_AGENT_ID: fork-dynamic-agent
+      DET_CONTAINER_MASTER_HOST: determined-master
+      DET_CONTAINER_MASTER_PORT: 8080
+      DET_MASTER_HOST: determined-master
+      DET_MASTER_PORT: 8080
+      DET_RESOURCE_POOL: fork-smoke-dynamic
+      DET_SLOT_TYPE: cpu
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - cluster
+
 networks:
   cluster:
     name: determined-fork-smoke

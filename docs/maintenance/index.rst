@@ -7,4 +7,6 @@
 
    README
    distribution
+   dynamic-pools
+   online-resource-pools
    validation

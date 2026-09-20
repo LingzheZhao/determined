@@ -1,23 +1,69 @@
-# Local maintenance checks
+# Local fork checks
 
-Run `tools/fork/check.sh` from the checkout for one fast archive-safety regression.
-Use `tools/fork/check.sh security` after changes to task-context or checkpoint
-extraction to run the focused Python safety suite. Set `PYTHON=/path/to/venv/bin/python`
-to select a prepared interpreter with the repository dependencies, pytest, and responses.
-The script does not install packages, start services, or trigger GitHub Actions.
-Missing tests and required packages fail explicitly.
+Use `tools/fork/check.sh` during development instead of running the repository's full test
+matrix. The script uses tools already installed on the workstation. It does not install or
+upgrade packages, build release binaries, start containers, or trigger GitHub Actions.
 
-For task-control authorization changes, the smallest Go check is:
+The default check is intentionally small:
+
+```bash
+tools/fork/check.sh
+```
+
+It runs one checkpoint archive-safety regression and, when the dynamic resource-pool CLI is
+present, its six CLI tests. It disables pytest's cache and Python bytecode output so the run does
+not leave test artifacts in the checkout. On a maintenance-only branch without the pool CLI, the
+archive regression still runs.
+
+Run additional tests only for the area being changed:
+
+```bash
+# Run the complete focused Python archive-safety suite.
+tools/fork/check.sh security
+
+# Run registry, scheduler, and dynamic-pool unit tests with Go's race detector.
+tools/fork/check.sh pools
+
+# Run dynamic-pool persistence and restart tests against an existing test database.
+DET_INTEGRATION_POSTGRES_URL='postgres://postgres:postgres@localhost:5432/determined?sslmode=disable' \
+  tools/fork/check.sh integration-pools
+```
+
+`pools` and `integration-pools` require the dynamic-pool source files, so they fail with a clear
+message on a maintenance-only checkout. The integration mode never starts PostgreSQL or Docker;
+the database URL must point to a disposable database that is already running.
+
+The Go modes expect the repository's generated mocks and development dependencies to be ready.
+Generate mocks with an existing compatible `mockery` installation when the checkout does not
+already contain them:
+
+```bash
+make -C master mocks
+```
+
+The script does not install Python packages or Go tools. A Go command may still download modules
+on a cold module cache according to the selected toolchain's normal `GOPROXY` settings.
+
+For a maintenance-only authorization or archive change, these smaller Go checks can be run
+directly without enabling the dynamic-pool modes:
 
 ```bash
 go test ./master/internal/command -run '^TestCanControlGenericTaskBasic$' -count=1
+go test ./master/pkg/archive ./master/pkg/checkpoints/archive
 ```
 
-Go checks require the repository's generated mocks and module cache; prepare these
-once using the existing development instructions. A cold Go cache may download modules.
-Use `GOPROXY=off` when downloads are unwanted. PostgreSQL-backed authorization tests
-are opt-in and require an existing disposable test database. Use the existing
-formatters only for the files being edited instead of running every repository check.
+Set `PYTHON` or `GO` to select an existing toolchain. For example:
 
-Keep the security regressions that protect shipped behavior. Remove temporary
-probes and redundant development checks when they no longer add useful coverage.
+```bash
+PYTHON=/path/to/venv/bin/python tools/fork/check.sh quick
+GO=/path/to/go/bin/go tools/fork/check.sh pools
+```
+
+Missing interpreters, Python packages, race support, source files, or database settings are
+reported as errors. The script never silently skips an applicable test. Use the repository's
+existing checks separately when broader formatting or lint coverage is needed:
+
+```bash
+make -C harness check
+make -C master check
+```
