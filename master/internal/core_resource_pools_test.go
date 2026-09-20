@@ -2,7 +2,6 @@ package internal
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -86,7 +85,7 @@ func TestDynamicPoolRouteExplicitlyAuthenticates(t *testing.T) {
 	})
 	err := handler(ctx)
 	var httpErr *echo.HTTPError
-	require.True(t, errors.As(err, &httpErr))
+	require.ErrorAs(t, err, &httpErr)
 	require.Equal(t, http.StatusUnauthorized, httpErr.Code)
 	require.False(t, called)
 }

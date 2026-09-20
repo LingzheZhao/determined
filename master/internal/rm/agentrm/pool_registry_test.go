@@ -13,21 +13,27 @@ import (
 	"github.com/determined-ai/determined/master/pkg/model"
 )
 
+const poolRegistryTestPoolName = "test-pool"
+
 func TestPoolRegistryRejectsDuplicatesWithoutReplacing(t *testing.T) {
 	registry, err := newPoolRegistry([]config.ResourcePoolConfig{
-		{PoolName: "pool", Description: "original"},
+		{PoolName: poolRegistryTestPoolName, Description: "original"},
 	})
 	require.NoError(t, err)
 
-	err = registry.addDesired(config.ResourcePoolConfig{PoolName: "pool", Description: "replacement"})
-	require.ErrorContains(t, err, "resource pool pool already exists")
+	err = registry.addDesired(config.ResourcePoolConfig{
+		PoolName: poolRegistryTestPoolName, Description: "replacement",
+	})
+	require.ErrorContains(t, err, "resource pool test-pool already exists")
 
-	cfg, ok := registry.desiredConfig("pool")
+	cfg, ok := registry.desiredConfig(poolRegistryTestPoolName)
 	require.True(t, ok)
 	require.Equal(t, "original", cfg.Description)
 
-	_, err = newPoolRegistry([]config.ResourcePoolConfig{{PoolName: "pool"}, {PoolName: "pool"}})
-	require.ErrorContains(t, err, "resource pool pool already exists")
+	_, err = newPoolRegistry([]config.ResourcePoolConfig{
+		{PoolName: poolRegistryTestPoolName}, {PoolName: poolRegistryTestPoolName},
+	})
+	require.ErrorContains(t, err, "resource pool test-pool already exists")
 }
 
 func TestPoolRegistrySnapshotsAreOrderedAndIsolated(t *testing.T) {
@@ -86,9 +92,11 @@ func TestPoolRegistrySnapshotsAreOrderedAndIsolated(t *testing.T) {
 }
 
 func TestPoolRegistryConcurrentLookupAndPublication(t *testing.T) {
-	registry, err := newPoolRegistry([]config.ResourcePoolConfig{{PoolName: "pool"}})
+	registry, err := newPoolRegistry([]config.ResourcePoolConfig{{PoolName: poolRegistryTestPoolName}})
 	require.NoError(t, err)
-	runtimePool := &resourcePool{config: &config.ResourcePoolConfig{PoolName: "pool"}}
+	runtimePool := &resourcePool{
+		config: &config.ResourcePoolConfig{PoolName: poolRegistryTestPoolName},
+	}
 
 	const readers = 16
 	const iterations = 1000
@@ -101,16 +109,17 @@ func TestPoolRegistryConcurrentLookupAndPublication(t *testing.T) {
 			defer wg.Done()
 			<-start
 			for j := 0; j < iterations; j++ {
-				cfg, ok := registry.desiredConfig("pool")
-				if !ok || cfg.PoolName != "pool" {
+				cfg, ok := registry.desiredConfig(poolRegistryTestPoolName)
+				if !ok || cfg.PoolName != poolRegistryTestPoolName {
 					errs <- fmt.Errorf("desired lookup failed")
 					return
 				}
-				if pool, ready := registry.readyPool("pool"); ready && pool != runtimePool {
+				if pool, ready := registry.readyPool(poolRegistryTestPoolName); ready && pool != runtimePool {
 					errs <- fmt.Errorf("ready lookup changed runtime identity")
 					return
 				}
-				if cfg, ready := registry.readyConfig("pool"); ready && cfg.PoolName != "pool" {
+				if cfg, ready := registry.readyConfig(poolRegistryTestPoolName); ready &&
+					cfg.PoolName != poolRegistryTestPoolName {
 					errs <- fmt.Errorf("ready config lookup returned wrong pool")
 					return
 				}
@@ -126,7 +135,7 @@ func TestPoolRegistryConcurrentLookupAndPublication(t *testing.T) {
 	}
 
 	close(start)
-	require.NoError(t, registry.publishReady("pool", runtimePool))
+	require.NoError(t, registry.publishReady(poolRegistryTestPoolName, runtimePool))
 	wg.Wait()
 	close(errs)
 	for err := range errs {

@@ -22,6 +22,8 @@ import (
 
 const maxDynamicPoolRequestBytes = 1 << 20
 
+const redactedDynamicPoolCredential = "********"
+
 var dynamicPoolRequestUser = func(
 	request *http.Request,
 ) (*model.User, *model.UserSession, error) {
@@ -338,16 +340,16 @@ func printableDynamicResourcePool(record db.DynamicResourcePool) db.DynamicResou
 	if cfg.TaskContainerDefaults != nil && cfg.TaskContainerDefaults.RegistryAuth != nil {
 		auth := *cfg.TaskContainerDefaults.RegistryAuth
 		if auth.Password != "" {
-			auth.Password = "********"
+			auth.Password = redactedDynamicPoolCredential
 		}
 		if auth.Auth != "" {
-			auth.Auth = "********"
+			auth.Auth = redactedDynamicPoolCredential
 		}
 		if auth.IdentityToken != "" {
-			auth.IdentityToken = "********"
+			auth.IdentityToken = redactedDynamicPoolCredential
 		}
 		if auth.RegistryToken != "" {
-			auth.RegistryToken = "********"
+			auth.RegistryToken = redactedDynamicPoolCredential
 		}
 		cfg.TaskContainerDefaults.RegistryAuth = &auth
 	}

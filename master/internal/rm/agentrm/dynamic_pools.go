@@ -163,18 +163,8 @@ func (a *ResourceManager) CreateDynamicResourcePool(
 		return record, created, err
 	}
 
-	record, initErr := a.initializeDynamicResourcePool(ctx, record, cfg)
-	if errors.Is(initErr, ErrDynamicResourcePoolPersistence) {
-		return record, true, initErr
-	}
-	if initErr != nil && record.State != db.DynamicResourcePoolFailed {
-		return record, true, initErr
-	}
-	if initErr != nil {
-		// Runtime initialization failures are durable operation results, not transport failures.
-		return record, true, nil
-	}
-	return record, true, nil
+	record, err = a.initializeDynamicResourcePool(ctx, record, cfg)
+	return record, true, err
 }
 
 func validateDynamicPoolIdempotencyKey(idempotencyKey string) error {
@@ -231,7 +221,7 @@ func (a *ResourceManager) initializeDynamicResourcePool(
 			if err == nil {
 				err = fmt.Errorf("desired runtime config differs from durable config")
 			}
-			return a.failDynamicResourcePool(ctx, record, err)
+			return a.failDynamicResourcePool(ctx, record, err.Error())
 		}
 		if _, ready := a.registry.readyPool(cfg.PoolName); ready {
 			return setDynamicResourcePoolState(
@@ -239,12 +229,12 @@ func (a *ResourceManager) initializeDynamicResourcePool(
 			)
 		}
 	} else if err := a.registry.addDynamicDesired(cfg); err != nil {
-		return a.failDynamicResourcePool(ctx, record, err)
+		return a.failDynamicResourcePool(ctx, record, err.Error())
 	}
 
 	pool, err := a.createResourcePool(a.db, cfg, a.cert)
 	if err != nil {
-		return a.failDynamicResourcePool(ctx, record, err)
+		return a.failDynamicResourcePool(ctx, record, err.Error())
 	}
 	persistenceCtx, cancel := dynamicPoolPersistenceContext(ctx)
 	ready, err := setDynamicResourcePoolState(
@@ -253,7 +243,7 @@ func (a *ResourceManager) initializeDynamicResourcePool(
 	cancel()
 	if err != nil {
 		stopPreparedDynamicResourcePool(pool)
-		failed, failErr := a.failDynamicResourcePool(ctx, record, err)
+		failed, failErr := a.failDynamicResourcePool(ctx, record, err.Error())
 		if failErr != nil && failed.State != db.DynamicResourcePoolFailed {
 			return failed, fmt.Errorf("%w: Ready write failed: %v; Failed write failed: %v",
 				ErrDynamicResourcePoolPersistence, err, failErr)
@@ -263,27 +253,27 @@ func (a *ResourceManager) initializeDynamicResourcePool(
 	}
 	if err = a.registry.publishReady(cfg.PoolName, pool); err != nil {
 		stopPreparedDynamicResourcePool(pool)
-		return a.failDynamicResourcePool(ctx, ready, err)
+		return a.failDynamicResourcePool(ctx, ready, err.Error())
 	}
 	return ready, nil
 }
 
 func (a *ResourceManager) failDynamicResourcePool(
-	ctx context.Context, record db.DynamicResourcePool, initErr error,
+	ctx context.Context, record db.DynamicResourcePool, failureMessage string,
 ) (db.DynamicResourcePool, error) {
-	msg := initErr.Error()
 	persistenceCtx, cancel := dynamicPoolPersistenceContext(ctx)
 	defer cancel()
 	failed, err := setDynamicResourcePoolState(
-		a.db, persistenceCtx, record.PoolName, db.DynamicResourcePoolFailed, &msg,
+		a.db, persistenceCtx, record.PoolName, db.DynamicResourcePoolFailed, &failureMessage,
 	)
 	if err != nil {
 		return record, fmt.Errorf(
 			"%w: recording initialization failure (%v): %v",
-			ErrDynamicResourcePoolPersistence, initErr, err,
+			ErrDynamicResourcePoolPersistence, failureMessage, err,
 		)
 	}
-	return failed, initErr
+	// Runtime initialization failures are durable operation results, not transport failures.
+	return failed, nil
 }
 
 // IsDynamicResourcePoolReady reports whether a runtime pool has been atomically published. It is

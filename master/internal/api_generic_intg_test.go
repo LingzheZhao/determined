@@ -24,8 +24,8 @@ import (
 )
 
 func addGenericTaskForAuthZTest(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	owner model.User,
 	workspaceID int,
 	parentID *model.TaskID,
@@ -190,7 +190,7 @@ func TestGenericTaskMutationsRequireControlAuthorization(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			api, authZ, curUser, ctx := setupNTSCAuthzTest(t)
-			taskID := addGenericTaskForAuthZTest(t, ctx, curUser, 11, nil, test.state)
+			taskID := addGenericTaskForAuthZTest(ctx, t, curUser, 11, nil, test.state)
 
 			authZ.On("CanGetNSC", mock.Anything, curUser, model.AccessScopeID(11)).
 				Return(nil).Once()
@@ -209,12 +209,12 @@ func TestGenericTaskMutationsRequireControlAuthorization(t *testing.T) {
 
 func TestKillGenericTaskAuthorizesRootTreeBeforeMutation(t *testing.T) {
 	api, authZ, curUser, ctx := setupNTSCAuthzTest(t)
-	rootID := addGenericTaskForAuthZTest(t, ctx, curUser, 11, nil, model.TaskStateActive)
+	rootID := addGenericTaskForAuthZTest(ctx, t, curUser, 11, nil, model.TaskStateActive)
 	requestedID := addGenericTaskForAuthZTest(
-		t, ctx, curUser, 11, &rootID, model.TaskStateActive,
+		ctx, t, curUser, 11, &rootID, model.TaskStateActive,
 	)
 	otherWorkspaceChildID := addGenericTaskForAuthZTest(
-		t, ctx, curUser, 12, &rootID, model.TaskStateActive,
+		ctx, t, curUser, 12, &rootID, model.TaskStateActive,
 	)
 
 	authZ.On("CanGetNSC", mock.Anything, curUser, mock.Anything).Return(nil)
@@ -261,9 +261,9 @@ func TestPauseAndUnpauseAuthorizeDescendantsBeforeMutation(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			api, authZ, curUser, ctx := setupNTSCAuthzTest(t)
-			rootID := addGenericTaskForAuthZTest(t, ctx, curUser, 11, nil, test.state)
+			rootID := addGenericTaskForAuthZTest(ctx, t, curUser, 11, nil, test.state)
 			childID := addGenericTaskForAuthZTest(
-				t, ctx, curUser, 12, &rootID, test.state,
+				ctx, t, curUser, 12, &rootID, test.state,
 			)
 
 			authZ.On("CanGetNSC", mock.Anything, curUser, mock.Anything).Return(nil)
@@ -285,7 +285,7 @@ func TestPauseAndUnpauseAuthorizeDescendantsBeforeMutation(t *testing.T) {
 
 func TestGenericTaskMutationHidesTaskWithoutViewAuthorization(t *testing.T) {
 	api, authZ, curUser, ctx := setupNTSCAuthzTest(t)
-	taskID := addGenericTaskForAuthZTest(t, ctx, curUser, 11, nil, model.TaskStateActive)
+	taskID := addGenericTaskForAuthZTest(ctx, t, curUser, 11, nil, model.TaskStateActive)
 	authZ.On("CanGetNSC", mock.Anything, curUser, model.AccessScopeID(11)).
 		Return(authz2.PermissionDeniedError{}).Once()
 
