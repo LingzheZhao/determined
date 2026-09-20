@@ -1,9 +1,10 @@
-# Baseline validation record
+# Fork maintenance validation record
 
 Date: 2026-09-20. Source baseline: `c1e9c6d7b`.
 Development branch: `codex/fork-maintenance-baseline`.
 
-This record separates local evidence from the checks required before releasing M0.
+This record separates local evidence from the checks required before releasing M0
+and accepting the first M1 online-pool lifecycle.
 
 ## Environment
 
@@ -56,7 +57,7 @@ a running database; the fork workflow provides both.
 Actionlint 1.7.7 passed for the three changed workflows. YAML parsing passed as
 well, and maintenance-document links resolve locally.
 
-## Remote CI
+## Original baseline CI
 
 The final implementation/workflow commit is
 `ffa1dd9dc53e5df4defce10fa89393daa22ca28a`. Its
@@ -81,6 +82,44 @@ days. The binaries are uploaded inside a tarball to retain executable permission
 Subsequent documentation-only commits may use `[skip ci]`; the exact tested code
 revision and successful run above remain the evidence, rather than implying that
 an untested code change passed.
+
+## Online-pool local validation
+
+The installed-wheel check was repeated after adding the pool CLI. The wheel was
+built with `VERSION=0.38.1+fork.poolcheck` and installed into a separate temporary
+directory. Explicit import checks confirmed both `determined` and
+`determined.cli.resource_pool` came from that directory. With the installed wheel
+first on `PYTHONPATH` and the harness test helpers second, the combined archive
+and CLI suite passed **33 tests** on Python 3.12.11. The CLI tests exercise actual
+argument parsing and mocked HTTP requests, including YAML/JSON loading, cluster
+selection, required idempotency keys, status output, and a nonzero exit on Failed.
+
+Black and isort checks passed for the two CLI files. Actionlint passed for both
+fork workflows. The local Docker daemon remains unavailable; image builds and
+agent lifecycle checks run in the disposable GitHub Actions environment. Local
+Go dependency downloads were stopped without a completed local Go test result;
+remote compile, race, and PostgreSQL results are recorded separately.
+
+## Online-pool baseline CI
+
+Commit `c495ec290bc0443239de58f61d8eeac03563831f` passed the
+[Fork baseline workflow](https://github.com/LingzheZhao/determined/actions/runs/35501677285).
+It built master, agent, and the wheel and passed:
+
+- Race-enabled registry publication/copy isolation, live scheduler defaults, and
+  frozen dynamic task defaults tests.
+- Strict input/persisted-config validation and real basic-authorization middleware
+  tests, including inactive administrators and non-admin denials.
+- A forced Ready-state write failure that stops the prepared runtime and leaves
+  the pool unpublished.
+- PostgreSQL idempotency, concurrent creation, restart recovery, schema-version
+  rejection, and YAML/database name-collision tests.
+- Existing agent routing/queue tests and the prior generic-task authorization suite.
+- All 33 installed-wheel archive/CLI tests on both Python 3.8 and 3.12.
+
+These results validate the implementation and database paths. The independently
+built images and real CPU-agent lifecycle have their own acceptance run; the
+baseline workflow alone does not prove that lifecycle or GPU task continuity.
 
 ## Remaining release gates
 
