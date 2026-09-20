@@ -192,6 +192,7 @@ jobs:
             --file tools/fork/Dockerfile.smoke-task \
             --tag "${FORK_TASK_IMAGE}" .
       - name: Run disposable CPU cluster smoke
+        timeout-minutes: 8
         env:
           FORK_SMOKE_DYNAMIC_POOLS: ${{ github.event_name == 'workflow_dispatch' && inputs.dynamic_pool_smoke == false && '0' || '1' }}
         run: tools/fork/smoke.sh

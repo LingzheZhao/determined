@@ -50,10 +50,28 @@ health_ready() {
         "${master_url}/api/v1/auth/login" >/dev/null
 }
 
-agent_count_at_least() {
-    expected=$1
-    det agent list --json 2>/dev/null | jq -e --argjson expected "${expected}" \
-        'length >= $expected' >/dev/null
+agent_ready_in_pool() {
+    agent_id=$1
+    pool_name=$2
+    det agent list --json 2>/dev/null \
+        | jq -e --arg agent_id "${agent_id}" --arg pool_name "${pool_name}" \
+            'any(.[]; .id == $agent_id and .enabled == true and .resource_pools == $pool_name)' \
+            >/dev/null
+}
+
+runtime_container_id_for() {
+    local determined_container_id=$1
+    local -a runtime_container_ids
+    mapfile -t runtime_container_ids < <(
+        docker ps --no-trunc \
+            --filter "label=ai.determined.container.id=${determined_container_id}" \
+            --format '{{.ID}}'
+    )
+    if ((${#runtime_container_ids[@]} != 1)); then
+        echo "expected one running Docker container for Determined container ${determined_container_id}" >&2
+        return 1
+    fi
+    printf '%s\n' "${runtime_container_ids[0]}"
 }
 
 command_state_is() {
@@ -90,7 +108,8 @@ det user whoami >/dev/null
 
 phase "Join the static CPU agent and run a command"
 "${compose[@]}" up --detach determined-agent
-wait_for "static agent join" agent_count_at_least 1
+wait_for "enabled static agent in default pool" \
+    agent_ready_in_pool fork-static-agent default
 
 static_output=$(det command run \
     --config "environment.image=${FORK_TASK_IMAGE}" \
@@ -119,6 +138,7 @@ non_admin_login=$(curl --fail --silent --show-error \
     "${master_url}/api/v1/auth/login")
 non_admin_token=$(jq -er '.token' <<<"${non_admin_login}")
 non_admin_header="Authorization: Bearer ${non_admin_token}"
+expect_http_status 403 -H "${non_admin_header}" "${dynamic_url}"
 expect_http_status 403 \
     -H "${non_admin_header}" -H 'Content-Type: application/json' \
     --data "${dynamic_body}" "${dynamic_url}"
@@ -142,8 +162,14 @@ active_id=$(det command run --detach \
 wait_for "original-pool task running" command_state_is "${active_id}" RUNNING
 wait_for "original-pool task initial progress" command_logs_contain \
     "${active_id}" fork-before-pool-create
-active_before=$(det command describe "${active_id}" --json)
-active_container_id=$(jq -er '.container.id' <<<"${active_before}")
+active_allocation_before=$(det task list --json \
+    | jq -er --arg task_id "${active_id}" \
+        'to_entries[] | select(.value.taskId == $task_id)')
+active_allocation_id=$(jq -er '.key' <<<"${active_allocation_before}")
+active_determined_container_id=$(jq -er '.value.resources[0].containerId' \
+    <<<"${active_allocation_before}")
+active_runtime_container_id=$(runtime_container_id_for "${active_determined_container_id}")
+[[ $(docker inspect --format '{{.State.Running}}' "${active_runtime_container_id}") == true ]]
 
 create_json=$(curl --fail --silent --show-error \
     -H "${auth_header}" -H 'Content-Type: application/json' \
@@ -152,13 +178,34 @@ create_json=$(curl --fail --silent --show-error \
 jq -e '.pool_name == "fork-smoke-dynamic" and .state == "Ready"' \
     <<<"${create_json}" >/dev/null
 
+# An exact replay must return the existing operation without duplicating the pool.
+expect_http_status 200 \
+    -H "${auth_header}" -H 'Content-Type: application/json' \
+    --data "${dynamic_body}" "${dynamic_url}"
+dynamic_list_json=$(det resource-pool list-dynamic --json)
+jq -e \
+    '[.resource_pools[] | select(.pool_name == "fork-smoke-dynamic" and .state == "Ready")] |
+    length == 1' <<<"${dynamic_list_json}" >/dev/null
+
 # Pool creation must not replace, move, or interrupt the active original-pool allocation.
 active_after=$(det command describe "${active_id}" --json)
+active_allocation_after=$(det task list --json \
+    | jq -er --arg task_id "${active_id}" \
+        'to_entries[] | select(.value.taskId == $task_id)')
 jq -e \
     --arg id "${active_id}" \
-    --arg container_id "${active_container_id}" \
-    '.id == $id and .resourcePool == "default" and .state == "RUNNING" and
-    .container.id == $container_id' <<<"${active_after}" >/dev/null
+    '.id == $id and .resourcePool == "default" and .state == "RUNNING"' \
+    <<<"${active_after}" >/dev/null
+jq -e \
+    --arg task_id "${active_id}" \
+    --arg allocation_id "${active_allocation_id}" \
+    --arg container_id "${active_determined_container_id}" \
+    '.key == $allocation_id and .value.taskId == $task_id and
+    .value.resourcePool == "default" and .value.resources[0].containerId == $container_id' \
+    <<<"${active_allocation_after}" >/dev/null
+active_runtime_container_after=$(runtime_container_id_for "${active_determined_container_id}")
+[[ ${active_runtime_container_after} == "${active_runtime_container_id}" ]]
+[[ $(docker inspect --format '{{.State.Running}}' "${active_runtime_container_after}") == true ]]
 curl --fail --silent --show-error -H "${auth_header}" \
     "${dynamic_url}" \
     | jq -e '.resource_pools[] | select(.pool_name == "fork-smoke-dynamic" and .state == "Ready")' \
@@ -169,7 +216,8 @@ wait_for "original-pool task continued progress" command_logs_contain \
 
 phase "Join the dynamic-pool CPU agent and run a command"
 "${compose[@]}" --profile dynamic-pool up --detach dynamic-agent
-wait_for "dynamic-pool agent join" agent_count_at_least 2
+wait_for "enabled dynamic agent in fork-smoke-dynamic pool" \
+    agent_ready_in_pool fork-dynamic-agent fork-smoke-dynamic
 
 before_restart_output=$(det command run \
     --config "environment.image=${FORK_TASK_IMAGE}" \
@@ -182,7 +230,10 @@ grep -q 'fork-dynamic-before-restart-ok' <<<"${before_restart_output}"
 phase "Restart master and verify recovered dynamic-pool work"
 "${compose[@]}" restart determined-master
 wait_for "master health after restart" health_ready
-wait_for "agents after master restart" agent_count_at_least 2
+wait_for "enabled static agent after master restart" \
+    agent_ready_in_pool fork-static-agent default
+wait_for "enabled dynamic agent after master restart" \
+    agent_ready_in_pool fork-dynamic-agent fork-smoke-dynamic
 login_json=$(curl --fail --silent --show-error \
     -H 'Content-Type: application/json' \
     --data '{"username":"admin","password":"fork-smoke-password","isHashed":false}' \
