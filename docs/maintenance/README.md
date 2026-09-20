@@ -20,9 +20,11 @@ claims about upstream funding or support are not release guarantees for this for
 | M3: research jobs | Hardware constraints, launch preflight, isolated script environment | Explain unsatisfied constraints; verify GPU/CPU/memory/mount requirements and unmodified training environments |
 | M4: batch experiments | Idempotent submission and explicit checkpoint dependencies | Repeated submissions do not duplicate jobs; retries retain attempt history; evaluation pins immutable artifacts |
 
-M0 is in progress. M1–M4 describe planned behavior, not capabilities shipped by this
-branch. No production upgrade should be inferred from passing unit tests alone.
-The [online pool design](online-resource-pools.md) splits M1 into reviewable changes.
+M0 distribution builds and M1 append-only pool management are implemented on this
+development branch and are undergoing integration acceptance. M2–M4 remain planned.
+The [distribution guide](distribution.md) describes candidate artifacts; the
+[dynamic pool guide](dynamic-pools.md) documents the implemented management API.
+The [online pool design](online-resource-pools.md) retains the full acceptance matrix.
 Record actual checks and remaining gates in [validation.md](validation.md).
 
 ## Baseline behavior changes
@@ -68,14 +70,17 @@ running jobs must state their effects on task identity, ownership, and reservati
 1. Completed in the baseline branch: targeted task-control and archive security
    fixes, public-path regressions, and a successful fork baseline workflow. See
    [validation.md](validation.md) for the tested revision and CI evidence.
-2. Keep those checks green while completing the remaining M0 work below.
-3. Produce the complete M0 artifact set without upstream private services. Use an
-   explicit fork version and image destination; do not reuse upstream publish jobs
-   with their default organization or claim that the upstream PyPI package is this fork.
+2. Validate the complete M0 artifact pipeline: binaries, wheel, UI, HTML docs,
+   loadable master/agent images, source manifest, and checksums. Keep the baseline
+   security checks green on the same source revision.
+3. Validate M1 creation, idempotency, authorization, failed initialization, restart
+   recovery, and preservation of existing pool runtime objects. Include a real
+   CPU agent lifecycle, then exercise the intended GPU research environment.
 4. Run an existing research workload on a disposable agent/Docker cluster; retain
    configuration, image digest, checkpoint, task identity, and before/after results.
-5. Start M1 with a registry refactor that preserves behavior, followed by durable
-   configuration and startup recovery, then the create/status API and end-to-end tests.
+5. Once those gates pass, scope M2 around a measured control-plane outage window
+   and resource reconciliation. Do not infer long-running training continuity from
+   the CPU pool lifecycle smoke.
 
 ## Release and compatibility policy
 

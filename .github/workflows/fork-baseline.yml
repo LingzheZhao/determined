@@ -79,7 +79,7 @@ jobs:
             -run '^(TestLivePoolSchedulerDefaults|TestLivePoolPreservesStaticManagerPriorityFallback|TestMissingLivePoolUsesStaticPriorityFallback|TestResourcePoolSchedulerConfigRouting)$' \
             -count=1
           go test -race ./master/internal/rm/agentrm \
-            -run '^(TestPoolRegistry.*|TestResourcePoolSchedulerConfigUsesReadyEffectiveConfig|TestTaskContainerDefaultsKeepsDynamicEffectiveValues|TestResourceManagerForwardMessage|TestNormalizeDynamicResourcePoolConfig.*|TestValidateDynamicPoolIdempotencyKey|TestDecodeStoredDynamicResourcePool)$' \
+            -run '^(TestPoolRegistry.*|TestResourcePoolSchedulerConfigUsesReadyEffectiveConfig|TestTaskContainerDefaultsKeepsDynamicEffectiveValues|TestResourceManagerForwardMessage|TestNormalizeDynamicResourcePoolConfig.*|TestValidateDynamicPoolIdempotencyKey|TestDecodeStoredDynamicResourcePool|TestDynamicPoolReadyWriteFailureDoesNotPublish)$' \
             -count=1
           go test -race ./master/internal \
             -run '^(TestValidateDynamicPoolRequestJSON|TestPrintableDynamicResourcePoolRedactsRegistryCredentials|TestDynamicPoolRoute.*)$' \
@@ -88,7 +88,7 @@ jobs:
         working-directory: master
         run: |
           go test -race -tags=integration ./internal/rm/agentrm \
-            -run '^(TestAgentRMRoutingTaskRelatedMessages|TestGetResourcePools|TestGetJobQueueStatsRequest)$' \
+            -run '^(TestAgentRMRoutingTaskRelatedMessages|TestGetResourcePools|TestGetJobQueueStatsRequest|TestDynamicPoolPersistenceRestart)$' \
             -count=1
           go test -race -tags=integration ./internal/db \
             -run '^TestDynamicResourcePool.*$' \
@@ -135,7 +135,7 @@ jobs:
           retention-days: 7
 
   python-archive-safety:
-    name: Archive safety (Python ${{ matrix.python-version }})
+    name: Archive safety and pool CLI (Python ${{ matrix.python-version }})
     needs: harness-wheel
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -165,14 +165,15 @@ jobs:
             harness/dist/*.whl
       - name: Verify tests import the wheel
         env:
-          PYTHONPATH: ${{ runner.temp }}/determined-wheel
+          PYTHONPATH: ${{ runner.temp }}/determined-wheel:${{ github.workspace }}/harness
         run: |
           python -c 'import os, pathlib, determined; target = (pathlib.Path(os.environ["RUNNER_TEMP"]) / "determined-wheel").resolve(); imported = pathlib.Path(determined.__file__).resolve(); assert target in imported.parents, f"expected {target}, imported {imported}"; print(f"testing {imported}")'
-      - name: Run archive safety tests
+      - name: Run archive safety and pool CLI tests
         env:
-          PYTHONPATH: ${{ runner.temp }}/determined-wheel
+          PYTHONPATH: ${{ runner.temp }}/determined-wheel:${{ github.workspace }}/harness
         run: |
           python -m pytest -q --import-mode=importlib \
             harness/tests/common/test_tarfile_utils.py \
             harness/tests/checkpoints/test_checkpoint.py \
-            harness/tests/exec/test_prep_container.py
+            harness/tests/exec/test_prep_container.py \
+            harness/tests/cli/test_resource_pool.py

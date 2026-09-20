@@ -36,7 +36,7 @@ on:  # yamllint disable-line rule:truthy
         type: string
       dynamic_pool_smoke:
         description: Exercise the optional dynamic-pool API and restart recovery
-        default: false
+        default: true
         required: true
         type: boolean
 
@@ -81,7 +81,6 @@ jobs:
         uses: arduino/setup-protoc@v3
         with:
           version: '25.3'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Resolve candidate metadata
         env:
           REQUESTED_VERSION: ${{ inputs.fork_version }}
@@ -109,6 +108,7 @@ jobs:
             echo "FORK_BASE_IMAGE=${base_image}"
             echo "FORK_MASTER_IMAGE=${image_repository}/master:${image_tag}"
             echo "FORK_AGENT_IMAGE=${image_repository}/agent:${image_tag}"
+            echo "FORK_TASK_IMAGE=${image_repository}/smoke-task:${image_tag}"
             echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "${GITHUB_SHA}")"
           } >>"${GITHUB_ENV}"
       - name: Build Python wheel
@@ -131,8 +131,18 @@ jobs:
           make -C helm build
       - name: Build HTML documentation
         run: |
-          make -C docs build \
-            SPHINXOPTS='-W -D html_theme_options.switcher.json_url=_static/version-switcher/versions.json'
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("docs/conf.py")
+          source = path.read_text()
+          remote = "https://docs.determined.ai/latest/_static/version-switcher/versions.json"
+          local = "_static/version-switcher/versions.json"
+          if source.count(remote) != 1:
+              raise SystemExit("expected exactly one documentation version-switcher URL")
+          path.write_text(source.replace(remote, local))
+          PY
+          make -C docs build
       - name: Build Linux binaries
         env:
           CGO_ENABLED: '0'
@@ -176,9 +186,14 @@ jobs:
             --build-arg "FORK_VERSION=${FORK_VERSION}" \
             --file tools/fork/Dockerfile.agent \
             --tag "${FORK_AGENT_IMAGE}" .
+          docker build \
+            --build-arg "FORK_COMMIT=${GITHUB_SHA}" \
+            --build-arg "FORK_VERSION=${FORK_VERSION}" \
+            --file tools/fork/Dockerfile.smoke-task \
+            --tag "${FORK_TASK_IMAGE}" .
       - name: Run disposable CPU cluster smoke
         env:
-          FORK_SMOKE_DYNAMIC_POOLS: ${{ inputs.dynamic_pool_smoke == true && '1' || '0' }}
+          FORK_SMOKE_DYNAMIC_POOLS: ${{ github.event_name == 'workflow_dispatch' && inputs.dynamic_pool_smoke == false && '0' || '1' }}
         run: tools/fork/smoke.sh
       - name: Package candidate distribution
         env:

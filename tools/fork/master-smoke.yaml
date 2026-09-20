@@ -7,7 +7,8 @@ db:
 
 checkpoint_storage:
   type: shared_fs
-  host_path: /tmp/determined-checkpoint
+  host_path: /tmp
+  storage_path: determined-checkpoint
 
 cache:
   cache_dir: /var/cache/determined

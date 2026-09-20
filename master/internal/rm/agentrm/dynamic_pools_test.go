@@ -1,10 +1,13 @@
 package agentrm
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 
 	"github.com/determined-ai/determined/master/internal/config"
@@ -14,10 +17,14 @@ import (
 )
 
 func testDynamicPoolRM() *ResourceManager {
-	return &ResourceManager{config: &config.AgentResourceManagerConfig{
-		ClusterName: "agent-cluster",
-		Scheduler:   config.DefaultSchedulerConfig(),
-	}}
+	return &ResourceManager{
+		syslog: logrus.New().WithField("component", "dynamic-pool-test"),
+		config: &config.AgentResourceManagerConfig{
+			ClusterName: "agent-cluster",
+			Scheduler:   config.DefaultSchedulerConfig(),
+		},
+		agentService: &agents{},
+	}
 }
 
 func TestNormalizeDynamicResourcePoolConfig(t *testing.T) {
@@ -113,4 +120,55 @@ func TestDecodeStoredDynamicResourcePool(t *testing.T) {
 	require.NoError(t, err)
 	_, err = decodeStoredDynamicResourcePool(record)
 	require.ErrorContains(t, err, "unknown field")
+}
+
+func TestDynamicPoolReadyWriteFailureDoesNotPublish(t *testing.T) {
+	originalSetState := setDynamicResourcePoolState
+	originalStop := stopPreparedDynamicResourcePool
+	t.Cleanup(func() {
+		setDynamicResourcePoolState = originalSetState
+		stopPreparedDynamicResourcePool = originalStop
+	})
+
+	registry, err := newPoolRegistry(nil)
+	require.NoError(t, err)
+	rm := testDynamicPoolRM()
+	rm.registry = registry
+	stopped := 0
+	stopPreparedDynamicResourcePool = func(pool *resourcePool) {
+		stopped++
+		pool.stop()
+	}
+	setDynamicResourcePoolState = func(
+		_ *db.PgDB,
+		_ context.Context,
+		poolName string,
+		state db.DynamicResourcePoolState,
+		errText *string,
+	) (db.DynamicResourcePool, error) {
+		record := db.DynamicResourcePool{PoolName: poolName, State: state, Error: errText}
+		if state == db.DynamicResourcePoolReady {
+			return record, errors.New("database unavailable")
+		}
+		return record, nil
+	}
+
+	cfg, err := rm.NormalizeDynamicResourcePoolConfig(config.ResourcePoolConfig{
+		PoolName:                 "write-failure",
+		MaxAuxContainersPerAgent: 100,
+	}, *model.DefaultTaskContainerDefaults())
+	require.NoError(t, err)
+	raw, hash, err := marshalDynamicResourcePoolConfig(cfg)
+	require.NoError(t, err)
+	record, err := rm.initializeDynamicResourcePool(context.Background(), db.DynamicResourcePool{
+		PoolName:      cfg.PoolName,
+		ConfigVersion: dynamicResourcePoolConfigVersion,
+		Config:        raw,
+		ConfigHash:    hash,
+		State:         db.DynamicResourcePoolPending,
+	}, cfg)
+	require.ErrorIs(t, err, ErrDynamicResourcePoolPersistence)
+	require.Equal(t, db.DynamicResourcePoolFailed, record.State)
+	require.Equal(t, 1, stopped)
+	require.False(t, rm.IsDynamicResourcePoolReady(cfg.PoolName))
 }

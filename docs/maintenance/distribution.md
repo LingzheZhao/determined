@@ -57,8 +57,9 @@ tools/fork/smoke.sh
 The smoke creates an isolated PostgreSQL database, checks master health and admin
 login, waits for a CPU agent to join, and runs a short command to completion. A
 manual workflow run can additionally enable the dynamic-pool extension; it creates
-a pool through the authenticated API, verifies an existing task remains visible,
-joins a second CPU agent, restarts the master, verifies recovery, and runs work in
+a pool through the authenticated API while an original-pool task is running,
+verifies that task keeps its identity and advances, joins a second CPU agent, runs
+work in the new pool, restarts the master, verifies recovery, and runs new work in
 the recovered pool. It does not test a GPU path.
 
 ## Rollback and retention

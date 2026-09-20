@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"reflect"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -27,6 +26,26 @@ var dynamicPoolRequestUser = func(
 	request *http.Request,
 ) (*model.User, *model.UserSession, error) {
 	return user.GetService().UserAndSessionFromRequest(request)
+}
+
+var authorizeDynamicPoolRequest = func(
+	request *http.Request, currentUser *model.User, update bool,
+) (permErr error, err error) {
+	return authorizeDynamicPoolWithProvider(
+		cluster.AuthZProvider.Get(), request, currentUser, update,
+	)
+}
+
+func authorizeDynamicPoolWithProvider(
+	provider cluster.MiscAuthZ,
+	request *http.Request,
+	currentUser *model.User,
+	update bool,
+) (permErr error, err error) {
+	if update {
+		return provider.CanUpdateMasterConfig(request.Context(), currentUser)
+	}
+	return provider.CanGetMasterConfig(request.Context(), currentUser)
 }
 
 type createDynamicResourcePoolRequest struct {
@@ -69,16 +88,7 @@ func (m *Master) dynamicPoolAuth(update bool) echo.MiddlewareFunc {
 			ctx := c.(*detContext.DetContext)
 			ctx.SetUser(*currentUser)
 			ctx.SetUserSession(*session)
-			var permErr error
-			if update {
-				permErr, err = cluster.AuthZProvider.Get().CanUpdateMasterConfig(
-					c.Request().Context(), currentUser,
-				)
-			} else {
-				permErr, err = cluster.AuthZProvider.Get().CanGetMasterConfig(
-					c.Request().Context(), currentUser,
-				)
-			}
+			permErr, err := authorizeDynamicPoolRequest(c.Request(), currentUser, update)
 			if err != nil {
 				return err
 			}
@@ -274,64 +284,7 @@ func validateDynamicPoolRequestJSON(body []byte) error {
 	if !ok {
 		return fmt.Errorf("config is required")
 	}
-	var rawConfig map[string]json.RawMessage
-	if err := json.Unmarshal(configRaw, &rawConfig); err != nil {
-		return fmt.Errorf("config must be a JSON object: %w", err)
-	}
-	if err := rejectUnknownJSONFields(
-		rawConfig, jsonFieldsForType(reflect.TypeOf(config.ResourcePoolConfig{})), "config",
-	); err != nil {
-		return err
-	}
-	if raw, ok := rawConfig["provider"]; ok && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return fmt.Errorf("config.provider is not supported")
-	}
-	if raw, ok := rawConfig["scheduler"]; ok && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		var scheduler map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &scheduler); err != nil {
-			return fmt.Errorf("config.scheduler must be a JSON object: %w", err)
-		}
-		allowed := jsonFieldsForType(reflect.TypeOf(config.SchedulerConfig{}))
-		allowed["type"] = true
-		allowed["preemption"] = true
-		allowed["default_priority"] = true
-		if err := rejectUnknownJSONFields(scheduler, allowed, "config.scheduler"); err != nil {
-			return err
-		}
-	}
-	if raw, ok := rawConfig["task_container_defaults"]; ok &&
-		!bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		var defaults map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &defaults); err != nil {
-			return fmt.Errorf("config.task_container_defaults must be a JSON object: %w", err)
-		}
-		defaultsType := reflect.TypeOf(model.TaskContainerDefaultsConfig{})
-		if err := rejectUnknownJSONFields(
-			defaults, jsonFieldsForType(defaultsType), "config.task_container_defaults",
-		); err != nil {
-			return err
-		}
-		for _, field := range []string{"registry_auth", "kubernetes"} {
-			nestedRaw, exists := defaults[field]
-			if !exists || bytes.Equal(bytes.TrimSpace(nestedRaw), []byte("null")) {
-				continue
-			}
-			nestedType, exists := jsonFieldType(defaultsType, field)
-			if !exists {
-				continue
-			}
-			var nested map[string]json.RawMessage
-			if err := json.Unmarshal(nestedRaw, &nested); err != nil {
-				return fmt.Errorf("config.task_container_defaults.%s must be a JSON object: %w", field, err)
-			}
-			if err := rejectUnknownJSONFields(
-				nested, jsonFieldsForType(nestedType), "config.task_container_defaults."+field,
-			); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return agentrm.ValidateDynamicResourcePoolConfigJSON(configRaw)
 }
 
 func rejectUnknownJSONFields(
@@ -343,35 +296,6 @@ func rejectUnknownJSONFields(
 		}
 	}
 	return nil
-}
-
-func jsonFieldsForType(typ reflect.Type) map[string]bool {
-	for typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
-	result := make(map[string]bool)
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
-		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
-		if name != "" && name != "-" {
-			result[name] = true
-		}
-	}
-	return result
-}
-
-func jsonFieldType(typ reflect.Type, jsonName string) (reflect.Type, bool) {
-	for typ.Kind() == reflect.Pointer {
-		typ = typ.Elem()
-	}
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
-		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
-		if name == jsonName {
-			return field.Type, true
-		}
-	}
-	return nil, false
 }
 
 func requireEmptyBody(c echo.Context) error {

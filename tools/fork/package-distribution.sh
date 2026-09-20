@@ -8,6 +8,7 @@ set -euo pipefail
 : "${FORK_ARCH:?set FORK_ARCH}"
 : "${FORK_MASTER_IMAGE:?set FORK_MASTER_IMAGE}"
 : "${FORK_AGENT_IMAGE:?set FORK_AGENT_IMAGE}"
+: "${FORK_BASE_IMAGE:?set FORK_BASE_IMAGE}"
 
 source_date_epoch=${SOURCE_DATE_EPOCH:-$(git show -s --format=%ct "${FORK_COMMIT}")}
 output_dir=${FORK_OUTPUT_DIR}
@@ -67,6 +68,13 @@ jq -n \
   --arg node "$(node --version)" \
   --arg npm "$(npm --version)" \
   --arg python "$(python --version 2>&1)" \
+  --arg helm "$(helm version --short)" \
+  --arg protoc "$(protoc --version)" \
+  --arg base_image "${FORK_BASE_IMAGE}" \
+  --arg go_sum_sha256 "$(sha256sum go.sum | cut -d' ' -f1)" \
+  --arg npm_lock_sha256 "$(sha256sum webui/react/package-lock.json | cut -d' ' -f1)" \
+  --arg docs_requirements_sha256 "$(sha256sum docs/requirements.txt | cut -d' ' -f1)" \
+  --arg harness_pyproject_sha256 "$(sha256sum harness/pyproject.toml | cut -d' ' -f1)" \
   --arg master_image "${FORK_MASTER_IMAGE}" \
   --arg master_image_id "${master_image_id}" \
   --arg agent_image "${FORK_AGENT_IMAGE}" \
@@ -77,7 +85,18 @@ jq -n \
     version: $version,
     source: {commit: $commit, source_date_epoch: ($source_date_epoch | tonumber)},
     platform: {os: "linux", architecture: $arch},
-    toolchain: {go: $go, node: $node, npm: $npm, python: $python},
+    toolchain: {
+      go: $go, node: $node, npm: $npm, python: $python, helm: $helm, protoc: $protoc
+    },
+    build_inputs: {
+      base_image: $base_image,
+      dependency_files: {
+        "go.sum": $go_sum_sha256,
+        "webui/react/package-lock.json": $npm_lock_sha256,
+        "docs/requirements.txt": $docs_requirements_sha256,
+        "harness/pyproject.toml": $harness_pyproject_sha256
+      }
+    },
     images: {
       master: {name: $master_image, id: $master_image_id},
       agent: {name: $agent_image, id: $agent_image_id}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -24,6 +25,20 @@ const dynamicResourcePoolConfigVersion = 1
 const dynamicPoolPersistenceTimeout = 10 * time.Second
 
 var dynamicPoolNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
+var setDynamicResourcePoolState = func(
+	database *db.PgDB,
+	ctx context.Context,
+	poolName string,
+	state db.DynamicResourcePoolState,
+	errText *string,
+) (db.DynamicResourcePool, error) {
+	return database.SetDynamicResourcePoolState(ctx, poolName, state, errText)
+}
+
+var stopPreparedDynamicResourcePool = func(pool *resourcePool) {
+	pool.stop()
+}
 
 var (
 	// ErrInvalidDynamicResourcePool indicates an invalid or unsupported dynamic pool config.
@@ -187,8 +202,8 @@ func (a *ResourceManager) RetryDynamicResourcePool(
 		msg := err.Error()
 		persistenceCtx, cancel := dynamicPoolPersistenceContext(ctx)
 		defer cancel()
-		failed, updateErr := a.db.SetDynamicResourcePoolState(
-			persistenceCtx, poolName, db.DynamicResourcePoolFailed, &msg,
+		failed, updateErr := setDynamicResourcePoolState(
+			a.db, persistenceCtx, poolName, db.DynamicResourcePoolFailed, &msg,
 		)
 		if updateErr != nil {
 			return db.DynamicResourcePool{}, updateErr
@@ -219,8 +234,8 @@ func (a *ResourceManager) initializeDynamicResourcePool(
 			return a.failDynamicResourcePool(ctx, record, err)
 		}
 		if _, ready := a.registry.readyPool(cfg.PoolName); ready {
-			return a.db.SetDynamicResourcePoolState(
-				ctx, cfg.PoolName, db.DynamicResourcePoolReady, nil,
+			return setDynamicResourcePoolState(
+				a.db, ctx, cfg.PoolName, db.DynamicResourcePoolReady, nil,
 			)
 		}
 	} else if err := a.registry.addDynamicDesired(cfg); err != nil {
@@ -232,12 +247,12 @@ func (a *ResourceManager) initializeDynamicResourcePool(
 		return a.failDynamicResourcePool(ctx, record, err)
 	}
 	persistenceCtx, cancel := dynamicPoolPersistenceContext(ctx)
-	ready, err := a.db.SetDynamicResourcePoolState(
-		persistenceCtx, cfg.PoolName, db.DynamicResourcePoolReady, nil,
+	ready, err := setDynamicResourcePoolState(
+		a.db, persistenceCtx, cfg.PoolName, db.DynamicResourcePoolReady, nil,
 	)
 	cancel()
 	if err != nil {
-		pool.stop()
+		stopPreparedDynamicResourcePool(pool)
 		failed, failErr := a.failDynamicResourcePool(ctx, record, err)
 		if failErr != nil && failed.State != db.DynamicResourcePoolFailed {
 			return failed, fmt.Errorf("%w: Ready write failed: %v; Failed write failed: %v",
@@ -247,7 +262,7 @@ func (a *ResourceManager) initializeDynamicResourcePool(
 			ErrDynamicResourcePoolPersistence, err)
 	}
 	if err = a.registry.publishReady(cfg.PoolName, pool); err != nil {
-		pool.stop()
+		stopPreparedDynamicResourcePool(pool)
 		return a.failDynamicResourcePool(ctx, ready, err)
 	}
 	return ready, nil
@@ -259,8 +274,8 @@ func (a *ResourceManager) failDynamicResourcePool(
 	msg := initErr.Error()
 	persistenceCtx, cancel := dynamicPoolPersistenceContext(ctx)
 	defer cancel()
-	failed, err := a.db.SetDynamicResourcePoolState(
-		persistenceCtx, record.PoolName, db.DynamicResourcePoolFailed, &msg,
+	failed, err := setDynamicResourcePoolState(
+		a.db, persistenceCtx, record.PoolName, db.DynamicResourcePoolFailed, &msg,
 	)
 	if err != nil {
 		return record, fmt.Errorf(
@@ -384,6 +399,9 @@ func decodeStoredDynamicResourcePool(
 			"unsupported config version %d", record.ConfigVersion,
 		)
 	}
+	if err := ValidateDynamicResourcePoolConfigJSON(record.Config); err != nil {
+		return config.ResourcePoolConfig{}, fmt.Errorf("validating stored config schema: %w", err)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(record.Config))
 	decoder.DisallowUnknownFields()
 	var cfg config.ResourcePoolConfig
@@ -420,6 +438,118 @@ func decodeStoredDynamicResourcePool(
 		return config.ResourcePoolConfig{}, fmt.Errorf("effective config hash mismatch")
 	}
 	return cfg, nil
+}
+
+// ValidateDynamicResourcePoolConfigJSON strictly validates object fields before custom config JSON
+// unmarshallers can silently ignore unknown fields. Kubernetes pod specs remain ordinary
+// Kubernetes JSON objects and are validated by their own decoder.
+func ValidateDynamicResourcePoolConfigJSON(raw json.RawMessage) error {
+	var rawConfig map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &rawConfig); err != nil {
+		return fmt.Errorf("config must be a JSON object: %w", err)
+	}
+	if err := rejectUnknownDynamicPoolJSONFields(
+		rawConfig, dynamicPoolJSONFieldsForType(reflect.TypeOf(config.ResourcePoolConfig{})), "config",
+	); err != nil {
+		return err
+	}
+	if provider, ok := rawConfig["provider"]; ok &&
+		!bytes.Equal(bytes.TrimSpace(provider), []byte("null")) {
+		return fmt.Errorf("config.provider is not supported")
+	}
+	if schedulerRaw, ok := rawConfig["scheduler"]; ok &&
+		!bytes.Equal(bytes.TrimSpace(schedulerRaw), []byte("null")) {
+		var scheduler map[string]json.RawMessage
+		if err := json.Unmarshal(schedulerRaw, &scheduler); err != nil {
+			return fmt.Errorf("config.scheduler must be a JSON object: %w", err)
+		}
+		allowed := dynamicPoolJSONFieldsForType(reflect.TypeOf(config.SchedulerConfig{}))
+		allowed["type"] = true
+		allowed["preemption"] = true
+		allowed["default_priority"] = true
+		if err := rejectUnknownDynamicPoolJSONFields(
+			scheduler, allowed, "config.scheduler",
+		); err != nil {
+			return err
+		}
+	}
+	if defaultsRaw, ok := rawConfig["task_container_defaults"]; ok &&
+		!bytes.Equal(bytes.TrimSpace(defaultsRaw), []byte("null")) {
+		var defaults map[string]json.RawMessage
+		if err := json.Unmarshal(defaultsRaw, &defaults); err != nil {
+			return fmt.Errorf("config.task_container_defaults must be a JSON object: %w", err)
+		}
+		defaultsType := reflect.TypeOf(model.TaskContainerDefaultsConfig{})
+		if err := rejectUnknownDynamicPoolJSONFields(
+			defaults, dynamicPoolJSONFieldsForType(defaultsType), "config.task_container_defaults",
+		); err != nil {
+			return err
+		}
+		for _, field := range []string{"registry_auth", "kubernetes"} {
+			nestedRaw, exists := defaults[field]
+			if !exists || bytes.Equal(bytes.TrimSpace(nestedRaw), []byte("null")) {
+				continue
+			}
+			nestedType, exists := dynamicPoolJSONFieldType(defaultsType, field)
+			if !exists {
+				continue
+			}
+			var nested map[string]json.RawMessage
+			if err := json.Unmarshal(nestedRaw, &nested); err != nil {
+				return fmt.Errorf(
+					"config.task_container_defaults.%s must be a JSON object: %w", field, err,
+				)
+			}
+			if err := rejectUnknownDynamicPoolJSONFields(
+				nested,
+				dynamicPoolJSONFieldsForType(nestedType),
+				"config.task_container_defaults."+field,
+			); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func rejectUnknownDynamicPoolJSONFields(
+	object map[string]json.RawMessage, allowed map[string]bool, path string,
+) error {
+	for field := range object {
+		if !allowed[field] {
+			return fmt.Errorf("unknown field %q in %s", field, path)
+		}
+	}
+	return nil
+}
+
+func dynamicPoolJSONFieldsForType(typ reflect.Type) map[string]bool {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	result := make(map[string]bool)
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			result[name] = true
+		}
+	}
+	return result
+}
+
+func dynamicPoolJSONFieldType(typ reflect.Type, jsonName string) (reflect.Type, bool) {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if name == jsonName {
+			return field.Type, true
+		}
+	}
+	return nil, false
 }
 
 func marshalDynamicResourcePoolConfig(

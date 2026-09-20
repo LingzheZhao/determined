@@ -128,3 +128,45 @@ claim the live-agent lifecycle acceptance matrix in
 [Append-only online resource pools](online-resource-pools.md); those scenarios
 still require environment-level testing with real agents and running work.
 
+## CLI
+
+Save the resource-pool configuration itself as YAML or JSON. For example,
+`batch-a.yaml` can contain:
+
+```yaml
+pool_name: batch-a
+description: Static agents for batch work
+max_aux_containers_per_agent: 100
+```
+
+Create the pool with a stable idempotency key:
+
+```sh
+det resource-pool create batch-a.yaml \
+  --idempotency-key pool-create-2026-09-20-a \
+  --cluster-name agent-cluster
+```
+
+Omit `--cluster-name` when only one agent resource manager is configured. Add
+`--json` to print the complete operation record. The command displays the
+returned `Pending`, `Ready`, or `Failed` state. A `Failed` result is printed and
+then exits with status 1 so scripts do not mistake a saved but uninitialized
+pool for a usable pool.
+
+List dynamic desired pools or filter them to one resource manager:
+
+```sh
+det resource-pool list-dynamic
+det resource-pool list-dynamic --cluster-name agent-cluster --json
+```
+
+After correcting the cause recorded on a failed operation, retry its saved
+configuration with:
+
+```sh
+det resource-pool retry batch-a --cluster-name agent-cluster
+```
+
+Retry also exits with status 1 if initialization fails again. These commands
+expose the lifecycle described above; they do not change the restart and
+rollback limits or establish the outstanding live-agent acceptance evidence.

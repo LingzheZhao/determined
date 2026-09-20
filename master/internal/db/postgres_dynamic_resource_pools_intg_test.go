@@ -5,6 +5,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -71,4 +72,51 @@ func TestDynamicResourcePoolPersistenceAndIdempotency(t *testing.T) {
 	require.Len(t, restored, 1)
 	require.Equal(t, desired.ConfigHash, restored[0].ConfigHash)
 	require.Equal(t, DynamicResourcePoolPending, restored[0].State)
+}
+
+func TestDynamicResourcePoolConcurrentCreate(t *testing.T) {
+	database, cleanup := MustResolveNewPostgresDatabase(t)
+	defer cleanup()
+	MustMigrateTestPostgres(t, database, "file://../../static/migrations", "up")
+
+	desired := DynamicResourcePool{
+		ClusterName:    "agents-a",
+		PoolName:       "concurrent-online",
+		ConfigVersion:  1,
+		IdempotencyKey: "concurrent-operation",
+		Config:         json.RawMessage(`{"pool_name":"concurrent-online"}`),
+		ConfigHash:     "concurrent-hash",
+	}
+	const creators = 8
+	start := make(chan struct{})
+	var wait sync.WaitGroup
+	wait.Add(creators)
+	created := make(chan bool, creators)
+	errs := make(chan error, creators)
+	for i := 0; i < creators; i++ {
+		go func() {
+			defer wait.Done()
+			<-start
+			_, wasCreated, err := database.CreateDynamicResourcePool(context.Background(), desired)
+			created <- wasCreated
+			errs <- err
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(created)
+	close(errs)
+	createdCount := 0
+	for wasCreated := range created {
+		if wasCreated {
+			createdCount++
+		}
+	}
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	require.Equal(t, 1, createdCount)
+	records, err := database.ListDynamicResourcePools(context.Background(), desired.ClusterName)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
 }
