@@ -22,6 +22,8 @@ permissions:
 
 jobs:
   pre-check-rebaseable:
+    # This integration depends on the upstream organization's private services.
+    if: github.repository == 'determined-ai/determined'
     runs-on: ubuntu-latest
     outputs:
       rebase_exit: ${{ steps.rebase.outputs.rebase_exit }}

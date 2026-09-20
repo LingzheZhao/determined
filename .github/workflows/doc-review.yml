@@ -16,6 +16,8 @@ permissions:
 
 jobs:
   docpr:
+    # This integration depends on the upstream organization's private services.
+    if: github.repository == 'determined-ai/determined'
     runs-on: ubuntu-latest
     steps:
       - uses: dannysauer/actions-assigner@v2

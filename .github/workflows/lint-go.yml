@@ -38,6 +38,10 @@ jobs:
           make -C proto get-deps
           sudo apt-get update && sudo apt-get install -y clang-format
           make -C ${{ matrix.service }} get-deps
+      - name: Generate integration-test mocks
+        if: matrix.service == 'agent'
+        working-directory: master
+        run: go run github.com/vektra/mockery/v2@v2.42.0
       - name: Run checks
         run: |
           make -C proto build

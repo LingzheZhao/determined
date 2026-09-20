@@ -8,6 +8,7 @@ jobs:
   link-docs:
     runs-on: ubuntu-latest
     if: >-
+      github.repository == 'determined-ai/determined' &&
       github.event.state == 'success' &&
       contains(github.event.context, 'build-docs')
     steps:

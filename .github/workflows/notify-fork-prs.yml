@@ -10,6 +10,8 @@ on:  # yamllint disable-line rule:truthy
 
 jobs:
   notify-fork-prs:
+    # This integration depends on the upstream organization's private services.
+    if: github.repository == 'determined-ai/determined'
     runs-on: ubuntu-latest
     steps:
       - name: Notify on PRs from forks

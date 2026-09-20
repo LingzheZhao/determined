@@ -12,6 +12,8 @@ on:  # yamllint disable-line rule:truthy
 
 jobs:
   link:
+    # This integration depends on the upstream organization's private services.
+    if: github.repository == 'determined-ai/determined'
     runs-on: ubuntu-latest
     permissions:
       contents: read

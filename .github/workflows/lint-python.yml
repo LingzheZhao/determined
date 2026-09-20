@@ -28,7 +28,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: set VERSION env var
         shell: bash
-        run: echo "VERSION=$(./version.sh)" >> $GITHUB_ENV
+        run: |
+          if [[ "${GITHUB_REPOSITORY}" == "LingzheZhao/determined" ]]; then
+            echo "VERSION=0.38.1+fork.${GITHUB_SHA::12}" >> "${GITHUB_ENV}"
+          else
+            echo "VERSION=$(./version.sh)" >> "${GITHUB_ENV}"
+          fi
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -46,7 +51,7 @@ jobs:
       - name: Install harness
         working-directory: harness
         run: |
-          make build
+          make build VERSION="${VERSION}"
           pip install --find-links dist determined==${{ env.VERSION }}
           pip install --no-deps --force-reinstall --find-links dist determined==${{ env.VERSION }}
       - name: Run checks

@@ -16,62 +16,62 @@ export DET_PASS=fork-smoke-password
 compose=(docker compose -f "${compose_file}")
 
 cleanup() {
-  status=$?
-  if (( status != 0 )); then
-    "${compose[@]}" ps || true
-    "${compose[@]}" logs --no-color || true
-  fi
-  "${compose[@]}" --profile dynamic-pool down --volumes --remove-orphans || true
-  exit "${status}"
+    status=$?
+    if ((status != 0)); then
+        "${compose[@]}" ps || true
+        "${compose[@]}" logs --no-color || true
+    fi
+    "${compose[@]}" --profile dynamic-pool down --volumes --remove-orphans || true
+    exit "${status}"
 }
 trap cleanup EXIT
 
 wait_for() {
-  description=$1
-  shift
-  for _ in $(seq 1 60); do
-    if "$@"; then
-      return 0
-    fi
-    sleep 2
-  done
-  echo "timed out waiting for ${description}" >&2
-  return 1
+    description=$1
+    shift
+    for _ in $(seq 1 60); do
+        if "$@"; then
+            return 0
+        fi
+        sleep 2
+    done
+    echo "timed out waiting for ${description}" >&2
+    return 1
 }
 
 health_ready() {
-  curl --fail --silent --show-error "${master_url}/health" >/dev/null
+    curl --fail --silent --show-error "${master_url}/health" >/dev/null
 }
 
 agent_count_at_least() {
-  expected=$1
-  det agent list --json 2>/dev/null | jq -e --argjson expected "${expected}" \
-    'length >= $expected' >/dev/null
+    expected=$1
+    det agent list --json 2>/dev/null | jq -e --argjson expected "${expected}" \
+        'length >= $expected' >/dev/null
 }
 
 command_state_is() {
-  command_id=$1
-  expected_state=$2
-  det command describe "${command_id}" --json 2>/dev/null \
-    | jq -e --arg expected_state "${expected_state}" \
-      '.state == $expected_state' >/dev/null
+    command_id=$1
+    expected_state=$2
+    det command describe "${command_id}" --json 2>/dev/null \
+        | jq -e --arg expected_state "${expected_state}" \
+            '.state == $expected_state' >/dev/null
 }
 
 command_logs_contain() {
-  command_id=$1
-  expected_text=$2
-  det command logs "${command_id}" 2>/dev/null | grep -q "${expected_text}"
+    command_id=$1
+    expected_text=$2
+    det command logs "${command_id}" 2>/dev/null | grep -q "${expected_text}"
 }
 
 expect_http_status() {
-  expected_status=$1
-  shift
-  actual_status=$(curl --silent --show-error --output /dev/null \
-    --write-out '%{http_code}' "$@")
-  if [[ "${actual_status}" != "${expected_status}" ]]; then
-    echo "expected HTTP ${expected_status}, received ${actual_status}" >&2
-    return 1
-  fi
+    expected_status=$1
+    shift
+    actual_status=$(curl --silent --show-error --output /dev/null \
+        --write-out '%{http_code}' "$@")
+    if [[ ${actual_status} != "${expected_status}" ]]; then
+        echo "expected HTTP ${expected_status}, received ${actual_status}" >&2
+        return 1
+    fi
 }
 
 "${compose[@]}" up --detach postgres determined-master
@@ -84,86 +84,86 @@ det user whoami >/dev/null
 wait_for "static agent join" agent_count_at_least 1
 
 static_output=$(det command run \
-  --config "environment.image=${FORK_TASK_IMAGE}" \
-  --config resources.slots=1 \
-  sh -c 'printf "fork-static-task-ok\n"')
+    --config "environment.image=${FORK_TASK_IMAGE}" \
+    --config resources.slots=1 \
+    sh -c 'printf "fork-static-task-ok\n"')
 grep -q 'fork-static-task-ok' <<<"${static_output}"
 static_id=$(det command list --json | jq -er '.[0].id')
 det command describe "${static_id}" --json >/dev/null
 
-if [[ "${dynamic_pool_smoke}" != 1 ]]; then
-  echo "CPU image smoke passed; dynamic-pool extension was not requested."
-  exit 0
+if [[ ${dynamic_pool_smoke} != 1 ]]; then
+    echo "CPU image smoke passed; dynamic-pool extension was not requested."
+    exit 0
 fi
 
 dynamic_url="${master_url}/api/v1/resource-pools/dynamic"
 dynamic_body='{"idempotency_key":"fork-distribution-smoke","config":{"pool_name":"fork-smoke-dynamic"}}'
 expect_http_status 401 "${dynamic_url}"
 expect_http_status 401 \
-  -H 'Content-Type: application/json' --data "${dynamic_body}" "${dynamic_url}"
+    -H 'Content-Type: application/json' --data "${dynamic_body}" "${dynamic_url}"
 
 det user create fork-smoke-user --password fork-smoke-user-password >/dev/null
 non_admin_login=$(curl --fail --silent --show-error \
-  -H 'Content-Type: application/json' \
-  --data '{"username":"fork-smoke-user","password":"fork-smoke-user-password","isHashed":false}' \
-  "${master_url}/api/v1/auth/login")
+    -H 'Content-Type: application/json' \
+    --data '{"username":"fork-smoke-user","password":"fork-smoke-user-password","isHashed":false}' \
+    "${master_url}/api/v1/auth/login")
 non_admin_token=$(jq -er '.token' <<<"${non_admin_login}")
 non_admin_header="Authorization: Bearer ${non_admin_token}"
 expect_http_status 403 \
-  -H "${non_admin_header}" -H 'Content-Type: application/json' \
-  --data "${dynamic_body}" "${dynamic_url}"
+    -H "${non_admin_header}" -H 'Content-Type: application/json' \
+    --data "${dynamic_body}" "${dynamic_url}"
 expect_http_status 403 \
-  -H "${non_admin_header}" -H 'Content-Type: application/json' --data '{}' \
-  "${dynamic_url}/fork-smoke-dynamic/retry"
+    -H "${non_admin_header}" -H 'Content-Type: application/json' --data '{}' \
+    "${dynamic_url}/fork-smoke-dynamic/retry"
 
 login_json=$(curl --fail --silent --show-error \
-  -H 'Content-Type: application/json' \
-  --data '{"username":"admin","password":"fork-smoke-password","isHashed":false}' \
-  "${master_url}/api/v1/auth/login")
+    -H 'Content-Type: application/json' \
+    --data '{"username":"admin","password":"fork-smoke-password","isHashed":false}' \
+    "${master_url}/api/v1/auth/login")
 token=$(jq -er '.token' <<<"${login_json}")
 auth_header="Authorization: Bearer ${token}"
 
 # Keep real work active in the original pool while the new pool is published.
 active_id=$(det command run --detach \
-  --config "environment.image=${FORK_TASK_IMAGE}" \
-  --config resources.slots=1 \
-  sh -c 'printf "fork-before-pool-create\n"; sleep 30; printf "fork-after-pool-create\n"')
+    --config "environment.image=${FORK_TASK_IMAGE}" \
+    --config resources.slots=1 \
+    sh -c 'printf "fork-before-pool-create\n"; sleep 30; printf "fork-after-pool-create\n"')
 wait_for "original-pool task running" command_state_is "${active_id}" RUNNING
 wait_for "original-pool task initial progress" command_logs_contain \
-  "${active_id}" fork-before-pool-create
+    "${active_id}" fork-before-pool-create
 active_before=$(det command describe "${active_id}" --json)
 active_container_id=$(jq -er '.container.id' <<<"${active_before}")
 
 create_json=$(curl --fail --silent --show-error \
-  -H "${auth_header}" -H 'Content-Type: application/json' \
-  --data "${dynamic_body}" \
-  "${dynamic_url}")
+    -H "${auth_header}" -H 'Content-Type: application/json' \
+    --data "${dynamic_body}" \
+    "${dynamic_url}")
 jq -e '.pool_name == "fork-smoke-dynamic" and .state == "Ready"' \
-  <<<"${create_json}" >/dev/null
+    <<<"${create_json}" >/dev/null
 
 # Pool creation must not replace, move, or interrupt the active original-pool allocation.
 active_after=$(det command describe "${active_id}" --json)
 jq -e \
-  --arg id "${active_id}" \
-  --arg container_id "${active_container_id}" \
-  '.id == $id and .resourcePool == "default" and .state == "RUNNING" and
+    --arg id "${active_id}" \
+    --arg container_id "${active_container_id}" \
+    '.id == $id and .resourcePool == "default" and .state == "RUNNING" and
     .container.id == $container_id' <<<"${active_after}" >/dev/null
 curl --fail --silent --show-error -H "${auth_header}" \
-  "${dynamic_url}" \
-  | jq -e '.resource_pools[] | select(.pool_name == "fork-smoke-dynamic" and .state == "Ready")' \
-    >/dev/null
+    "${dynamic_url}" \
+    | jq -e '.resource_pools[] | select(.pool_name == "fork-smoke-dynamic" and .state == "Ready")' \
+        >/dev/null
 wait_for "original-pool task completion" command_state_is "${active_id}" TERMINATED
 wait_for "original-pool task continued progress" command_logs_contain \
-  "${active_id}" fork-after-pool-create
+    "${active_id}" fork-after-pool-create
 
 "${compose[@]}" --profile dynamic-pool up --detach dynamic-agent
 wait_for "dynamic-pool agent join" agent_count_at_least 2
 
 before_restart_output=$(det command run \
-  --config "environment.image=${FORK_TASK_IMAGE}" \
-  --config resources.resource_pool=fork-smoke-dynamic \
-  --config resources.slots=1 \
-  sh -c 'printf "fork-dynamic-before-restart-ok\n"')
+    --config "environment.image=${FORK_TASK_IMAGE}" \
+    --config resources.resource_pool=fork-smoke-dynamic \
+    --config resources.slots=1 \
+    sh -c 'printf "fork-dynamic-before-restart-ok\n"')
 grep -q 'fork-dynamic-before-restart-ok' <<<"${before_restart_output}"
 
 # Restart recovery must reconstruct the durable pool before its agent reconnects.
@@ -171,20 +171,20 @@ grep -q 'fork-dynamic-before-restart-ok' <<<"${before_restart_output}"
 wait_for "master health after restart" health_ready
 wait_for "agents after master restart" agent_count_at_least 2
 login_json=$(curl --fail --silent --show-error \
-  -H 'Content-Type: application/json' \
-  --data '{"username":"admin","password":"fork-smoke-password","isHashed":false}' \
-  "${master_url}/api/v1/auth/login")
+    -H 'Content-Type: application/json' \
+    --data '{"username":"admin","password":"fork-smoke-password","isHashed":false}' \
+    "${master_url}/api/v1/auth/login")
 token=$(jq -er '.token' <<<"${login_json}")
 auth_header="Authorization: Bearer ${token}"
 curl --fail --silent --show-error -H "${auth_header}" \
-  "${dynamic_url}" \
-  | jq -e '.resource_pools[] | select(.pool_name == "fork-smoke-dynamic" and .state == "Ready")' \
-    >/dev/null
+    "${dynamic_url}" \
+    | jq -e '.resource_pools[] | select(.pool_name == "fork-smoke-dynamic" and .state == "Ready")' \
+        >/dev/null
 
 dynamic_output=$(det command run \
-  --config "environment.image=${FORK_TASK_IMAGE}" \
-  --config resources.resource_pool=fork-smoke-dynamic \
-  --config resources.slots=1 \
-  sh -c 'printf "fork-dynamic-task-ok\n"')
+    --config "environment.image=${FORK_TASK_IMAGE}" \
+    --config resources.resource_pool=fork-smoke-dynamic \
+    --config resources.slots=1 \
+    sh -c 'printf "fork-dynamic-task-ok\n"')
 grep -q 'fork-dynamic-task-ok' <<<"${dynamic_output}"
 echo "CPU image and dynamic-pool recovery smoke passed."
