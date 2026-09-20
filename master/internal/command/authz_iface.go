@@ -62,6 +62,12 @@ type NSCAuthZ interface {
 	CanCreateGenericTask(
 		ctx context.Context, curUser model.User, workspaceID model.AccessScopeID,
 	) error
+
+	// POST /api/v1/tasks/:task_id/{kill,pause,unpause}
+	CanControlGenericTask(
+		ctx context.Context, curUser model.User, workspaceID model.AccessScopeID,
+		ownerID *model.UserID,
+	) error
 }
 
 // AuthZProvider is the authz registry for Notebooks, Shells, and Commands.

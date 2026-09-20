@@ -1,0 +1,26 @@
+db:
+  host: postgres
+  port: 5432
+  user: postgres
+  password: postgres
+  name: determined
+
+checkpoint_storage:
+  type: shared_fs
+  host_path: /tmp
+  storage_path: determined-checkpoint
+
+cache:
+  cache_dir: /var/cache/determined
+
+security:
+  initial_user_password: fork-smoke-password
+
+task_container_defaults:
+  network_mode: determined-fork-smoke
+
+telemetry:
+  enabled: false
+
+observability:
+  enable_prometheus: false
