@@ -1,6 +1,8 @@
 import enum
 import logging
 import pathlib
+import threading
+import time
 from typing import Any, Callable, Dict, List, Optional, Set
 
 import determined as det
@@ -9,6 +11,140 @@ from determined.common import api, util
 from determined.common.api import bindings, errors
 
 logger = logging.getLogger("determined.core")
+
+
+class _ProgressReporter(threading.Thread):
+    """Best-effort reporter that coalesces pending progress to its newest value."""
+
+    REQUEST_TIMEOUT_SECONDS = 5
+    MAX_ATTEMPTS = 30
+    RETRY_BACKOFF_SECONDS = 5
+    CLOSE_TIMEOUT_SECONDS = 5
+
+    def __init__(
+        self,
+        session: api.Session,
+        trial_id: int,
+        *,
+        request_timeout: int = REQUEST_TIMEOUT_SECONDS,
+        max_attempts: int = MAX_ATTEMPTS,
+        retry_backoff: float = RETRY_BACKOFF_SECONDS,
+        close_timeout: float = CLOSE_TIMEOUT_SECONDS,
+    ) -> None:
+        super().__init__(daemon=True, name="ProgressReporterThread")
+        self._session = session.with_retry(0)
+        self._trial_id = trial_id
+        self._request_timeout = request_timeout
+        self._max_attempts = max_attempts
+        self._retry_backoff = retry_backoff
+        self._close_timeout = close_timeout
+        self._condition = threading.Condition()
+        self._stop_event = threading.Event()
+        self._pending: Optional[float] = None
+        self._was_started = False
+        self._closing = False
+        self._closing_attempted = False
+        self._disabled = False
+        self._shutdown_deadline: Optional[float] = None
+
+    def start(self) -> None:
+        with self._condition:
+            if self._was_started:
+                return
+            if self._closing or self._disabled:
+                return
+            self._was_started = True
+            super().start()
+
+    def publish(self, progress: float) -> None:
+        if not 0 <= progress <= 1:
+            raise ValueError(f"Progress should be between 0 and 1, not {progress}")
+        self.start()
+        with self._condition:
+            if self._closing or self._disabled:
+                return
+            self._pending = progress
+            self._condition.notify()
+
+    def run(self) -> None:
+        try:
+            while True:
+                with self._condition:
+                    while self._pending is None and not self._closing:
+                        self._condition.wait()
+                    if self._pending is None:
+                        return
+                    progress, self._pending = self._pending, None
+                if not self._post_with_retry(progress):
+                    return
+        finally:
+            self._session.close()
+
+    def _post_with_retry(self, progress: float) -> bool:
+        for attempt in range(self._max_attempts):
+            with self._condition:
+                if self._pending is not None:
+                    progress, self._pending = self._pending, None
+                if self._closing:
+                    if self._closing_attempted or (
+                        self._shutdown_deadline is not None
+                        and time.monotonic() >= self._shutdown_deadline
+                    ):
+                        return False
+                    self._closing_attempted = True
+            try:
+                self._session.post(
+                    f"/api/v1/trials/{self._trial_id}/progress",
+                    data=det.util.json_encode({"progress": progress, "is_raw": True}),
+                    timeout=self._request_timeout,
+                )
+                return True
+            except Exception as e:
+                if not self._retryable(e):
+                    logger.error(
+                        "Disabling optional progress reporting after a permanent error: %s", e
+                    )
+                    with self._condition:
+                        self._disabled = True
+                        self._pending = None
+                    return False
+                with self._condition:
+                    if self._pending is not None:
+                        progress, self._pending = self._pending, None
+                if attempt + 1 < self._max_attempts:
+                    if self._stop_event.wait(self._retry_backoff):
+                        continue
+        logger.warning(
+            "Dropping optional trial progress after %d failed attempts", self._max_attempts
+        )
+        return True
+
+    @staticmethod
+    def _retryable(error: Exception) -> bool:
+        if isinstance(
+            error,
+            (errors.ForbiddenException, errors.NotFoundException, errors.UnauthenticatedException),
+        ):
+            return False
+        if isinstance(error, errors.APIException):
+            return error.status_code in (408, 429) or error.status_code >= 500
+        return isinstance(error, errors.BadRequestException)
+
+    def close(self) -> None:
+        with self._condition:
+            if not self._was_started:
+                self._closing = True
+                self._session.close()
+                return
+            self._closing = True
+            if self._shutdown_deadline is None:
+                self._shutdown_deadline = time.monotonic() + self._close_timeout
+            self._condition.notify_all()
+        self._stop_event.set()
+        remaining = max(0.0, self._shutdown_deadline - time.monotonic())
+        self.join(timeout=remaining)
+        if self.is_alive():
+            logger.warning("Dropping unconfirmed optional progress at shutdown deadline")
 
 
 class EarlyExitReason(enum.Enum):
@@ -44,6 +180,13 @@ class TrainContext:
         self._tensorboard_mode = tensorboard_mode
         self._tensorboard_manager = tensorboard_manager
         self._tbd_writer = tbd_writer
+        self._progress = _ProgressReporter(session, trial_id)
+
+    def start(self) -> None:
+        self._progress.start()
+
+    def close(self) -> None:
+        self._progress.close()
 
     def set_status(self, status: str) -> None:
         """
@@ -266,6 +409,10 @@ class TrainContext:
 
         This is optional for training, but will be used by the WebUI to render completion status.
 
+        Reporting is best-effort and does not block training on a master outage. Pending calls are
+        coalesced to the latest value and sent by a background thread. Invalid values still fail
+        synchronously.
+
         Progress must be reported as a float between 0 and 1.0, where 1.0 is 100% completion. It
         should represent the current iteration step as a fraction of maximum training steps
         (i.e.: `report_progress(step_num / max_steps)`).
@@ -274,12 +421,7 @@ class TrainContext:
             progress (float): completion progress in the range [0, 1.0].
         """
         logger.debug(f"report_progress with progress={progress}")
-        if progress < 0 or progress > 1:
-            raise ValueError(f"Progress should be between 0 and 1, not {progress}")
-        self._session.post(
-            f"/api/v1/trials/{self._trial_id}/progress",
-            data=det.util.json_encode({"progress": progress, "is_raw": True}),
-        )
+        self._progress.publish(progress)
 
     def get_experiment_best_validation(self) -> Optional[float]:
         """
@@ -304,6 +446,12 @@ class TrainContext:
 class DummyTrainContext(TrainContext):
     def __init__(self, tensorboard_path: Optional[pathlib.Path] = None) -> None:
         self._tbd_directory = tensorboard_path
+
+    def start(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
 
     def set_status(self, status: str) -> None:
         logger.info(f"status: {status}")
