@@ -73,6 +73,26 @@ jobs:
       - name: Generate integration-test mocks
         working-directory: master
         run: go run github.com/vektra/mockery/v2@v2.42.0
+      - name: Run live resource-pool registry and scheduler tests
+        run: |
+          go test -race ./master/internal/rm ./master/internal/rm/multirm \
+            -run '^(TestLivePoolSchedulerDefaults|TestLivePoolPreservesStaticManagerPriorityFallback|TestMissingLivePoolUsesStaticPriorityFallback|TestResourcePoolSchedulerConfigRouting)$' \
+            -count=1
+          go test -race ./master/internal/rm/agentrm \
+            -run '^(TestPoolRegistry.*|TestResourcePoolSchedulerConfigUsesReadyEffectiveConfig|TestTaskContainerDefaultsKeepsDynamicEffectiveValues|TestResourceManagerForwardMessage|TestNormalizeDynamicResourcePoolConfig.*|TestValidateDynamicPoolIdempotencyKey|TestDecodeStoredDynamicResourcePool)$' \
+            -count=1
+          go test -race ./master/internal \
+            -run '^(TestValidateDynamicPoolRequestJSON|TestPrintableDynamicResourcePoolRedactsRegistryCredentials|TestDynamicPoolRoute.*)$' \
+            -count=1
+      - name: Run existing agent resource-pool routing regressions
+        working-directory: master
+        run: |
+          go test -race -tags=integration ./internal/rm/agentrm \
+            -run '^(TestAgentRMRoutingTaskRelatedMessages|TestGetResourcePools|TestGetJobQueueStatsRequest)$' \
+            -count=1
+          go test -race -tags=integration ./internal/db \
+            -run '^TestDynamicResourcePool.*$' \
+            -count=1
       - name: Run generic-task authorization integration tests
         working-directory: master
         run: |

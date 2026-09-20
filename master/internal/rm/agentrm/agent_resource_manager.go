@@ -38,11 +38,31 @@ import (
 func New(
 	db *db.PgDB,
 	e *echo.Echo,
-	config *config.ResourceManagerWithPoolsConfig,
+	rmConfig *config.ResourceManagerWithPoolsConfig,
 	opts *aproto.MasterSetAgentOptions,
 	cert *tls.Certificate,
 ) (*ResourceManager, error) {
-	agentService, agentUpdates := newAgentService(config.ResourcePools, opts)
+	var dynamicConfigs []config.ResourcePoolConfig
+	var err error
+	if db != nil {
+		dynamicConfigs, err = loadDynamicPoolConfigs(
+			db, rmConfig.ResourceManager.ClusterName(), rmConfig.ResourcePools,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("loading dynamic resource pools: %w", err)
+		}
+	}
+
+	registry, err := newPoolRegistry(rmConfig.ResourcePools)
+	if err != nil {
+		return nil, fmt.Errorf("creating resource pool registry: %w", err)
+	}
+	for _, dynamicConfig := range dynamicConfigs {
+		if err := registry.addDynamicDesired(dynamicConfig); err != nil {
+			return nil, fmt.Errorf("registering dynamic resource pool: %w", err)
+		}
+	}
+	agentService, agentUpdates := newAgentService(registry, opts)
 
 	e.GET("/agents", func(c echo.Context) error {
 		if !c.IsWebSocket() {
@@ -51,52 +71,64 @@ func New(
 		return agentService.HandleWebsocketConnection(webSocketRequest{echoCtx: c})
 	})
 
-	return newAgentResourceManager(db, config, cert, agentService, agentUpdates)
+	resourceManager, err := newAgentResourceManager(
+		db, rmConfig, cert, agentService, agentUpdates, registry,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := markDynamicPoolsReady(context.Background(), db, dynamicConfigs); err != nil {
+		resourceManager.stop()
+		return nil, fmt.Errorf("marking dynamic resource pools ready: %w", err)
+	}
+	return resourceManager, nil
 }
 
 // A ResourceManager manages many resource pools and routing requests for resources to them.
 type ResourceManager struct {
 	syslog *logrus.Entry
 
-	config      *config.AgentResourceManagerConfig
-	poolsConfig []config.ResourcePoolConfig
-	cert        *tls.Certificate
-	db          *db.PgDB
+	config *config.AgentResourceManagerConfig
+	cert   *tls.Certificate
+	db     *db.PgDB
 
 	agentService *agents
 	agentUpdates *queue.Queue[agentUpdatedEvent]
-	pools        map[string]*resourcePool // immutable. cannot be made mutable without significant change.
+	registry     *poolRegistry
 }
 
 func newAgentResourceManager(
 	db *db.PgDB, config *config.ResourceManagerWithPoolsConfig,
 	cert *tls.Certificate, agentService *agents,
 	agentUpdates *queue.Queue[agentUpdatedEvent],
+	registry *poolRegistry,
 ) (*ResourceManager, error) {
 	a := &ResourceManager{
 		syslog: logrus.WithField("component", "agentrm"),
 
 		config:       config.ResourceManager.AgentRM,
-		poolsConfig:  config.ResourcePools,
 		cert:         cert,
 		db:           db,
 		agentService: agentService,
 		agentUpdates: agentUpdates,
-		pools:        make(map[string]*resourcePool),
+		registry:     registry,
 	}
 
-	for ix, config := range a.poolsConfig {
-		rp, err := a.createResourcePool(a.db, a.poolsConfig[ix], a.cert)
+	for _, poolConfig := range a.registry.desiredConfigs() {
+		rp, err := a.createResourcePool(a.db, poolConfig, a.cert)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resource pool: %s: %w",
-				a.poolsConfig[ix].PoolName, err)
+				poolConfig.PoolName, err)
 		}
-		a.pools[config.PoolName] = rp
+		if err := a.registry.publishReady(poolConfig.PoolName, rp); err != nil {
+			return nil, fmt.Errorf("failed to publish resource pool: %s: %w",
+				poolConfig.PoolName, err)
+		}
 	}
 	go func() {
 		for {
 			update := a.agentUpdates.Get()
-			pool, ok := a.pools[update.resourcePool]
+			pool, ok := a.registry.readyPool(update.resourcePool)
 			if !ok {
 				a.syslog.Warn("ignoring agent update for unknown pool: %w", update.resourcePool)
 				continue
@@ -247,8 +279,8 @@ func (a *ResourceManager) GetAgents() (*apiv1.GetAgentsResponse, error) {
 // GetAllocationSummaries implements rm.ResourceManager.
 func (a *ResourceManager) GetAllocationSummaries() (map[model.AllocationID]sproto.AllocationSummary, error) {
 	summaries := make(map[model.AllocationID]sproto.AllocationSummary)
-	for _, pool := range a.pools {
-		rpSummaries := pool.GetAllocationSummaries()
+	for _, entry := range a.registry.readyEntries() {
+		rpSummaries := entry.pool.GetAllocationSummaries()
 		maps.Copy(summaries, rpSummaries)
 	}
 	return summaries, nil
@@ -268,6 +300,27 @@ func (a *ResourceManager) GetDefaultComputeResourcePool() (rm.ResourcePoolName, 
 		return "", rmerrors.ErrNoDefaultResourcePool
 	}
 	return rm.ResourcePoolName(a.config.DefaultComputeResourcePool), nil
+}
+
+// ResourcePoolSchedulerConfig returns the effective scheduler configuration for a Ready pool.
+// The result is detached from both registry and master configuration state.
+func (a *ResourceManager) ResourcePoolSchedulerConfig(
+	poolName string,
+) (*config.SchedulerConfig, bool) {
+	poolConfig, ok := a.registry.readyConfig(poolName)
+	if !ok {
+		return nil, false
+	}
+	if poolConfig.Scheduler != nil {
+		return poolConfig.Scheduler, true
+	}
+	if a.config == nil || a.config.Scheduler == nil {
+		return nil, true
+	}
+	return mustCloneResourcePoolConfig(config.ResourcePoolConfig{
+		PoolName:  poolName,
+		Scheduler: a.config.Scheduler,
+	}).Scheduler, true
 }
 
 // GetExternalJobs implements rm.ResourceManager.
@@ -296,7 +349,8 @@ func (a *ResourceManager) GetJobQueueStatsRequest(
 		Results: make([]*apiv1.RPQueueStat, 0),
 	}
 
-	for name, pool := range a.pools {
+	for _, entry := range a.registry.readyEntries() {
+		name, pool := entry.config.PoolName, entry.pool
 		if len(msg.ResourcePools) != 0 && !slices.Contains(msg.ResourcePools, name) {
 			continue
 		}
@@ -321,9 +375,10 @@ func (a *ResourceManager) GetJobQueueStatsRequest(
 
 // GetResourcePools implements rm.ResourceManager.
 func (a *ResourceManager) GetResourcePools() (*apiv1.GetResourcePoolsResponse, error) {
-	summaries := make([]*resourcepoolv1.ResourcePool, 0, len(a.poolsConfig))
-	for _, pool := range a.poolsConfig {
-		summary, err := a.createResourcePoolSummary(pool.PoolName)
+	entries := a.registry.readyEntries()
+	summaries := make([]*resourcepoolv1.ResourcePool, 0, len(entries))
+	for _, entry := range entries {
+		summary, err := a.createResourcePoolSummary(entry.config.PoolName)
 		if err != nil {
 			// Should only raise an error if the resource pool doesn't exist and that can't happen.
 			// But best to handle it anyway in case the implementation changes in the future.
@@ -331,7 +386,7 @@ func (a *ResourceManager) GetResourcePools() (*apiv1.GetResourcePoolsResponse, e
 			return nil, err
 		}
 
-		jobStats, err := a.getPoolJobStats(pool)
+		jobStats, err := a.getPoolJobStats(entry.config)
 		if err != nil {
 			return nil, err
 		}
@@ -500,27 +555,19 @@ func (a *ResourceManager) TaskContainerDefaults(
 	resourcePoolName rm.ResourcePoolName,
 	defaultConfig model.TaskContainerDefaultsConfig,
 ) (model.TaskContainerDefaultsConfig, error) {
-	result := defaultConfig
-
-	// Iterate through configured pools looking for a TaskContainerDefaults setting.
-	var poolConfigOverrides *model.TaskContainerDefaultsConfig
-	for _, pool := range a.poolsConfig {
-		if resourcePoolName.String() == pool.PoolName {
-			if pool.TaskContainerDefaults != nil {
-				poolConfigOverrides = pool.TaskContainerDefaults
-			}
-			break
-		}
+	entry, ok := a.registry.readyEntry(resourcePoolName.String())
+	if !ok || entry.config.TaskContainerDefaults == nil {
+		return defaultConfig, nil
 	}
 
-	if poolConfigOverrides != nil {
-		tmp, err := result.Merge(*poolConfigOverrides)
-		if err != nil {
-			return model.TaskContainerDefaultsConfig{}, err
-		}
-		result = tmp
+	if entry.taskDefaultsEffective {
+		return *entry.config.TaskContainerDefaults, nil
 	}
 
+	result, err := defaultConfig.Merge(*entry.config.TaskContainerDefaults)
+	if err != nil {
+		return model.TaskContainerDefaultsConfig{}, err
+	}
 	return result, nil
 }
 
@@ -639,7 +686,7 @@ func (a *ResourceManager) poolByName(name string) (*resourcePool, error) {
 	if name == "" {
 		return nil, errors.New("invalid call: cannot get a resource pool with no name")
 	}
-	pool, ok := a.pools[name]
+	pool, ok := a.registry.readyPool(name)
 	if !ok {
 		return nil, fmt.Errorf("cannot find resource pool %s", name)
 	}
@@ -657,10 +704,9 @@ func (a *ResourceManager) getPoolJobStats(poolConfig config.ResourcePoolConfig) 
 func (a *ResourceManager) getResourcePoolConfig(poolName string) (
 	config.ResourcePoolConfig, error,
 ) {
-	for i := range a.poolsConfig {
-		if a.poolsConfig[i].PoolName == poolName {
-			return a.poolsConfig[i], nil
-		}
+	poolConfig, ok := a.registry.readyConfig(poolName)
+	if ok {
+		return poolConfig, nil
 	}
 	return config.ResourcePoolConfig{}, errors.Errorf("cannot find resource pool %s", poolName)
 }
@@ -863,8 +909,8 @@ func (a *ResourceManager) fetchAvgQueuedTime(pool string) (
 
 // mostly for tests.
 func (a *ResourceManager) stop() {
-	for _, pool := range a.pools {
-		pool.stop()
+	for _, entry := range a.registry.readyEntries() {
+		entry.pool.stop()
 	}
 }
 

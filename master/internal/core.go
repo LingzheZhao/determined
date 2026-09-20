@@ -1364,6 +1364,14 @@ func (m *Master) Run(ctx context.Context, gRPCLogInitDone chan struct{}) error {
 	m.echo.HideBanner = true
 	m.echo.HTTPErrorHandler = api.JSONErrorHandler
 
+	// Validate durable desired pools before mutating persisted agent statistics or beginning agent
+	// restoration. Corrupt, unsupported, or colliding configs fail startup closed.
+	if err = agentrm.ValidatePersistedDynamicPoolConfigs(
+		ctx, m.db, m.config.ResourceManagers(),
+	); err != nil {
+		return fmt.Errorf("validating persisted dynamic resource pools: %w", err)
+	}
+
 	// Before RM start, end stats for dangling agents/instances in case of master crash.
 	if err = m.db.EndAllAgentStats(); err != nil {
 		return errors.Wrap(err, "could not update end stats for agents")
@@ -1383,6 +1391,7 @@ func (m *Master) Run(ctx context.Context, gRPCLogInitDone chan struct{}) error {
 	); err != nil {
 		return fmt.Errorf("could not initialize resource manager(s): %w", err)
 	}
+	m.registerDynamicResourcePoolRoutes()
 
 	jobservice.SetDefaultService(m.rm)
 

@@ -1,20 +1,19 @@
 # Append-only online resource pools
 
-Status: design for M1; no dynamic creation API is implemented by the M0 baseline.
+Status: the M1 append-only static agent-pool API is implemented. See
+[Dynamic resource pools](dynamic-pools.md) for the actual REST contract,
+authorization rules, restart behavior, and limits. The live-agent acceptance
+matrix below remains future environment-level validation and is not claimed by
+the focused unit and PostgreSQL tests.
 
-## Existing seams
+## Implemented seams
 
-`master/internal/rm/agentrm/agent_resource_manager.go` holds `poolsConfig` and an
-immutable `pools` map, starts pools in `newAgentResourceManager`, and reads the map
-from allocation, queue reporting, agent update, and shutdown paths.
-`master/internal/rm/agentrm/agents.go` separately retains `poolConfigs` and restores
-agents inside `newAgentService`, before the resource manager constructs its pools.
-`master/internal/api_resourcepool.go` provides pool listing and workspace bindings;
-the protobuf API currently has no create-pool endpoint.
-
-Adding a map entry alone cannot safely make these paths dynamic. In particular,
-durable pool configuration must be loaded before restoring agents, or a restart
-could reject agents whose pool exists only in the database.
+The agent service and resource manager now share an append-only registry. Desired
+configuration is available during agent restoration, while regular resource-pool
+lookups and scheduling see only entries whose runtime pool has been published
+Ready. Dynamic desired configuration is loaded from PostgreSQL before the agent
+service is constructed. The narrow M1 REST API is implemented directly in Echo;
+there is no protobuf API change.
 
 ## First-version contract
 
@@ -63,18 +62,19 @@ agents' persisted identities/reservations for reconciliation. Do not run the exi
 unknown-pool cleanup against those records. Resolve this ordering and failed-pool
 resource reservation behavior in tests before exposing the API.
 
-## Implementation slices
+## Implementation history
 
-1. **Registry only:** replace all agent RM pool/config lookups and iterations and
+1. **Registry only (implemented):** replace all agent RM pool/config lookups and iterations and
    agent registration lookups with a shared interface, including job statistics,
    task container defaults, validation, agent-update callbacks, and shutdown. Preserve
    startup behavior and prove existing pool identity/queues stay unchanged.
-2. **Durable configuration:** add migration, validation, unique constraints, and
+2. **Durable configuration (implemented):** add migration, validation, unique constraints, and
    effective-config round-trip tests. Add recovery ordering and failed initialization
    cleanup; cover crashes between each durable/runtime step.
-3. **API and client:** add create/status/retry messages, permissions and workspace
-   visibility semantics, generated clients and CLI. Avoid exposing provider secrets
-   through config/status responses. Non-admin and view-only users cannot create/retry.
+3. **API (implemented for REST):** add create/status/retry routes and master-config
+   permissions without a protobuf change. Provider configuration is rejected and
+   registry credentials are redacted in status. Basic-auth non-admin users cannot
+   list, create, or retry.
 4. **Acceptance:** run the lifecycle below against PostgreSQL and real agents. Only
    after it passes describe online creation as supported in user documentation.
 
