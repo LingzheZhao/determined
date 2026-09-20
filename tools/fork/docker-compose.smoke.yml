@@ -1,0 +1,58 @@
+name: determined-fork-smoke
+
+services:
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: determined
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d determined"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - cluster
+
+  determined-master:
+    image: ${FORK_MASTER_IMAGE:?set FORK_MASTER_IMAGE}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["--config-file", "/etc/determined/master-smoke.yaml"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./master-smoke.yaml:/etc/determined/master-smoke.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      cluster:
+        aliases:
+          - determined-master
+
+  determined-agent:
+    image: ${FORK_AGENT_IMAGE:?set FORK_AGENT_IMAGE}
+    depends_on:
+      determined-master:
+        condition: service_started
+    environment:
+      DET_AGENT_ID: fork-static-agent
+      DET_CONTAINER_MASTER_HOST: determined-master
+      DET_CONTAINER_MASTER_PORT: 8080
+      DET_MASTER_HOST: determined-master
+      DET_MASTER_PORT: 8080
+      DET_RESOURCE_POOL: default
+      DET_SLOT_TYPE: cpu
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - cluster
+
+networks:
+  cluster:
+    name: determined-fork-smoke

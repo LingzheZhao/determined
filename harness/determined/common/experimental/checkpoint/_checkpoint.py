@@ -5,11 +5,12 @@ import logging
 import pathlib
 import shutil
 import tarfile
+import tempfile
 import warnings
 from typing import Any, Dict, Iterable, List, Optional
 
 from determined import errors
-from determined.common import api, constants, storage
+from determined.common import api, constants, storage, tarfile_utils
 from determined.common.api import bindings
 from determined.common.experimental import metrics
 from determined.common.storage import shared
@@ -322,14 +323,21 @@ class Checkpoint:
         """
         local_ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-        resp = sess.get(f"/checkpoints/{uuid}", headers={"Accept": "application/gzip"}, stream=True)
-        if not resp.ok:
-            raise errors.ProxiedDownloadFailed(
-                "unable to download checkpoint from master:", resp.status_code, resp.reason
-            )
-        # gunzip and untar. tarfile.open can detect the compression algorithm
-        with tarfile.open(fileobj=resp.raw) as tf:
-            tf.extractall(local_ckpt_dir)
+        with sess.get(
+            f"/checkpoints/{uuid}", headers={"Accept": "application/gzip"}, stream=True
+        ) as resp:
+            if not resp.ok:
+                raise errors.ProxiedDownloadFailed(
+                    "unable to download checkpoint from master:", resp.status_code, resp.reason
+                )
+            # Full validation requires a seekable archive.  Store the temporary compressed copy on
+            # the checkpoint destination filesystem, where similarly sized checkpoint data belongs.
+            with tempfile.TemporaryFile(dir=local_ckpt_dir) as archive_file:
+                shutil.copyfileobj(resp.raw, archive_file)
+                archive_file.seek(0)
+                # gunzip and untar. tarfile.open can detect the compression algorithm
+                with tarfile.open(fileobj=archive_file) as tf:
+                    tarfile_utils.safe_extractall(tf, local_ckpt_dir)
 
     def write_metadata_file(self, path: str) -> None:
         """
