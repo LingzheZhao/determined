@@ -39,6 +39,10 @@ wait_for() {
     return 1
 }
 
+phase() {
+    printf '\n==> %s\n' "$1"
+}
+
 health_ready() {
     curl --fail --silent --show-error \
         -H 'Content-Type: application/json' \
@@ -77,12 +81,14 @@ expect_http_status() {
     fi
 }
 
+phase "Start PostgreSQL and master; verify authenticated readiness"
 "${compose[@]}" up --detach postgres determined-master
 wait_for "master health" health_ready
 
 # This exercises password authentication and proves the built wheel's CLI can use the image API.
 det user whoami >/dev/null
 
+phase "Join the static CPU agent and run a command"
 "${compose[@]}" up --detach determined-agent
 wait_for "static agent join" agent_count_at_least 1
 
@@ -101,14 +107,15 @@ fi
 
 dynamic_url="${master_url}/api/v1/resource-pools/dynamic"
 dynamic_body='{"idempotency_key":"fork-distribution-smoke","config":{"pool_name":"fork-smoke-dynamic"}}'
+phase "Verify dynamic-pool authentication and authorization"
 expect_http_status 401 "${dynamic_url}"
 expect_http_status 401 \
     -H 'Content-Type: application/json' --data "${dynamic_body}" "${dynamic_url}"
 
-det user create fork-smoke-user --password fork-smoke-user-password >/dev/null
+det user create fork-smoke-user --password 'ForkSmokeUser123!' >/dev/null
 non_admin_login=$(curl --fail --silent --show-error \
     -H 'Content-Type: application/json' \
-    --data '{"username":"fork-smoke-user","password":"fork-smoke-user-password","isHashed":false}' \
+    --data '{"username":"fork-smoke-user","password":"ForkSmokeUser123!","isHashed":false}' \
     "${master_url}/api/v1/auth/login")
 non_admin_token=$(jq -er '.token' <<<"${non_admin_login}")
 non_admin_header="Authorization: Bearer ${non_admin_token}"
@@ -127,6 +134,7 @@ token=$(jq -er '.token' <<<"${login_json}")
 auth_header="Authorization: Bearer ${token}"
 
 # Keep real work active in the original pool while the new pool is published.
+phase "Create a dynamic pool while an original-pool command stays active"
 active_id=$(det command run --detach \
     --config "environment.image=${FORK_TASK_IMAGE}" \
     --config resources.slots=1 \
@@ -159,6 +167,7 @@ wait_for "original-pool task completion" command_state_is "${active_id}" TERMINA
 wait_for "original-pool task continued progress" command_logs_contain \
     "${active_id}" fork-after-pool-create
 
+phase "Join the dynamic-pool CPU agent and run a command"
 "${compose[@]}" --profile dynamic-pool up --detach dynamic-agent
 wait_for "dynamic-pool agent join" agent_count_at_least 2
 
@@ -170,6 +179,7 @@ before_restart_output=$(det command run \
 grep -q 'fork-dynamic-before-restart-ok' <<<"${before_restart_output}"
 
 # Restart recovery must reconstruct the durable pool before its agent reconnects.
+phase "Restart master and verify recovered dynamic-pool work"
 "${compose[@]}" restart determined-master
 wait_for "master health after restart" health_ready
 wait_for "agents after master restart" agent_count_at_least 2

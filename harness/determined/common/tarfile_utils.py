@@ -5,7 +5,7 @@ import os
 import posixpath
 import stat
 import tarfile
-from typing import Iterable, Union
+from typing import Any, Callable, Iterable, Union, cast
 
 Path = Union[str, os.PathLike]
 
@@ -17,11 +17,14 @@ def _is_absolute(path: str) -> bool:
 
 
 def _escapes_archive_root(path: str) -> bool:
-    for path_module in (posixpath, ntpath):
-        normalized = path_module.normpath(path)
-        if normalized == ".." or normalized.startswith(".." + path_module.sep):
-            return True
-    return False
+    posix_normalized = posixpath.normpath(path)
+    windows_normalized = ntpath.normpath(path)
+    return (
+        posix_normalized == ".."
+        or posix_normalized.startswith("../")
+        or windows_normalized == ".."
+        or windows_normalized.startswith("..\\")
+    )
 
 
 def _is_within_directory(path: str, directory: str) -> bool:
@@ -75,8 +78,10 @@ def _validated_member(member: tarfile.TarInfo, destination: str) -> tarfile.TarI
     # Do not restore archive ownership or unsafe permission bits.  Regular executable files and
     # ordinary 0644/0755-style modes retain their modes.
     member = copy.copy(member)
-    member.uid = member.gid = None
-    member.uname = member.gname = None
+    # Python 3.12 supports None here to suppress ownership restoration, but Python 3.8's typeshed
+    # predates that API even though assigning None works at runtime.
+    member.uid = member.gid = cast(Any, None)
+    member.uname = member.gname = cast(Any, None)
     if member.mode is not None:
         member.mode &= 0o755
         if (member.isfile() or member.islnk()) and not member.mode & 0o100:
@@ -126,6 +131,17 @@ def _supports_filter(archive: tarfile.TarFile) -> bool:
     return "filter" in inspect.signature(archive.extractall).parameters
 
 
+def _extractall_with_filter(
+    archive: tarfile.TarFile,
+    destination: str,
+    members: Iterable[tarfile.TarInfo],
+    filter_fn: Callable[[tarfile.TarInfo, str], tarfile.TarInfo],
+) -> None:
+    # The filter argument was added after Python 3.8, so its typeshed signature does not include it.
+    extractall = cast(Callable[..., None], archive.extractall)
+    extractall(destination, members=members, filter=filter_fn)
+
+
 def safe_extractall(archive: tarfile.TarFile, path: Path) -> None:
     """Extract regular files, directories, and contained links from an untrusted tar archive."""
     destination = os.path.realpath(os.fspath(path))
@@ -136,10 +152,11 @@ def safe_extractall(archive: tarfile.TarFile, path: Path) -> None:
     members = [_validated_member(member, destination) for member in archive.getmembers()]
 
     if _supports_filter(archive):
-        archive.extractall(
+        _extractall_with_filter(
+            archive,
             destination,
-            members=_validated_members(members, destination),
-            filter=lambda member, _: _validated_member(member, destination),
+            _validated_members(members, destination),
+            lambda member, _: _validated_member(member, destination),
         )
     else:
         archive.extractall(destination, members=_validated_members(members, destination))

@@ -121,6 +121,26 @@ These results validate the implementation and database paths. The independently
 built images and real CPU-agent lifecycle have their own acceptance run; the
 baseline workflow alone does not prove that lifecycle or GPU task continuity.
 
+The same baseline suite passed again at `e4149a7f3` in
+[run 35503036589](https://github.com/LingzheZhao/determined/actions/runs/35503036589)
+after the fork lint and test-fixture corrections.
+
+## Fork pull-request workflow compatibility
+
+The fork's pull-request checks now use the current Python binding generators,
+an explicit fork wheel version, and generated Go mocks. The master, agent, and
+proto lint matrix passed at `5d16be54af174d91de5b7ff822cf88e39b932a9a` in
+[Go lint run 35502787162](https://github.com/LingzheZhao/determined/actions/runs/35502787162).
+
+Several inherited administrative workflows use `pull_request_target`, so GitHub
+runs their definitions from the base branch. This branch removes upstream-only
+credentials from the labeler and PR-title check and limits upstream private-repo,
+team, CircleCI, and preview integrations to the upstream repository. Those fixes
+do not change the old definitions already running from `main` on the first fork
+PR. Their failures remain visible until the base-branch workflow migration is
+integrated; they are not evidence of a successful check or a product test failure.
+The first PR remains a draft while that transition and release gates are tracked.
+
 ## Remaining release gates
 
 - Complete independent artifact set: master/agent images, Python wheel, front-end
