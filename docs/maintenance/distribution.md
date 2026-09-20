@@ -44,23 +44,39 @@ equivalent to granting control of the Docker host, so restrict it to trusted
 machines. Configure CPU agents with `slot_type: cpu`. This candidate makes no GPU
 support claim.
 
-For a disposable local example, copy `tools/fork/master-smoke.yaml` and
-`tools/fork/docker-compose.smoke.yml` from the matching source revision, export
-the two image names, and run the smoke script from the checkout:
+For a disposable local example, set `artifact_dir` to the absolute path of the
+extracted candidate, then run the following commands from a checkout of this
+repository. The task image is a test fixture rather than a release artifact, so
+the example builds it locally from the delivered wheel:
 
 ```sh
-export FORK_MASTER_IMAGE=local/determined-fork/master:<tag>
-export FORK_AGENT_IMAGE=local/determined-fork/agent:<tag>
+artifact_dir=/absolute/path/to/extracted-candidate
+fork_version=$(jq -r .version "${artifact_dir}/MANIFEST.json")
+fork_commit=$(jq -r .source.commit "${artifact_dir}/MANIFEST.json")
+fork_tag=${fork_version//+/-}
+git switch --detach "${fork_commit}"
+python -m pip install "${artifact_dir}"/determined-*.whl
+mkdir -p .fork-build/master/wheels
+cp "${artifact_dir}"/determined-*.whl .fork-build/master/wheels/
+docker build -f tools/fork/Dockerfile.smoke-task \
+  --build-arg "FORK_COMMIT=${fork_commit}" \
+  --build-arg "FORK_VERSION=${fork_version}" \
+  -t "local/determined-fork/smoke-task:${fork_tag}" .
+export FORK_MASTER_IMAGE=$(jq -r .images.master.name "${artifact_dir}/MANIFEST.json")
+export FORK_AGENT_IMAGE=$(jq -r .images.agent.name "${artifact_dir}/MANIFEST.json")
+export FORK_TASK_IMAGE="local/determined-fork/smoke-task:${fork_tag}"
+export FORK_SMOKE_DYNAMIC_POOLS=1
 tools/fork/smoke.sh
 ```
 
 The smoke creates an isolated PostgreSQL database, checks master health and admin
-login, waits for a CPU agent to join, and runs a short command to completion. A
-manual workflow run can additionally enable the dynamic-pool extension; it creates
-a pool through the authenticated API while an original-pool task is running,
-verifies that task keeps its identity and advances, joins a second CPU agent, runs
-work in the new pool, restarts the master, verifies recovery, and runs new work in
-the recovered pool. It does not test a GPU path.
+login, waits for a CPU agent to join, and runs a short command to completion. The
+workflow also exercises the dynamic-pool extension by default: it checks anonymous
+and non-admin denials, creates a pool through the authenticated API while an
+original-pool task is running, verifies that task keeps its identity and advances,
+joins a second CPU agent, runs work in the new pool, restarts the master, verifies
+recovery, and runs new work in the recovered pool. A manual run can disable this
+extension when isolating base packaging failures. The smoke does not test a GPU path.
 
 ## Rollback and retention
 

@@ -62,7 +62,7 @@ func New(
 			return nil, fmt.Errorf("registering dynamic resource pool: %w", err)
 		}
 	}
-	agentService, agentUpdates := newAgentService(registry, opts)
+	agentService, agentUpdates := newAgentService(registry, opts, db != nil)
 
 	e.GET("/agents", func(c echo.Context) error {
 		if !c.IsWebSocket() {

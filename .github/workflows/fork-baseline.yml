@@ -88,7 +88,7 @@ jobs:
         working-directory: master
         run: |
           go test -race -tags=integration ./internal/rm/agentrm \
-            -run '^(TestAgentRMRoutingTaskRelatedMessages|TestGetResourcePools|TestGetJobQueueStatsRequest|TestDynamicPoolPersistenceRestart)$' \
+            -run '^(TestAgentRMRoutingTaskRelatedMessages|TestGetResourcePools|TestGetJobQueueStatsRequest|TestDynamicPoolPersistenceRestart|TestDynamicPoolStartupRejects.*)$' \
             -count=1
           go test -race -tags=integration ./internal/db \
             -run '^TestDynamicResourcePool.*$' \

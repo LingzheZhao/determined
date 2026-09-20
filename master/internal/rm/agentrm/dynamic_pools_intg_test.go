@@ -80,3 +80,63 @@ func TestDynamicPoolPersistenceRestart(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, db.DynamicResourcePoolReady, restored.State)
 }
+
+func TestDynamicPoolStartupRejectsUnsupportedVersion(t *testing.T) {
+	database, cleanup := db.MustResolveNewPostgresDatabase(t)
+	defer cleanup()
+	db.MustMigrateTestPostgres(t, database, "file://../../../static/migrations", "up")
+
+	_, created, err := database.CreateDynamicResourcePool(context.Background(), db.DynamicResourcePool{
+		ClusterName:    "agent-cluster",
+		PoolName:       "future-version",
+		ConfigVersion:  999,
+		IdempotencyKey: "future-operation",
+		Config:         []byte(`{"pool_name":"future-version"}`),
+		ConfigHash:     "future-hash",
+	})
+	require.NoError(t, err)
+	require.True(t, created)
+	err = ValidatePersistedDynamicPoolConfigs(
+		context.Background(), database, []*config.ResourceManagerWithPoolsConfig{{
+			ResourceManager: &config.ResourceManagerConfig{AgentRM: &config.AgentResourceManagerConfig{
+				ClusterName: "agent-cluster",
+			}},
+			ResourcePools: []config.ResourcePoolConfig{{PoolName: "default"}},
+		}},
+	)
+	require.ErrorContains(t, err, "unsupported config version 999")
+}
+
+func TestDynamicPoolStartupRejectsStaticCollision(t *testing.T) {
+	database, cleanup := db.MustResolveNewPostgresDatabase(t)
+	defer cleanup()
+	db.MustMigrateTestPostgres(t, database, "file://../../../static/migrations", "up")
+
+	rmForNormalization := testDynamicPoolRM()
+	cfg, err := rmForNormalization.NormalizeDynamicResourcePoolConfig(
+		config.ResourcePoolConfig{PoolName: "collision", MaxAuxContainersPerAgent: 100},
+		*model.DefaultTaskContainerDefaults(),
+	)
+	require.NoError(t, err)
+	raw, hash, err := marshalDynamicResourcePoolConfig(cfg)
+	require.NoError(t, err)
+	_, created, err := database.CreateDynamicResourcePool(context.Background(), db.DynamicResourcePool{
+		ClusterName:    "agent-cluster",
+		PoolName:       cfg.PoolName,
+		ConfigVersion:  dynamicResourcePoolConfigVersion,
+		IdempotencyKey: "collision-operation",
+		Config:         raw,
+		ConfigHash:     hash,
+	})
+	require.NoError(t, err)
+	require.True(t, created)
+	err = ValidatePersistedDynamicPoolConfigs(
+		context.Background(), database, []*config.ResourceManagerWithPoolsConfig{{
+			ResourceManager: &config.ResourceManagerConfig{AgentRM: &config.AgentResourceManagerConfig{
+				ClusterName: "agent-cluster",
+			}},
+			ResourcePools: []config.ResourcePoolConfig{{PoolName: cfg.PoolName}},
+		}},
+	)
+	require.ErrorContains(t, err, "conflicts with static pool")
+}

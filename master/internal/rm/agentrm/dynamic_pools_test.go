@@ -13,6 +13,8 @@ import (
 	"github.com/determined-ai/determined/master/internal/config"
 	"github.com/determined-ai/determined/master/internal/config/provconfig"
 	"github.com/determined-ai/determined/master/internal/db"
+	"github.com/determined-ai/determined/master/internal/rm/tasklist"
+	"github.com/determined-ai/determined/master/pkg/aproto"
 	"github.com/determined-ai/determined/master/pkg/model"
 )
 
@@ -23,7 +25,9 @@ func testDynamicPoolRM() *ResourceManager {
 			ClusterName: "agent-cluster",
 			Scheduler:   config.DefaultSchedulerConfig(),
 		},
-		agentService: &agents{},
+		agentService: &agents{
+			agents: tasklist.NewRegistry[aproto.ID, *agent](),
+		},
 	}
 }
 

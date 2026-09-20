@@ -43,7 +43,7 @@ func setupResourcePool(
 
 	registry, err := newPoolRegistry([]config.ResourcePoolConfig{*conf})
 	require.NoError(t, err)
-	agentsRef, _ := newAgentService(registry, &aproto.MasterSetAgentOptions{})
+	agentsRef, _ := newAgentService(registry, &aproto.MasterSetAgentOptions{}, false)
 
 	scheduler, err := MakeScheduler(conf.Scheduler)
 	require.NoError(t, err)

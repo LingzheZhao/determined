@@ -47,6 +47,7 @@ type agents struct {
 func newAgentService(
 	registry *poolRegistry,
 	opts *aproto.MasterSetAgentOptions,
+	restorePersistedAgents bool,
 ) (*agents, *queue.Queue[agentUpdatedEvent]) {
 	agentUpdates := queue.New[agentUpdatedEvent]()
 	a := &agents{
@@ -55,6 +56,10 @@ func newAgentService(
 		agentUpdates: agentUpdates,
 		registry:     registry,
 		opts:         opts,
+	}
+
+	if !restorePersistedAgents {
+		return a, agentUpdates
 	}
 
 	// TODO(ilia): only restore the agents which have some non-zero state.
