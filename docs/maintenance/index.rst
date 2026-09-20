@@ -9,4 +9,5 @@
    distribution
    dynamic-pools
    online-resource-pools
+   task-continuity
    validation

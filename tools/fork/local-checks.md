@@ -67,3 +67,7 @@ existing checks separately when broader formatting or lint coverage is needed:
 make -C harness check
 make -C master check
 ```
+
+For an explicit, disposable CPU control-plane fault probe, see
+[task continuity](../../docs/maintenance/task-continuity.md). It measures a real
+NumPy/Core API experiment and is never part of the default quick check.

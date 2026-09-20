@@ -21,8 +21,10 @@ claims about upstream funding or support are not release guarantees for this for
 | M4: batch experiments | Idempotent submission and explicit checkpoint dependencies | Repeated submissions do not duplicate jobs; retries retain attempt history; evaluation pins immutable artifacts |
 
 M0 candidate distribution builds and the M1 CPU-agent lifecycle have passed
-integration acceptance. GPU workloads and production rollback remain release
-gates. M2–M4 remain planned.
+integration acceptance. An isolated maintenance-to-pools upgrade and database
+backup/restore rollback also passed on the workstation. GPU research workloads and production rollout
+remain release gates. M2 has an opt-in CPU diagnostic baseline; its runtime
+reliability changes and M3–M4 remain planned.
 The [distribution guide](distribution.md) describes candidate artifacts; the
 [dynamic pool guide](dynamic-pools.md) documents the implemented management API.
 The [online pool design](online-resource-pools.md) retains the full acceptance matrix.
@@ -87,9 +89,10 @@ running jobs must state their effects on task identity, ownership, and reservati
    Exercise the intended GPU research environment separately.
 4. Run an existing research workload on a disposable agent/Docker cluster; retain
    configuration, image digest, checkpoint, task identity, and before/after results.
-5. Once those gates pass, scope M2 around a measured control-plane outage window
-   and resource reconciliation. Do not infer long-running training continuity from
-   the CPU pool lifecycle smoke.
+5. Measure M2 control-plane outages with the opt-in
+   [CPU continuity probe](task-continuity.md) while preparing GPU regression.
+   Separate process survival, continued computation, and recovered metadata; do
+   not infer long-running GPU continuity from the CPU lifecycle smoke.
 
 ## Release and compatibility policy
 
