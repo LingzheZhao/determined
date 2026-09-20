@@ -1,0 +1,26 @@
+ARG BASE_IMAGE=ubuntu:22.04
+FROM ${BASE_IMAGE}
+
+ARG FORK_COMMIT
+ARG FORK_VERSION
+LABEL org.opencontainers.image.description="Determined research-cluster fork agent" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.revision="${FORK_COMMIT}" \
+      org.opencontainers.image.title="determined-fork-agent" \
+      org.opencontainers.image.version="${FORK_VERSION}"
+
+RUN apt-get update -yq \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY LICENSE /usr/share/doc/determined-agent/copyright
+COPY agent/packaging/agent.yaml /etc/determined/agent.yaml
+COPY agent/packaging/entrypoint.sh /run/determined/workdir/entrypoint.sh
+COPY .fork-build/bin/determined-agent /usr/bin/determined-agent
+
+RUN chmod 0755 /run/determined/workdir/entrypoint.sh /usr/bin/determined-agent
+
+WORKDIR /run/determined/workdir
+ENTRYPOINT ["/run/determined/workdir/entrypoint.sh"]
+CMD ["run"]
