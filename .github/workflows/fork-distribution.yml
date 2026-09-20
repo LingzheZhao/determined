@@ -2,22 +2,6 @@
 name: Fork distribution
 
 on:  # yamllint disable-line rule:truthy
-  push:
-    branches:
-      - 'codex/**'
-    paths:
-      - '.github/workflows/fork-distribution.yml'
-      - 'agent/**'
-      - 'docs/**'
-      - 'examples/**'
-      - 'go.mod'
-      - 'go.sum'
-      - 'harness/**'
-      - 'helm/**'
-      - 'master/**'
-      - 'proto/**'
-      - 'tools/fork/**'
-      - 'webui/**'
   workflow_dispatch:
     inputs:
       fork_version:
@@ -34,11 +18,6 @@ on:  # yamllint disable-line rule:truthy
         default: ubuntu:22.04
         required: true
         type: string
-      dynamic_pool_smoke:
-        description: Exercise the optional dynamic-pool API and restart recovery
-        default: true
-        required: true
-        type: boolean
 
 permissions:
   contents: read
@@ -48,8 +27,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-package-smoke:
-    name: Build, package, and smoke Linux amd64
+  build-package:
+    name: Build and package Linux amd64
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -108,7 +87,6 @@ jobs:
             echo "FORK_BASE_IMAGE=${base_image}"
             echo "FORK_MASTER_IMAGE=${image_repository}/master:${image_tag}"
             echo "FORK_AGENT_IMAGE=${image_repository}/agent:${image_tag}"
-            echo "FORK_TASK_IMAGE=${image_repository}/smoke-task:${image_tag}"
             echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "${GITHUB_SHA}")"
           } >>"${GITHUB_ENV}"
       - name: Build Python wheel
@@ -186,16 +164,6 @@ jobs:
             --build-arg "FORK_VERSION=${FORK_VERSION}" \
             --file tools/fork/Dockerfile.agent \
             --tag "${FORK_AGENT_IMAGE}" .
-          docker build \
-            --build-arg "FORK_COMMIT=${GITHUB_SHA}" \
-            --build-arg "FORK_VERSION=${FORK_VERSION}" \
-            --file tools/fork/Dockerfile.smoke-task \
-            --tag "${FORK_TASK_IMAGE}" .
-      - name: Run disposable CPU cluster smoke
-        timeout-minutes: 8
-        env:
-          FORK_SMOKE_DYNAMIC_POOLS: ${{ github.event_name == 'workflow_dispatch' && inputs.dynamic_pool_smoke == false && '0' || '1' }}
-        run: tools/fork/smoke.sh
       - name: Package candidate distribution
         env:
           FORK_ARCH: amd64

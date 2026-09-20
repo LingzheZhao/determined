@@ -96,7 +96,7 @@ selection, required idempotency keys, status output, and a nonzero exit on Faile
 
 Black and isort checks passed for the two CLI files. Actionlint passed for both
 fork workflows. The local Docker daemon remains unavailable; image builds and
-agent lifecycle checks run in the disposable GitHub Actions environment. Local
+agent lifecycle checks initially ran in a disposable GitHub Actions environment. Local
 Go dependency downloads were stopped without a completed local Go test result;
 remote compile, race, and PostgreSQL results are recorded separately.
 
@@ -125,29 +125,58 @@ The same baseline suite passed again at `e4149a7f3` in
 [run 35503036589](https://github.com/LingzheZhao/determined/actions/runs/35503036589)
 after the fork lint and test-fixture corrections.
 
-## Fork pull-request workflow compatibility
+## Accepted CPU lifecycle and candidate distribution
 
-The fork's pull-request checks now use the current Python binding generators,
-an explicit fork wheel version, and generated Go mocks. The master, agent, and
-proto lint matrix passed at `5d16be54af174d91de5b7ff822cf88e39b932a9a` in
-[Go lint run 35502787162](https://github.com/LingzheZhao/determined/actions/runs/35502787162).
+Commit `c11dcbcec9e9` passed the complete
+[distribution run 35504119197](https://github.com/LingzheZhao/determined/actions/runs/35504119197).
+The run built the wheel, locked front end, HTML docs, Linux binaries, master/agent
+images, and a disposable CPU task image. Its live cluster accepted:
 
-Several inherited administrative workflows use `pull_request_target`, so GitHub
-runs their definitions from the base branch. This branch removes upstream-only
-credentials from the labeler and PR-title check and limits upstream private-repo,
-team, CircleCI, and preview integrations to the upstream repository. Those fixes
-do not change the old definitions already running from `main` on the first fork
-PR. Their failures remain visible until the base-branch workflow migration is
-integrated; they are not evidence of a successful check or a product test failure.
-The first PR remains a draft while that transition and release gates are tracked.
+- Anonymous and non-administrator denials for pool management.
+- A real static CPU task, followed by online pool creation while another task ran.
+- The same task, allocation, Determined container, and actual Docker container
+  before and after creation, with running-state checks and continued task output.
+- Idempotent creation returning HTTP 200 without a second pool and a successful
+  query through the installed wheel's `resource-pool list-dynamic` command.
+- New-pool agent admission and work, then master restart, actual enabled-agent
+  reconnection in both pools, durable-pool recovery, and new work after recovery.
+
+Packaging, file checksums, executable permissions, and artifact upload also passed.
+The retained candidate is
+`determined-fork-distribution-0.38.1-fork.c11dcbcec9e9-linux-amd64`
+(artifact ID `10603607257`, 350,959,705 bytes, 14-day retention). GitHub's archive
+digest is `sha256:4693298752029c1660a42cfed0090112e54d73ef005e6e5af4aa531dce133163`;
+the artifact also includes its own `MANIFEST.json` and `SHA256SUMS`.
+
+The same source passed the
+[baseline](https://github.com/LingzheZhao/determined/actions/runs/35504121883),
+[Go lint](https://github.com/LingzheZhao/determined/actions/runs/35504121844), and
+[Python checks including full mypy](https://github.com/LingzheZhao/determined/actions/runs/35504121833).
+Bindings, documentation, and pre-commit checks passed too.
+
+## Development validation and Actions budget
+
+After that acceptance, the project owner requested local, small test runs and
+separate maintenance and durable-pool PRs. The retained Actions definition is a
+manual candidate build only; it does not run tests, lint, or cluster smoke, and it
+has no push or PR trigger. `tools/fork/check.sh` provides focused local checks;
+`tools/fork/smoke.sh` remains an explicit local container acceptance tool.
+
+The historical successful runs above remain evidence for the tested code. Moving
+the checks locally does not imply a new run occurred. Keep behavioral regressions,
+remove disposable development probes when no longer useful, and select checks
+according to the changed behavior instead of running every suite for every edit.
+
+The old upstream administrative `pull_request_target` definitions still come from
+`main` until the maintenance PR is integrated. Their old failures are distinct from
+product acceptance. Test/lint workflows were explicitly disabled remotely to stop
+further automatic test spending during the transition.
 
 ## Remaining release gates
 
-- Complete independent artifact set: master/agent images, Python wheel, front-end
-  static assets, deployment documentation, checksums and source manifest.
 - Real research workload regression and a rehearsed rollback on agent/Docker.
 - Fork version, registry/package destinations, and production compatibility matrix.
 
-The online pool lifecycle and control-plane fault-injection matrices belong to M1
-and M2. Neither is validated by this baseline. Successful CI does not constitute a
-production deployment or a published fork release.
+The broader concurrency, queue-ordering, crash-point, and GPU matrices remain
+separate from the accepted normal CPU lifecycle. Successful checks do not constitute
+a production deployment or a published fork release.

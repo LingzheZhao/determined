@@ -123,10 +123,12 @@ configurations. Back up the table and stop the master before an intentional
 rollback if those records must be preserved. A release that predates dynamic
 pools cannot restore or schedule those pools.
 
-This milestone has focused unit and PostgreSQL persistence coverage. It does not
-claim the live-agent lifecycle acceptance matrix in
-[Append-only online resource pools](online-resource-pools.md); those scenarios
-still require environment-level testing with real agents and running work.
+The CPU-agent acceptance at `c11dcbcec` passed creation and idempotent replay,
+permission denials, continued original-pool work with the same allocation and
+real Docker container, new-pool work, and recovery after master restart. See
+[validation](validation.md) for the exact evidence. The broader fault-injection
+and GPU cases in [Append-only online resource pools](online-resource-pools.md)
+remain separate gates.
 
 ## CLI
 
@@ -168,5 +170,6 @@ det resource-pool retry batch-a --cluster-name agent-cluster
 ```
 
 Retry also exits with status 1 if initialization fails again. These commands
-expose the lifecycle described above; they do not change the restart and
-rollback limits or establish the outstanding live-agent acceptance evidence.
+do not change the restart and rollback limits. Successful retry after a forced
+runtime initialization failure remains covered by focused tests rather than the
+normal live CPU lifecycle smoke.

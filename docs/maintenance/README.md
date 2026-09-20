@@ -20,8 +20,9 @@ claims about upstream funding or support are not release guarantees for this for
 | M3: research jobs | Hardware constraints, launch preflight, isolated script environment | Explain unsatisfied constraints; verify GPU/CPU/memory/mount requirements and unmodified training environments |
 | M4: batch experiments | Idempotent submission and explicit checkpoint dependencies | Repeated submissions do not duplicate jobs; retries retain attempt history; evaluation pins immutable artifacts |
 
-M0 distribution builds and M1 append-only pool management are implemented on this
-development branch and are undergoing integration acceptance. M2–M4 remain planned.
+M0 candidate distribution builds and the M1 CPU-agent lifecycle have passed
+integration acceptance. GPU workloads and production rollback remain release
+gates. M2–M4 remain planned.
 The [distribution guide](distribution.md) describes candidate artifacts; the
 [dynamic pool guide](dynamic-pools.md) documents the implemented management API.
 The [online pool design](online-resource-pools.md) retains the full acceptance matrix.
@@ -56,9 +57,16 @@ extraction transactional.
 - GPT-5.6-luna handles read-only status checks: workflow results, tool availability,
   missing artifacts, and progress against the checklist. Escalate new failures to
   the lead; do not silently expand monitoring into scheduler or security changes.
-- GitHub Actions executes repeatable checks. A workflow definition is not evidence
-  of a successful run. Keep logs/artifacts, distinguish skipped from passed, and
-  avoid upstream-only credentials in the fork baseline.
+- Run focused regression checks locally through `tools/fork/check.sh`. The default
+  is deliberately small; database/race and real-container acceptance are explicit
+  options. Do not make every edit rebuild or retest the whole project.
+- GitHub Actions is reserved for manually requested candidate builds. It does not
+  run tests, lint, or smoke suites on pushes or pull requests. Reuse existing
+  successful evidence when the relevant code has not changed. Keep the last
+  accepted artifacts and distinguish local checks from historical CI evidence.
+- Keep security, persistence, and compatibility regressions that protect shipped
+  behavior. Remove disposable development probes and redundant tests when a feature
+  settles; do not retain a growing test suite merely because it was written.
 
 Use a `codex/` development branch and focused pull requests. Do not rewrite active
 work from another contributor. Changes to API schemas include regenerated bindings;
@@ -70,12 +78,13 @@ running jobs must state their effects on task identity, ownership, and reservati
 1. Completed in the baseline branch: targeted task-control and archive security
    fixes, public-path regressions, and a successful fork baseline workflow. See
    [validation.md](validation.md) for the tested revision and CI evidence.
-2. Validate the complete M0 artifact pipeline: binaries, wheel, UI, HTML docs,
-   loadable master/agent images, source manifest, and checksums. Keep the baseline
-   security checks green on the same source revision.
-3. Validate M1 creation, idempotency, authorization, failed initialization, restart
-   recovery, and preservation of existing pool runtime objects. Include a real
-   CPU agent lifecycle, then exercise the intended GPU research environment.
+2. Completed candidate acceptance: binaries, wheel, UI, HTML docs, loadable
+   master/agent images, manifest, and checksums. Subsequent candidate builds are
+   manual; routine development validation stays local.
+3. Completed CPU lifecycle acceptance: create/replay, authorization, unchanged
+   running allocation and Docker container, new-pool work, and restart recovery.
+   Failed initialization and concurrency have focused database/unit coverage.
+   Exercise the intended GPU research environment separately.
 4. Run an existing research workload on a disposable agent/Docker cluster; retain
    configuration, image digest, checkpoint, task identity, and before/after results.
 5. Once those gates pass, scope M2 around a measured control-plane outage window

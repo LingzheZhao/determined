@@ -69,14 +69,20 @@ export FORK_SMOKE_DYNAMIC_POOLS=1
 tools/fork/smoke.sh
 ```
 
-The smoke creates an isolated PostgreSQL database, checks master health and admin
+The local smoke creates an isolated PostgreSQL database, checks master health and admin
 login, waits for a CPU agent to join, and runs a short command to completion. The
-workflow also exercises the dynamic-pool extension by default: it checks anonymous
+dynamic-pool extension checks anonymous
 and non-admin denials, creates a pool through the authenticated API while an
 original-pool task is running, verifies that task keeps its identity and advances,
 joins a second CPU agent, runs work in the new pool, restarts the master, verifies
-recovery, and runs new work in the recovered pool. A manual run can disable this
-extension when isolating base packaging failures. The smoke does not test a GPU path.
+recovery, and runs new work in the recovered pool. Omit `FORK_SMOKE_DYNAMIC_POOLS`
+or set it to `0` to isolate base packaging. The smoke does not test a GPU path.
+
+GitHub Actions only builds and packages candidates when explicitly dispatched.
+It does not run this smoke or a test/lint suite, and pushes and pull requests do
+not request a new candidate build. Run the local smoke when changing container
+startup, agent admission, or pool lifecycle behavior; routine edits use the small
+local checks described in `tools/fork/local-checks.md`.
 
 ## Rollback and retention
 

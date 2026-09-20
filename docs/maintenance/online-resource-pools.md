@@ -2,9 +2,10 @@
 
 Status: the M1 append-only static agent-pool API is implemented. See
 [Dynamic resource pools](dynamic-pools.md) for the actual REST contract,
-authorization rules, restart behavior, and limits. The live-agent acceptance
-matrix below remains future environment-level validation and is not claimed by
-the focused unit and PostgreSQL tests.
+authorization rules, restart behavior, and limits. The normal CPU lifecycle has
+passed with real Docker containers; see [validation](validation.md). The full
+matrix below also includes concurrency, queue ordering, and crash-point cases
+that are not all established by that smoke or by the focused database tests.
 
 ## Implemented seams
 

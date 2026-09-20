@@ -47,10 +47,7 @@ class DCGANTrial(det_ds.DeepSpeedTrial):
         self.discriminator = self.context.wrap_model_engine(discriminator)
         self.fixed_noise = self.context.to_device(
             torch.randn(
-                self.context.get_train_micro_batch_size_per_gpu(),
-                self.hparams["noise_length"],
-                1,
-                1,
+                self.context.get_train_micro_batch_size_per_gpu(), self.hparams["noise_length"], 1, 1
             )
         )
         self.criterion = nn.BCELoss()
