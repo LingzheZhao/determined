@@ -172,6 +172,20 @@ The old upstream administrative `pull_request_target` definitions still come fro
 product acceptance. Test/lint workflows were explicitly disabled remotely to stop
 further automatic test spending during the transition.
 
+## Workstation task-continuity diagnostics
+
+The opt-in [CPU continuity probe](task-continuity.md) was exercised on 2026-09-20
+against the already accepted runtime source, unchanged by the squash integration
+in PRs #3 and #4. The normal 30-step run, 10-second master outage, 10-second agent
+outage, and 45-second master outage with twelve agent reconnect attempts passed
+identity, progress, metrics and checkpoint checks. No cloud tests/builds were run.
+
+Two negative controls measured remaining limits: synchronous `report_progress()`
+stalled computation during a 10-second master outage, and the default five agent
+reconnect attempts were exhausted during a 30-second outage. Neither is fixed by
+adding the diagnostic tool. The linked record includes exact scope and configuration;
+GPU research tasks, blackhole networking and durable offline metadata remain gates.
+
 ## Remaining release gates
 
 - Real research workload regression and a rehearsed rollback on agent/Docker.

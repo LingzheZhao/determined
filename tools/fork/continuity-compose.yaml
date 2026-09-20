@@ -1,0 +1,81 @@
+name: ${CONTINUITY_PROJECT:-determined-continuity-local}
+
+services:
+  postgres:
+    image: postgres:14
+    cpus: 1
+    mem_limit: 1g
+    environment:
+      POSTGRES_DB: determined
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U postgres -d determined]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks: [cluster]
+
+  determined-master:
+    image: ${FORK_MASTER_IMAGE:?set FORK_MASTER_IMAGE}
+    cpus: 2
+    mem_limit: 2g
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: [--config-file, /etc/determined/continuity.yaml]
+    ports: ["127.0.0.1:${CONTINUITY_PORT:-28081}:8080"]
+    configs:
+      - source: master
+        target: /etc/determined/continuity.yaml
+    networks: [cluster]
+
+  determined-agent:
+    image: ${FORK_AGENT_IMAGE:?set FORK_AGENT_IMAGE}
+    cpus: 1
+    mem_limit: 1g
+    environment:
+      DET_AGENT_ID: ${CONTINUITY_AGENT_ID:-continuity-cpu-agent}
+      DET_MASTER_HOST: determined-master
+      DET_MASTER_PORT: 8080
+      DET_CONTAINER_MASTER_HOST: determined-master
+      DET_CONTAINER_MASTER_PORT: 8080
+      DET_RESOURCE_POOL: default
+      DET_SLOT_TYPE: cpu
+      DET_ARTIFICIAL_SLOTS: 1
+      DET_AGENT_RECONNECT_ATTEMPTS: ${CONTINUITY_RECONNECT_ATTEMPTS:-5}
+      DET_AGENT_RECONNECT_BACKOFF: 5
+    volumes: [/var/run/docker.sock:/var/run/docker.sock]
+    networks: [cluster]
+
+networks:
+  cluster:
+    name: ${CONTINUITY_PROJECT:-determined-continuity-local}
+
+configs:
+  master:
+    content: |
+      db:
+        host: postgres
+        port: 5432
+        user: postgres
+        password: postgres
+        name: determined
+      security:
+        initial_user_password: "${DET_PASS:?set a disposable test password}"
+      checkpoint_storage:
+        type: shared_fs
+        host_path: "${CONTINUITY_CHECKPOINT_DIR:?set an absolute disposable checkpoint directory}"
+        storage_path: checkpoints
+      task_container_defaults:
+        network_mode: ${CONTINUITY_PROJECT:-determined-continuity-local}
+      resource_pools:
+        - pool_name: default
+          agent_reconnect_wait: ${CONTINUITY_RECONNECT_WAIT:-90s}
+          scheduler:
+            type: priority
+            preemption: false
+      telemetry:
+        enabled: false
+      observability:
+        enable_prometheus: false
