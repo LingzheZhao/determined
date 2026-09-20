@@ -1,0 +1,188 @@
+---
+name: Fork distribution
+
+on:  # yamllint disable-line rule:truthy
+  workflow_dispatch:
+    inputs:
+      fork_version:
+        description: PEP 440-compatible fork version; empty uses the source commit
+        required: false
+        type: string
+      image_repository:
+        description: Local image namespace recorded in the archives
+        default: local/determined-fork
+        required: true
+        type: string
+      base_image:
+        description: Ubuntu-compatible base image or digest
+        default: ubuntu:22.04
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-distribution-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-package:
+    name: Build and package Linux amd64
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.12'
+          cache-dependency-path: go.sum
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.5'
+          cache: npm
+          cache-dependency-path: webui/react/package-lock.json
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: pip
+          cache-dependency-path: |
+            docs/requirements.txt
+            harness/pyproject.toml
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.2
+      - name: Setup protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: '25.3'
+      - name: Resolve candidate metadata
+        env:
+          REQUESTED_VERSION: ${{ inputs.fork_version }}
+          REQUESTED_REPOSITORY: ${{ inputs.image_repository }}
+          REQUESTED_BASE_IMAGE: ${{ inputs.base_image }}
+        run: |
+          short_sha=${GITHUB_SHA::12}
+          fork_version=${REQUESTED_VERSION:-0.38.1+fork.${short_sha}}
+          image_repository=${REQUESTED_REPOSITORY:-local/determined-fork}
+          base_image=${REQUESTED_BASE_IMAGE:-ubuntu:22.04}
+          image_tag=${fork_version//+/-}
+          if [[ ! "${fork_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.+-][A-Za-z0-9.-]+)*$ ]]; then
+            echo "invalid fork version: ${fork_version}" >&2
+            exit 1
+          fi
+          if [[ ! "${image_repository}" =~ ^[a-z0-9._/-]+$ ]]; then
+            echo "invalid image repository: ${image_repository}" >&2
+            exit 1
+          fi
+          {
+            echo "VERSION=${fork_version}"
+            echo "FORK_VERSION=${fork_version}"
+            echo "FORK_IMAGE_TAG=${image_tag}"
+            echo "FORK_IMAGE_REPOSITORY=${image_repository}"
+            echo "FORK_BASE_IMAGE=${base_image}"
+            echo "FORK_MASTER_IMAGE=${image_repository}/master:${image_tag}"
+            echo "FORK_AGENT_IMAGE=${image_repository}/agent:${image_tag}"
+            echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "${GITHUB_SHA}")"
+          } >>"${GITHUB_ENV}"
+      - name: Build Python wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel harness
+          python -m pip install harness/dist/*.whl
+      - name: Build locked front end
+        working-directory: webui/react
+        run: |
+          npm ci --no-audit
+          npm run build
+      - name: Install documentation dependencies
+        run: python -m pip install -r docs/requirements.txt
+      - name: Generate documentation inputs
+        run: |
+          make -C proto get-deps
+          make -C proto build
+          make -C examples build
+          make -C helm build
+      - name: Build HTML documentation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("docs/conf.py")
+          source = path.read_text()
+          remote = "https://docs.determined.ai/latest/_static/version-switcher/versions.json"
+          local = "_static/version-switcher/versions.json"
+          if source.count(remote) != 1:
+              raise SystemExit("expected exactly one documentation version-switcher URL")
+          path.write_text(source.replace(remote, local))
+          PY
+          make -C docs build SPHINXOPTS='-W --keep-going'
+      - name: Build Linux binaries
+        env:
+          CGO_ENABLED: '0'
+          GOARCH: amd64
+          GOOS: linux
+        run: |
+          mkdir -p .fork-build/bin
+          go build -trimpath \
+            -ldflags "-X github.com/determined-ai/determined/master/version.Version=${FORK_VERSION}" \
+            -o .fork-build/bin/determined-master \
+            ./master/cmd/determined-master
+          go build -trimpath \
+            -ldflags "-X main.version=${FORK_VERSION}" \
+            -o .fork-build/bin/determined-agent \
+            ./agent/cmd/determined-agent
+          go build -trimpath \
+            -o .fork-build/bin/determined-gotmpl \
+            ./master/cmd/determined-gotmpl
+      - name: Stage image contents
+        run: |
+          mkdir -p \
+            .fork-build/master/swagger \
+            .fork-build/master/webui/docs \
+            .fork-build/master/webui/react \
+            .fork-build/master/wheels
+          cp -a proto/build/swagger/. .fork-build/master/swagger/
+          cp -a docs/site/html/. .fork-build/master/webui/docs/
+          cp -a webui/react/build/. .fork-build/master/webui/react/
+          cp harness/dist/*.whl .fork-build/master/wheels/
+      - name: Build local images
+        run: |
+          docker build \
+            --build-arg "BASE_IMAGE=${FORK_BASE_IMAGE}" \
+            --build-arg "FORK_COMMIT=${GITHUB_SHA}" \
+            --build-arg "FORK_VERSION=${FORK_VERSION}" \
+            --file tools/fork/Dockerfile.master \
+            --tag "${FORK_MASTER_IMAGE}" .
+          docker build \
+            --build-arg "BASE_IMAGE=${FORK_BASE_IMAGE}" \
+            --build-arg "FORK_COMMIT=${GITHUB_SHA}" \
+            --build-arg "FORK_VERSION=${FORK_VERSION}" \
+            --file tools/fork/Dockerfile.agent \
+            --tag "${FORK_AGENT_IMAGE}" .
+      - name: Package candidate distribution
+        env:
+          FORK_ARCH: amd64
+          FORK_COMMIT: ${{ github.sha }}
+          FORK_OUTPUT_DIR: dist/fork
+          FORK_STAGE_DIR: .fork-build
+        run: tools/fork/package-distribution.sh
+      - name: Verify packaged checksums and executable modes
+        run: |
+          (cd dist/fork && sha256sum --check SHA256SUMS)
+          mkdir -p "${RUNNER_TEMP}/fork-binaries"
+          tar -xzf dist/fork/*-binaries.tar.gz -C "${RUNNER_TEMP}/fork-binaries"
+          test -x "${RUNNER_TEMP}/fork-binaries/bin/determined-master"
+          test -x "${RUNNER_TEMP}/fork-binaries/bin/determined-agent"
+          test -x "${RUNNER_TEMP}/fork-binaries/bin/determined-gotmpl"
+      - name: Upload candidate distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: determined-fork-distribution-${{ env.FORK_IMAGE_TAG }}-linux-amd64
+          path: dist/fork/
+          if-no-files-found: error
+          retention-days: 14

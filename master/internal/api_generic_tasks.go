@@ -16,6 +16,7 @@ import (
 	"github.com/ghodss/yaml"
 
 	"github.com/determined-ai/determined/master/internal/api"
+	"github.com/determined-ai/determined/master/internal/api/apiutils"
 	"github.com/determined-ai/determined/master/internal/authz"
 	"github.com/determined-ai/determined/master/internal/command"
 	masterConfig "github.com/determined-ai/determined/master/internal/config"
@@ -23,6 +24,7 @@ import (
 	"github.com/determined-ai/determined/master/internal/grpcutil"
 	"github.com/determined-ai/determined/master/internal/job/jobservice"
 	"github.com/determined-ai/determined/master/internal/project"
+	"github.com/determined-ai/determined/master/internal/rbac/audit"
 	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/sproto"
 	"github.com/determined-ai/determined/master/internal/task"
@@ -393,42 +395,45 @@ func (a *apiServer) GetTaskChildren(
 	overrideTasks []model.TaskState,
 ) ([]model.Task, error) {
 	var query string
+	args := []interface{}{taskID}
 	if len(overrideTasks) > 0 {
-		query = fmt.Sprintf(`
+		query = `
 	WITH RECURSIVE cte as (
-		SELECT * FROM tasks WHERE task_id='%s'
+		SELECT * FROM tasks WHERE task_id=?
 		UNION ALL
 		SELECT t.* FROM tasks t INNER JOIN cte ON t.parent_id=cte.task_id
-	`, taskID)
+	`
 		for i, overrideTask := range overrideTasks {
 			if i == 0 {
-				query += fmt.Sprintf(` WHERE t.task_state !='%s'`, overrideTask)
+				query += ` WHERE t.task_state != ?`
 			} else {
-				query += fmt.Sprintf(` AND t.task_state !='%s'`, overrideTask)
+				query += ` AND t.task_state != ?`
 			}
+			args = append(args, overrideTask)
 		}
 		query += `)
-	SELECT task_id, task_state, parent_id, job_id FROM cte`
+	SELECT task_id, task_state, task_type, parent_id, job_id, no_pause FROM cte`
 	} else {
-		query = fmt.Sprintf(`
+		query = `
 	WITH RECURSIVE cte as (
-		SELECT * FROM tasks WHERE task_id='%s'
+		SELECT * FROM tasks WHERE task_id=?
 		UNION ALL
 		SELECT t.* FROM tasks t INNER JOIN cte ON t.parent_id=cte.task_id
 	)
-	SELECT task_id, task_state, parent_id, job_id FROM cte`, taskID)
+	SELECT task_id, task_state, task_type, parent_id, job_id, no_pause FROM cte`
 	}
 
 	var tasks []model.Task
-	rows, err := db.Bun().QueryContext(ctx, query)
+	rows, err := db.Bun().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
-	if rows.Err() != nil {
-		return nil, err
-	}
+	defer rows.Close()
 	err = db.Bun().ScanRows(ctx, rows, &tasks)
 	if err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return tasks, nil
@@ -441,44 +446,125 @@ func (a *apiServer) PropagateTaskState(
 	overrideStates []model.TaskState,
 ) error {
 	var query string
+	args := []interface{}{taskID, state}
 	if len(overrideStates) > 0 {
-		query = fmt.Sprintf(`
+		query = `
 	WITH RECURSIVE cte as (
-		SELECT * FROM tasks WHERE task_id='%s'
+		SELECT * FROM tasks WHERE task_id=?
 		UNION ALL
 		SELECT t.* FROM tasks t INNER JOIN cte ON t.parent_id=cte.task_id
 	)
-	UPDATE tasks SET task_state='%s' FROM cte WHERE cte.task_id=tasks.task_id`, taskID, state)
+	UPDATE tasks SET task_state=? FROM cte WHERE cte.task_id=tasks.task_id`
 		for _, overrideState := range overrideStates {
-			query += fmt.Sprintf(` AND cte.task_state!='%s'`, overrideState)
+			query += ` AND cte.task_state != ?`
+			args = append(args, overrideState)
 		}
 		query += ";"
 	} else {
-		query = fmt.Sprintf(`
+		query = `
 	WITH RECURSIVE cte as (
-		SELECT * FROM tasks WHERE task_id='%s'
+		SELECT * FROM tasks WHERE task_id=?
 		UNION ALL
 		SELECT t.* FROM tasks t INNER JOIN cte ON t.parent_id=cte.task_id
 	)
-	UPDATE tasks SET task_state='%s' FROM cte WHERE cte.task_id=tasks.task_id;`, taskID, state)
+	UPDATE tasks SET task_state=? FROM cte WHERE cte.task_id=tasks.task_id;`
 	}
-	_, err := db.Bun().NewRaw(query).Exec(ctx)
+	_, err := db.Bun().NewRaw(query, args...).Exec(ctx)
 	return err
+}
+
+func setTaskStates(
+	ctx context.Context, tasksToMutate []model.Task, state model.TaskState,
+	overrideStates []model.TaskState,
+) error {
+	taskIDs := make([]model.TaskID, 0, len(tasksToMutate))
+	for _, taskModel := range tasksToMutate {
+		taskIDs = append(taskIDs, taskModel.TaskID)
+	}
+	if len(taskIDs) == 0 {
+		return nil
+	}
+
+	query := db.Bun().NewUpdate().Table("tasks").
+		Set("task_state = ?", state).
+		Where("task_id IN (?)", bun.In(taskIDs))
+	if len(overrideStates) > 0 {
+		query = query.Where("task_state NOT IN (?)", bun.In(overrideStates))
+	}
+	_, err := query.Exec(ctx)
+	return err
+}
+
+func filterTasksByState(
+	tasksToFilter []model.Task, overrideStates []model.TaskState,
+) []model.Task {
+	filtered := make([]model.Task, 0, len(tasksToFilter))
+	for _, taskModel := range tasksToFilter {
+		if taskModel.State == nil || slices.Contains(overrideStates, *taskModel.State) {
+			continue
+		}
+		filtered = append(filtered, taskModel)
+	}
+	return filtered
 }
 
 func (a *apiServer) FindRoot(ctx context.Context, taskID model.TaskID) (model.TaskID, error) {
 	out := struct {
 		Root model.TaskID
 	}{}
-	query := fmt.Sprintf(`
+	query := `
 	WITH RECURSIVE my_tree as (
 		SELECT task_id, parent_id, task_id as root FROM tasks WHERE parent_id IS NULL
 		UNION ALL
 		SELECT t.task_id, t.parent_id, m.root FROM tasks t JOIN my_tree m on m.task_id=t.parent_id
 	)
-	SELECT root FROM my_tree WHERE task_id='%s'`, taskID)
-	err := db.Bun().NewRaw(query).Scan(ctx, &out)
+	SELECT root FROM my_tree WHERE task_id=?`
+	err := db.Bun().NewRaw(query, taskID).Scan(ctx, &out)
 	return out.Root, err
+}
+
+func (a *apiServer) authorizeGenericTaskMutation(
+	ctx context.Context, requestedTaskID model.TaskID, tasksToMutate []model.Task,
+) error {
+	curUser, _, err := grpcutil.GetUser(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, taskModel := range tasksToMutate {
+		if taskModel.TaskType != model.TaskTypeGeneric {
+			return fmt.Errorf("task %s is not a generic task", taskModel.TaskID)
+		}
+
+		_, taskSpec, err := getGenericTaskSpec(ctx, taskModel.TaskID)
+		if err != nil {
+			return fmt.Errorf("retrieving generic task spec for task %s: %w", taskModel.TaskID, err)
+		}
+		if taskSpec == nil {
+			return fmt.Errorf("could not retrieve task spec for task: %s", taskModel.TaskID)
+		}
+
+		taskCtx := audit.SupplyEntityID(ctx, taskModel.TaskID.String())
+		workspaceID := model.AccessScopeID(taskSpec.WorkspaceID)
+		if err := command.AuthZProvider.Get().CanGetNSC(
+			taskCtx, *curUser, workspaceID,
+		); err != nil {
+			return authz.SubIfUnauthorized(
+				err, api.NotFoundErrs("task", requestedTaskID.String(), true),
+			)
+		}
+
+		var ownerID *model.UserID
+		if taskSpec.Base.Owner != nil {
+			ownerID = &taskSpec.Base.Owner.ID
+		}
+		if err := command.AuthZProvider.Get().CanControlGenericTask(
+			taskCtx, *curUser, workspaceID, ownerID,
+		); err != nil {
+			return apiutils.MapAndFilterErrors(err, nil, nil)
+		}
+	}
+	return nil
 }
 
 func (a *apiServer) SetTaskState(ctx context.Context, taskID model.TaskID, state model.TaskState) error {
@@ -503,14 +589,7 @@ func (a *apiServer) KillGenericTask(
 	if taskModel.TaskType != model.TaskTypeGeneric {
 		return nil, fmt.Errorf("this operation is currently only supported for generic tasks")
 	}
-	// Validate state
-	if taskModel.State == nil {
-		return nil, fmt.Errorf("task state is NULL")
-	}
 	overrideStates := []model.TaskState{model.TaskStateCanceled, model.TaskStateCompleted}
-	if slices.Contains(overrideStates, *taskModel.State) {
-		return nil, fmt.Errorf("cannot cancel task %s as it is in state '%s'", req.TaskId, *taskModel.State)
-	}
 	if req.KillFromRoot {
 		rootID, err := a.FindRoot(ctx, model.TaskID(req.TaskId))
 		if err != nil {
@@ -518,24 +597,35 @@ func (a *apiServer) KillGenericTask(
 		}
 		killTaskID = rootID
 	}
-	err = a.PropagateTaskState(ctx, killTaskID, model.TaskStateStoppingCanceled, overrideStates)
+	tasksToDelete, err := a.GetTaskChildren(ctx, killTaskID, nil)
 	if err != nil {
 		return nil, err
 	}
-	tasksToDelete, err := a.GetTaskChildren(ctx, killTaskID, overrideStates)
-	if err != nil {
+	if err := a.authorizeGenericTaskMutation(
+		ctx, model.TaskID(req.TaskId), tasksToDelete,
+	); err != nil {
+		return nil, err
+	}
+	if taskModel.State == nil {
+		return nil, fmt.Errorf("task state is NULL")
+	}
+	if slices.Contains(overrideStates, *taskModel.State) {
+		return nil, fmt.Errorf("cannot cancel task %s as it is in state '%s'", req.TaskId, *taskModel.State)
+	}
+	tasksToDelete = filterTasksByState(tasksToDelete, overrideStates)
+	if err := setTaskStates(
+		ctx, tasksToDelete, model.TaskStateStoppingCanceled, overrideStates,
+	); err != nil {
 		return nil, err
 	}
 	for _, childTask := range tasksToDelete {
-		if childTask.State == nil || *childTask.State != model.TaskStateCanceled {
-			allocationID, err := getAllocationFromTaskID(ctx, childTask.TaskID)
-			if err != nil {
-				return nil, err
-			}
-			err = task.DefaultService.Signal(model.AllocationID(allocationID), task.KillAllocation, "user requested task kill")
-			if err != nil {
-				return nil, err
-			}
+		allocationID, err := getAllocationFromTaskID(ctx, childTask.TaskID)
+		if err != nil {
+			return nil, err
+		}
+		err = task.DefaultService.Signal(model.AllocationID(allocationID), task.KillAllocation, "user requested task kill")
+		if err != nil {
+			return nil, err
 		}
 	}
 	return &apiv1.KillGenericTaskResponse{}, nil
@@ -561,7 +651,18 @@ func (a *apiServer) PauseGenericTask(
 		model.TaskStateStoppingCanceled,
 		model.TaskStateStoppingCompleted,
 	}
-	// Validate state
+	tasksToPause, err := a.GetTaskChildren(ctx, model.TaskID(req.TaskId), nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.authorizeGenericTaskMutation(
+		ctx, model.TaskID(req.TaskId), tasksToPause,
+	); err != nil {
+		return nil, err
+	}
+	if taskModel.State == nil {
+		return nil, fmt.Errorf("task state is NULL")
+	}
 	if slices.Contains(overrideStates, *taskModel.State) {
 		return nil, fmt.Errorf("cannot pause task %s as it is in state '%s'", req.TaskId, *taskModel.State)
 	}
@@ -569,12 +670,10 @@ func (a *apiServer) PauseGenericTask(
 	if taskModel.NoPause != nil && *taskModel.NoPause {
 		return nil, fmt.Errorf("cannot pause task %s with `no_pause` set to true", req.TaskId)
 	}
-	err = a.PropagateTaskState(ctx, model.TaskID(req.TaskId), model.TaskStateStoppingPaused, overrideStates)
-	if err != nil {
-		return nil, err
-	}
-	tasksToPause, err := a.GetTaskChildren(ctx, model.TaskID(req.TaskId), overrideStates)
-	if err != nil {
+	tasksToPause = filterTasksByState(tasksToPause, overrideStates)
+	if err := setTaskStates(
+		ctx, tasksToPause, model.TaskStateStoppingPaused, overrideStates,
+	); err != nil {
 		return nil, err
 	}
 	for _, pausingTask := range tasksToPause {
@@ -606,10 +705,6 @@ func (a *apiServer) UnpauseGenericTask(
 	if err != nil {
 		return nil, fmt.Errorf("%s (make sure task is of type GENERIC)", err)
 	}
-	// Validate state
-	if *taskModel.State != model.TaskStatePaused && *taskModel.State != model.TaskStateStoppingPaused {
-		return nil, fmt.Errorf("cannot unpause task %s as it is not in paused state", req.TaskId)
-	}
 	// Tasks (and child tasks) that are killed, completed, or exit with an error should not be resumed
 	overrideStates := []model.TaskState{
 		model.TaskStateCanceled,
@@ -622,6 +717,17 @@ func (a *apiServer) UnpauseGenericTask(
 	tasksToResume, err := a.GetTaskChildren(ctx, model.TaskID(req.TaskId), overrideStates)
 	if err != nil {
 		return nil, err
+	}
+	if err := a.authorizeGenericTaskMutation(
+		ctx, model.TaskID(req.TaskId), tasksToResume,
+	); err != nil {
+		return nil, err
+	}
+	if taskModel.State == nil {
+		return nil, fmt.Errorf("task state is NULL")
+	}
+	if *taskModel.State != model.TaskStatePaused && *taskModel.State != model.TaskStateStoppingPaused {
+		return nil, fmt.Errorf("cannot unpause task %s as it is not in paused state", req.TaskId)
 	}
 	for _, resumingTask := range tasksToResume {
 		allocationString, genericTaskSpec, err := getGenericTaskSpec(ctx, resumingTask.TaskID)
