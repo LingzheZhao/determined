@@ -39,7 +39,7 @@ these permissions are restricted to administrators.
 
 Create a pool with:
 
-```http
+```text
 POST /api/v1/resource-pools/dynamic
 Content-Type: application/json
 
@@ -89,7 +89,7 @@ the save can observe `Pending`.
 
 List all operations, or operations for one resource manager, with:
 
-```http
+```text
 GET /api/v1/resource-pools/dynamic
 GET /api/v1/resource-pools/dynamic?cluster_name=agent-cluster
 ```
@@ -100,7 +100,7 @@ ready pools.
 
 Retry a failed operation with an empty body:
 
-```http
+```text
 POST /api/v1/resource-pools/dynamic/batch-a/retry?cluster_name=agent-cluster
 ```
 

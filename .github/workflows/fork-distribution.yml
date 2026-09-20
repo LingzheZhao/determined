@@ -142,7 +142,7 @@ jobs:
               raise SystemExit("expected exactly one documentation version-switcher URL")
           path.write_text(source.replace(remote, local))
           PY
-          make -C docs build
+          make -C docs build SPHINXOPTS='-W --keep-going'
       - name: Build Linux binaries
         env:
           CGO_ENABLED: '0'
