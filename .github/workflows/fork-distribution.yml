@@ -130,7 +130,9 @@ jobs:
           make -C examples build
           make -C helm build
       - name: Build HTML documentation
-        run: make -C docs build
+        run: |
+          make -C docs build \
+            SPHINXOPTS='-W -D html_theme_options.switcher.json_url=_static/version-switcher/versions.json'
       - name: Build Linux binaries
         env:
           CGO_ENABLED: '0'
