@@ -787,7 +787,11 @@ pool.
 ``agent_reconnect_wait``
 ========================
 
-Maximum time the master should wait for a disconnected agent before considering it dead.
+Maximum time the master should wait for a disconnected agent before considering it dead. Defaults
+to 150 seconds, matching the default agent reconnection window. During this period the disconnected
+agent cannot accept new work, but its slots and running containers are retained for recovery. Longer
+values tolerate longer connection failures at the cost of delaying failed-agent cleanup and making
+the unavailable capacity visible for longer.
 
 ``agent_reattach_enabled`` (experimental)
 =========================================

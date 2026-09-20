@@ -43,7 +43,7 @@ services:
       DET_RESOURCE_POOL: default
       DET_SLOT_TYPE: cpu
       DET_ARTIFICIAL_SLOTS: 1
-      DET_AGENT_RECONNECT_ATTEMPTS: ${CONTINUITY_RECONNECT_ATTEMPTS:-5}
+      DET_AGENT_RECONNECT_ATTEMPTS: ${CONTINUITY_RECONNECT_ATTEMPTS:-30}
       DET_AGENT_RECONNECT_BACKOFF: 5
     volumes: [/var/run/docker.sock:/var/run/docker.sock]
     networks: [cluster]
@@ -71,7 +71,7 @@ configs:
         network_mode: ${CONTINUITY_PROJECT:-determined-continuity-local}
       resource_pools:
         - pool_name: default
-          agent_reconnect_wait: ${CONTINUITY_RECONNECT_WAIT:-90s}
+          agent_reconnect_wait: ${CONTINUITY_RECONNECT_WAIT:-150s}
           scheduler:
             type: priority
             preemption: false

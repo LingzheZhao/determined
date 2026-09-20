@@ -41,7 +41,7 @@ Every step prints one compact JSON record and atomically replaces
 `/run/determined/workdir/continuity-progress.json`. Each record includes the
 step, loss, PID, unique process `run_id`, allocation/container/task identity,
 phase, and latest confirmed checkpoint UUID. Metric reporting uses
-`metrics_before`/`metrics_after`, while synchronous progress reporting uses
+`metrics_before`/`metrics_after`, while optional progress reporting uses
 `progress_before`/`progress_after`. Checkpoint calls similarly use
 `checkpoint_before`/`checkpoint_after`. Set the `report_progress` hyperparameter
 to `false` to isolate asynchronous metric behavior. Read the file from the task
