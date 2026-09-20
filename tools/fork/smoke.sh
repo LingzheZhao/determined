@@ -40,7 +40,10 @@ wait_for() {
 }
 
 health_ready() {
-    curl --fail --silent --show-error "${master_url}/health" >/dev/null
+    curl --fail --silent --show-error \
+        -H 'Content-Type: application/json' \
+        --data '{"username":"admin","password":"fork-smoke-password","isHashed":false}' \
+        "${master_url}/api/v1/auth/login" >/dev/null
 }
 
 agent_count_at_least() {

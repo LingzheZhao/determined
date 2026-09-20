@@ -1,5 +1,5 @@
 import json
-from pathlib import Path
+import pathlib
 
 import pytest
 from responses import matchers
@@ -27,7 +27,7 @@ def dynamic_pool_response(state: str = "Ready") -> dict:
 
 
 def test_create_dynamic_pool_posts_yaml_config_and_reports_failed_state(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     config_path = tmp_path / "pool.yaml"
     config_path.write_text(
@@ -77,7 +77,7 @@ def test_create_dynamic_pool_posts_yaml_config_and_reports_failed_state(
 
 
 def test_create_dynamic_pool_json_output(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     config_path = tmp_path / "pool.json"
     config_path.write_text(json.dumps({"pool_name": "online-gpu"}), encoding="utf-8")
@@ -149,7 +149,7 @@ def test_retry_dynamic_pool_posts_empty_body_and_renders_state(
     assert "Ready" in output
 
 
-def test_dynamic_pool_config_must_be_mapping(tmp_path: Path) -> None:
+def test_dynamic_pool_config_must_be_mapping(tmp_path: pathlib.Path) -> None:
     config_path = tmp_path / "pool.yaml"
     config_path.write_text("- not\n- a\n- mapping\n", encoding="utf-8")
 
@@ -160,7 +160,7 @@ def test_dynamic_pool_config_must_be_mapping(tmp_path: Path) -> None:
 
 
 def test_dynamic_pool_create_help_and_required_idempotency_key(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     with pytest.raises(SystemExit) as help_exit:
         cli.main(["resource-pool", "create", "--help"])

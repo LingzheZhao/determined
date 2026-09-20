@@ -142,7 +142,7 @@ func TestPoolRegistryConcurrentLookupAndPublication(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	pool, ok := registry.readyPool("pool")
+	pool, ok := registry.readyPool(poolRegistryTestPoolName)
 	require.True(t, ok)
 	require.Same(t, runtimePool, pool)
 }
