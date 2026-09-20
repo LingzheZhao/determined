@@ -17,7 +17,6 @@ import (
 	"github.com/determined-ai/determined/master/internal/api"
 	"github.com/determined-ai/determined/master/internal/authz"
 	"github.com/determined-ai/determined/master/internal/checkpoints"
-	masterConfig "github.com/determined-ai/determined/master/internal/config"
 	"github.com/determined-ai/determined/master/internal/configpolicy"
 	detContext "github.com/determined-ai/determined/master/internal/context"
 	"github.com/determined-ai/determined/master/internal/db"
@@ -351,7 +350,7 @@ func (m *Master) parseCreateExperiment(ctx context.Context, req *apiv1.CreateExp
 
 	// Apply the scheduler's default priority.
 	if config.Resources().Priority() == nil {
-		prio := masterConfig.DefaultPriorityForPool(poolName.String())
+		prio := rm.DefaultPriorityForPool(m.rm, poolName.String())
 		config.RawResources.RawPriority = &prio
 	}
 

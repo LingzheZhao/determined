@@ -40,21 +40,26 @@ type agents struct {
 
 	agents       *tasklist.Registry[aproto.ID, *agent]
 	agentUpdates *queue.Queue[agentUpdatedEvent]
-	poolConfigs  []config.ResourcePoolConfig
+	registry     *poolRegistry
 	opts         *aproto.MasterSetAgentOptions
 }
 
 func newAgentService(
-	poolConfigs []config.ResourcePoolConfig,
+	registry *poolRegistry,
 	opts *aproto.MasterSetAgentOptions,
+	restorePersistedAgents bool,
 ) (*agents, *queue.Queue[agentUpdatedEvent]) {
 	agentUpdates := queue.New[agentUpdatedEvent]()
 	a := &agents{
 		syslog:       logrus.WithField("component", "agents"),
 		agents:       tasklist.NewRegistry[aproto.ID, *agent](),
 		agentUpdates: agentUpdates,
-		poolConfigs:  poolConfigs,
+		registry:     registry,
 		opts:         opts,
+	}
+
+	if !restorePersistedAgents {
+		return a, agentUpdates
 	}
 
 	// TODO(ilia): only restore the agents which have some non-zero state.
@@ -202,15 +207,14 @@ func (a *agents) createAgent(
 		resourcePool = "default"
 	}
 
-	var poolConfig *config.ResourcePoolConfig
-	for _, pc := range a.poolConfigs {
-		// The address of a loop variable is always the same. Use a temporary variable to capture the address.
-		if pc.PoolName == resourcePool {
-			poolConfig = &pc
-			break
-		}
+	var poolConfig config.ResourcePoolConfig
+	var ok bool
+	if restoredAgentState != nil {
+		poolConfig, ok = a.registry.desiredConfig(resourcePool)
+	} else {
+		poolConfig, ok = a.registry.readyConfig(resourcePool)
 	}
-	if poolConfig == nil {
+	if !ok {
 		return nil, fmt.Errorf("cannot find specified resource pool %s for agent %s", resourcePool, id)
 	}
 
@@ -218,7 +222,7 @@ func (a *agents) createAgent(
 		id,
 		a.agentUpdates,
 		resourcePool,
-		poolConfig,
+		&poolConfig,
 		opts,
 		restoredAgentState,
 		unregister,

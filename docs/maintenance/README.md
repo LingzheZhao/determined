@@ -1,57 +1,118 @@
 # Research-cluster fork maintenance
 
-This fork starts from upstream commit `c1e9c6d7b` and focuses first on a
-maintainable agent/Docker deployment for research clusters. Existing backends
-remain in the source tree, but this maintenance baseline does not claim new
-support for every cloud, scheduler, framework, or GPU configuration.
+This fork retains Determined's experiment management and scheduling while working
+toward online maintenance, heterogeneous hardware support, and less intrusive
+training environments. The initial supported development focus is the static
+agent/Docker path. Existing backends must continue to compile; extending every
+cloud, framework, or enterprise integration is outside the initial scope.
 
-## Maintained baseline
+The starting point is upstream commit `c1e9c6d7b` (the 0.38.1 release-note commit).
+The project owner's supplied architecture review informed this plan. Historical
+claims about upstream funding or support are not release guarantees for this fork.
 
-The first maintenance changes harden two existing behavior boundaries:
+## Delivery order and acceptance gates
 
-- Generic Task kill, pause, and unpause require control authorization. Under
-  basic authorization, the task owner or an administrator may control the task;
-  ownerless tasks require an administrator. RBAC uses the existing workspace
-  permission. Cascades authorize every affected task before changing any state.
-- Task-context and proxied-checkpoint tar archives reject paths, links, and
-  special files that can escape the extraction directory. Extraction does not
-  restore archive ownership or unsafe permission bits. Contained symbolic and
-  hard links remain supported under the documented checks.
-
-The [validation record](validation.md) distinguishes checks run for these changes
-from later evidence produced on a combined development branch.
-
-## Build and local checks
-
-GitHub Actions retains one manually dispatched candidate build. It produces the
-wheel, front end, HTML documentation, Linux binaries, master and agent image
-archives, a manifest, and checksums. It does not publish to a registry or package
-index and does not run automatically for pushes or pull requests. See the
-[distribution guide](distribution.md).
-
-Routine development checks run locally. Use the smallest check that covers the
-changed behavior, preserve regressions that protect security boundaries, and run
-the optional Docker smoke only for image startup or agent-path changes. The
-repository-local commands are documented in `tools/fork/local-checks.md`.
-
-## Roadmap
-
-| Milestone | Status | Intended outcome |
+| Milestone | Deliverable | Required evidence |
 | --- | --- | --- |
-| M0: maintainable baseline | Current | Security fixes, reproducible candidate artifacts, and focused local validation |
-| M1: online resource pools | Planned | Append-only pool creation with durable desired state, authorization, and restart recovery |
-| M2: task continuity | Planned | Bounded telemetry buffering, allocation reconciliation, and explicit version compatibility |
-| M3: research jobs | Planned | Hardware constraints, launch preflight, and isolated script environments |
-| M4: batch experiments | Planned | Idempotent submission and explicit checkpoint dependencies |
+| M0: maintainable baseline | Task-control authorization, safe archive extraction, fork CI, independent build artifacts | Negative security regressions; master/agent build; Python wheel, UI and docs artifacts; a real workload regression before release |
+| M1: online resource pools | Append-only static agent pools backed by durable desired configuration and one registry | Create, observe readiness, join agent, submit work, restart master; existing pool objects, queues and allocations remain intact |
+| M2: task continuity | Bounded telemetry buffering, allocation reconciliation and version compatibility | Short/long master outage, agent restart, task completion during outage; process progress and no duplicate GPU allocation |
+| M3: research jobs | Hardware constraints, launch preflight, isolated script environment | Explain unsatisfied constraints; verify GPU/CPU/memory/mount requirements and unmodified training environments |
+| M4: batch experiments | Idempotent submission and explicit checkpoint dependencies | Repeated submissions do not duplicate jobs; retries retain attempt history; evaluation pins immutable artifacts |
 
-Future milestones require separate design, implementation, and acceptance
-evidence. This maintenance change does not expose or claim an online resource-pool
-API, master-outage task continuity, or GPU support.
+M0 candidate distribution builds and the M1 CPU-agent lifecycle have passed
+integration acceptance. GPU workloads and production rollback remain release
+gates. M2–M4 remain planned.
+The [distribution guide](distribution.md) describes candidate artifacts; the
+[dynamic pool guide](dynamic-pools.md) documents the implemented management API.
+The [online pool design](online-resource-pools.md) retains the full acceptance matrix.
+Record actual checks and remaining gates in [validation.md](validation.md).
 
-## Release policy
+## Baseline behavior changes
 
-Preserve Apache 2.0 notices and historical upstream documentation. Treat workflow
-artifacts as candidates rather than published releases. Before promotion, record
-the source revision, version, image destination, supported runtime matrix, real
-research-workload result, database backup and restore rehearsal, and rollback
-procedure. Keep the previous accepted artifact until rollback has been exercised.
+Generic Task kill, pause, and unpause now require control authorization. With basic
+authorization, only the task owner or an administrator can control a task; tasks
+without an owner require an administrator. RBAC uses the existing workspace
+`UPDATE_NSC` permission in addition to visibility. Cascades check every affected
+task before any state update or allocation action. Other notebook/shell/command
+authorization policies are unchanged.
+
+Task-context and proxied checkpoint archives reject escaping paths/links and
+special files. Archive ownership and unsafe permission bits are not restored.
+Contained symbolic links and hard links remain supported, but hard links must
+resolve to an existing regular file in the extraction directory; unsafe tar link
+fallbacks are rejected. Proxied checkpoint validation uses a temporary archive
+file, so the destination filesystem needs space for both the downloaded archive
+and extracted contents. This change does not impose an archive size quota or make
+extraction transactional.
+
+## Working model
+
+- The project lead owns scope, architecture, integration review, and acceptance.
+  Keep an explicit next milestone and pick bounded work from its checklist.
+- GPT-5.6-sol subagents implement fixes, tests, build plumbing, and documentation
+  in explicitly assigned, non-overlapping files. Each returns the changed paths,
+  exact validation performed, and unresolved risks. Review their changes before
+  promoting a milestone.
+- GPT-5.6-luna handles read-only status checks: workflow results, tool availability,
+  missing artifacts, and progress against the checklist. Escalate new failures to
+  the lead; do not silently expand monitoring into scheduler or security changes.
+- Run focused regression checks locally through `tools/fork/check.sh`. The default
+  is deliberately small; database/race and real-container acceptance are explicit
+  options. Do not make every edit rebuild or retest the whole project.
+- GitHub Actions is reserved for manually requested candidate builds. It does not
+  run tests, lint, or smoke suites on pushes or pull requests. Reuse existing
+  successful evidence when the relevant code has not changed. Keep the last
+  accepted artifacts and distinguish local checks from historical CI evidence.
+- Keep security, persistence, and compatibility regressions that protect shipped
+  behavior. Remove disposable development probes and redundant tests when a feature
+  settles; do not retain a growing test suite merely because it was written.
+
+Use a `codex/` development branch and focused pull requests. Do not rewrite active
+work from another contributor. Changes to API schemas include regenerated bindings;
+database changes include reversible migrations and restart tests. Changes affecting
+running jobs must state their effects on task identity, ownership, and reservations.
+
+## Current work queue
+
+1. Completed in the baseline branch: targeted task-control and archive security
+   fixes, public-path regressions, and a successful fork baseline workflow. See
+   [validation.md](validation.md) for the tested revision and CI evidence.
+2. Completed candidate acceptance: binaries, wheel, UI, HTML docs, loadable
+   master/agent images, manifest, and checksums. Subsequent candidate builds are
+   manual; routine development validation stays local.
+3. Completed CPU lifecycle acceptance: create/replay, authorization, unchanged
+   running allocation and Docker container, new-pool work, and restart recovery.
+   Failed initialization and concurrency have focused database/unit coverage.
+   Exercise the intended GPU research environment separately.
+4. Run an existing research workload on a disposable agent/Docker cluster; retain
+   configuration, image digest, checkpoint, task identity, and before/after results.
+5. Once those gates pass, scope M2 around a measured control-plane outage window
+   and resource reconciliation. Do not infer long-running training continuity from
+   the CPU pool lifecycle smoke.
+
+## Release and compatibility policy
+
+Preserve Apache 2.0 notices and attribution. Keep historical upstream documentation
+available, but distinguish it from verified fork behavior. Report issues for this
+fork in `LingzheZhao/determined`; the upstream contribution and CLA process below
+the README fork notice describes upstream contributions.
+
+Use Go 1.22 as the reproduction baseline specified by this source tree, not as a
+claim that it remains a supported security toolchain. Upgrade dependencies in
+separate measured changes. Likewise, exercising Python 3.8 is a compatibility
+check for this tree, not an endorsement of deploying an obsolete interpreter.
+
+Before the first fork release, select and record the fork version scheme, package
+and container destinations, supported production runtime versions, and rollback
+procedure. Produce checksums and a manifest identifying the source revision and
+dependencies. Include master and agent binaries/images, the Python wheel, front-end
+static assets, and necessary deployment documentation. CI artifacts are candidates,
+not a published release. The old publishing workflows and defaults require separate
+review before use in this fork.
+
+For M2, classify traffic by meaning: lossy observations may have bounded discard
+policies; searcher decisions, checkpoint commits, and task transitions require
+reliable, idempotent handling. A missing connection never proves resources are free.
+GPU sharing, dual-active masters, framework-wide modernization, and front-end
+rewrites are separate proposals rather than implicit parts of these milestones.

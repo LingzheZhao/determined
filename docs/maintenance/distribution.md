@@ -1,28 +1,31 @@
 # Fork distribution candidates
 
-The `Fork distribution` GitHub Actions workflow is a manually dispatched build.
-It has no push, pull-request, schedule, release, or registry-publication trigger.
-The operator supplies an optional fork version, a local image namespace, and an
-Ubuntu-compatible base image or digest.
+The `Fork distribution` GitHub Actions workflow builds a self-contained candidate
+set for this research-cluster fork. It does not publish to a container registry or
+package index. Each run records the source commit, fork version, tool versions,
+local image names and image IDs in `MANIFEST.json`; `SHA256SUMS` covers every
+delivered file. Treat a successful workflow artifact as a release candidate, not
+as a supported production release.
 
-## Build contents
+## Supported build baseline
 
-The Linux amd64 build uses Go 1.22.12, Node 20.19.5 with the committed npm lock,
-Python 3.10, Helm 3.15.2, and protoc 25.3. Its candidate artifact contains:
+The workflow uses Linux amd64, Go 1.22.12, Node 20.19.5 with the committed npm
+lockfile, Python 3.10, Helm 3.15.2, and protoc 25.3. The default candidate version
+is `0.38.1+fork.<12-character commit>`. A manual run can provide another
+PEP 440-compatible fork version, a local image repository, and a base image. The
+image tag replaces `+` with `-`. These versions reproduce the source tree's build
+contract; they are not a promise of security support beyond this candidate.
 
-- executable master, agent, and `determined-gotmpl` binaries;
-- the Python wheel, locked front-end assets, and generated HTML documentation;
-- gzip-compressed Docker archives for the master and agent;
-- `MANIFEST.json`, `SHA256SUMS`, and deployment documentation.
-
-The manifest records the source commit, fork version, platform, tool versions,
-dependency-file hashes, base image reference, image names, and image IDs. The
-workflow does not build or claim a GPU image.
+The artifact contains executable master, agent, and `determined-gotmpl` binaries;
+the Python wheel; front-end assets; generated HTML documentation; and gzip-compressed
+Docker archives for the master and agent. The master image embeds the wheel,
+generated API description, front end, docs, migrations, and runtime scripts needed
+by agent tasks.
 
 ## Verify and load
 
-Download and extract the candidate on a Linux amd64 host, then verify it before
-loading its images:
+Download and extract the workflow artifact on a Linux amd64 host, then verify it
+before loading images:
 
 ```sh
 sha256sum --check SHA256SUMS
@@ -30,17 +33,21 @@ gzip -dc determined-fork-*-master-image.tar.gz | docker load
 gzip -dc determined-fork-*-agent-image.tar.gz | docker load
 ```
 
-Use the exact image names from `MANIFEST.json`. Loading the archives only changes
-the local Docker image store. The master requires PostgreSQL plus writable cache
-and checkpoint locations. A static Docker agent normally needs network access to
-the master and `/var/run/docker.sock`; that socket grants control of the Docker
-host and belongs only on trusted machines.
+Use the exact image names from `MANIFEST.json`. The default names are under
+`local/determined-fork`, deliberately separate from upstream registry namespaces.
+Loading an archive only changes the local Docker image store.
 
-## Optional local CPU smoke
+The master needs PostgreSQL and writable cache/checkpoint locations. The agent
+needs network access to the master and access to a supported container runtime.
+Static Docker agents normally mount `/var/run/docker.sock`; granting that mount is
+equivalent to granting control of the Docker host, so restrict it to trusted
+machines. Configure CPU agents with `slot_type: cpu`. This candidate makes no GPU
+support claim.
 
-The workflow does not run a cluster smoke. To test the delivered wheel and images
-locally, use a matching source checkout and build the disposable CPU task fixture
-from the delivered wheel:
+For a disposable local example, set `artifact_dir` to the absolute path of the
+extracted candidate, then run the following commands from a checkout of this
+repository. The task image is a test fixture rather than a release artifact, so
+the example builds it locally from the delivered wheel:
 
 ```sh
 artifact_dir=/absolute/path/to/extracted-candidate
@@ -58,18 +65,33 @@ docker build -f tools/fork/Dockerfile.smoke-task \
 export FORK_MASTER_IMAGE=$(jq -r .images.master.name "${artifact_dir}/MANIFEST.json")
 export FORK_AGENT_IMAGE=$(jq -r .images.agent.name "${artifact_dir}/MANIFEST.json")
 export FORK_TASK_IMAGE="local/determined-fork/smoke-task:${fork_tag}"
+export FORK_SMOKE_DYNAMIC_POOLS=1
 tools/fork/smoke.sh
 ```
 
-The smoke starts disposable PostgreSQL and master containers, verifies password
-login through the delivered CLI, joins one static CPU agent in the default pool,
-and runs a short command. It makes no GPU or online-pool claim.
+The local smoke creates an isolated PostgreSQL database, checks master health and admin
+login, waits for a CPU agent to join, and runs a short command to completion. The
+dynamic-pool extension checks anonymous
+and non-admin denials, creates a pool through the authenticated API while an
+original-pool task is running, verifies that task keeps its identity and advances,
+joins a second CPU agent, runs work in the new pool, restarts the master, verifies
+recovery, and runs new work in the recovered pool. Omit `FORK_SMOKE_DYNAMIC_POOLS`
+or set it to `0` to isolate base packaging. The smoke does not test a GPU path.
 
-## Promotion and rollback
+GitHub Actions only builds and packages candidates when explicitly dispatched.
+It does not run this smoke or a test/lint suite, and pushes and pull requests do
+not request a new candidate build. Run the local smoke when changing container
+startup, agent admission, or pool lifecycle behavior; routine edits use the small
+local checks described in `tools/fork/local-checks.md`.
 
-Candidates are retained for 14 days. Promote one only after local checks, a real
-research-workload regression, and a compatible PostgreSQL backup/restore rehearsal
-pass for the same source revision. Roll back by stopping agents, restoring the
-compatible database backup, loading the previous image archives, and starting the
-previous master before its agents. Selecting an older image does not reverse a
-database migration.
+## Rollback and retention
+
+Keep the previous verified artifact and its `MANIFEST.json`. Roll back by stopping
+agents, restoring the compatible PostgreSQL backup taken before the upgrade, loading
+the previous image archives, and restarting the previous master before its agents.
+Database migrations are not reversed merely by selecting an older image; validate
+backup restore and task/checkpoint visibility in a disposable environment first.
+
+GitHub retains candidates for 14 days. Promote artifacts only after the real
+research-workload gate and rollback rehearsal in the maintenance validation plan
+have passed for the same source revision.
