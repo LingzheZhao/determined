@@ -11,4 +11,3 @@ CREATE TABLE dynamic_resource_pools (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (cluster_name, idempotency_key)
 );
-
