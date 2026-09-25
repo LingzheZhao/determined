@@ -5,6 +5,8 @@ package internal
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +18,11 @@ import (
 	apiPkg "github.com/determined-ai/determined/master/internal/api"
 	authz2 "github.com/determined-ai/determined/master/internal/authz"
 	"github.com/determined-ai/determined/master/internal/db"
+	"github.com/determined-ai/determined/master/internal/rm"
+	"github.com/determined-ai/determined/master/internal/rm/tasklist"
+	"github.com/determined-ai/determined/master/internal/sproto"
+	"github.com/determined-ai/determined/master/internal/task"
+	"github.com/determined-ai/determined/master/pkg/logger"
 	"github.com/determined-ai/determined/master/pkg/model"
 	"github.com/determined-ai/determined/master/pkg/ptrs"
 	"github.com/determined-ai/determined/master/pkg/tasks"
@@ -56,6 +63,227 @@ func addGenericTaskForAuthZTest(
 		Base: tasks.TaskSpec{Owner: &owner}, WorkspaceID: workspaceID, JobID: jobID,
 	}, allocationID))
 	return taskID
+}
+
+// lifecycleAllocationService models the allocation identities at the API boundary.
+// A signaled allocation exits; a started allocation receives a new identity.
+type lifecycleAllocationService struct {
+	task.AllocationService
+	mu         sync.Mutex
+	running    map[model.AllocationID]bool
+	starts     []model.AllocationID
+	startCount int
+	started    chan struct{}
+	release    chan struct{}
+}
+
+func (s *lifecycleAllocationService) Signal(
+	id model.AllocationID, _ task.AllocationSignal, _ string,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.running[id] {
+		return fmt.Errorf("allocation %s is not running", id)
+	}
+	s.running[id] = false
+	now := time.Now().UTC()
+	_, err := db.Bun().NewUpdate().Table("allocations").Set("end_time = ?", now).
+		Where("allocation_id = ?", id).Exec(context.Background())
+	if err != nil {
+		return err
+	}
+	return db.SetPausedState(id.ToTaskID(), now)
+}
+
+func (s *lifecycleAllocationService) StartAllocation(
+	_ logger.Context, req sproto.AllocateRequest, _ db.DB, _ rm.ResourceManager,
+	_ tasks.TaskSpecifier, _ func(*task.AllocationExited),
+) error {
+	s.mu.Lock()
+	s.startCount++
+	firstStart := s.startCount == 1
+	s.mu.Unlock()
+	if firstStart && s.started != nil {
+		close(s.started)
+		<-s.release
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running[req.AllocationID] {
+		return fmt.Errorf("allocation %s already running", req.AllocationID)
+	}
+	now := time.Now().UTC()
+	if err := db.AddAllocation(context.Background(), &model.Allocation{
+		AllocationID: req.AllocationID, TaskID: req.TaskID, Slots: req.SlotsNeeded,
+		ResourcePool: req.ResourcePool, StartTime: &now, Ports: map[string]int{},
+	}); err != nil {
+		return err
+	}
+	s.running[req.AllocationID] = true
+	s.starts = append(s.starts, req.AllocationID)
+	return nil
+}
+
+func TestGenericTaskTreePauseUnpauseKeepsNoPauseAllocations(t *testing.T) {
+	api, owner, ctx := setupAPITest(t, nil)
+	rootID := addGenericTaskForAuthZTest(ctx, t, owner, 11, nil, model.TaskStateActive)
+	pausableID := addGenericTaskForAuthZTest(ctx, t, owner, 11, &rootID, model.TaskStateActive)
+	noPauseID := addGenericTaskForAuthZTest(ctx, t, owner, 11, &rootID, model.TaskStateActive)
+	defaultNoPauseID := addGenericTaskForAuthZTest(ctx, t, owner, 11, &rootID, model.TaskStateActive)
+
+	for _, entry := range []struct {
+		id      model.TaskID
+		noPause *bool
+	}{
+		{pausableID, ptrs.Ptr(false)}, {noPauseID, ptrs.Ptr(true)},
+		{defaultNoPauseID, nil},
+	} {
+		_, err := db.Bun().NewUpdate().Table("tasks").Set("no_pause = ?", entry.noPause).
+			Where("task_id = ?", entry.id).Exec(ctx)
+		require.NoError(t, err)
+	}
+
+	service := &lifecycleAllocationService{running: map[model.AllocationID]bool{}}
+	for _, id := range []model.TaskID{rootID, pausableID, noPauseID, defaultNoPauseID} {
+		allocationID := model.AllocationID(id.String() + ".0")
+		service.running[allocationID] = true
+		allocationString, spec, err := getGenericTaskSpec(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, allocationID.String(), allocationString)
+		spec.GenericTaskConfig = model.DefaultConfigGenericTaskConfig(nil)
+		spec.GenericTaskConfig.Resources.SetResourcePool("default")
+		require.NoError(t, persistGenericTaskSpec(ctx, id, *spec, allocationID))
+	}
+	oldService := task.DefaultService
+	task.DefaultService = service
+	t.Cleanup(func() { task.DefaultService = oldService })
+
+	_, err := api.PauseGenericTask(ctx, &apiv1.PauseGenericTaskRequest{TaskId: rootID.String()})
+	require.NoError(t, err)
+	for _, id := range []model.TaskID{rootID, pausableID} {
+		persisted, err := db.TaskByID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, model.TaskStatePaused, *persisted.State)
+		require.False(t, service.running[model.AllocationID(id.String()+".0")])
+	}
+	for _, id := range []model.TaskID{noPauseID, defaultNoPauseID} {
+		persisted, err := db.TaskByID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, model.TaskStateActive, *persisted.State)
+		require.True(t, service.running[model.AllocationID(id.String()+".0")])
+	}
+
+	_, err = api.UnpauseGenericTask(ctx, &apiv1.UnpauseGenericTaskRequest{TaskId: rootID.String()})
+	require.NoError(t, err)
+	require.ElementsMatch(t, []model.AllocationID{
+		model.AllocationID(rootID.String() + ".1"),
+		model.AllocationID(pausableID.String() + ".1"),
+	}, service.starts)
+	for _, id := range []model.TaskID{rootID, pausableID} {
+		allocationID, _, err := getGenericTaskSpec(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, id.String()+".1", allocationID)
+	}
+	for _, id := range []model.TaskID{noPauseID, defaultNoPauseID} {
+		persisted, err := db.TaskByID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, model.TaskStateActive, *persisted.State)
+		allocationID, err := getAllocationFromTaskID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, id.String()+".0", allocationID)
+		require.True(t, service.running[model.AllocationID(allocationID)])
+	}
+	_, err = api.UnpauseGenericTask(ctx, &apiv1.UnpauseGenericTaskRequest{TaskId: rootID.String()})
+	require.Error(t, err)
+	require.Len(t, service.starts, 2)
+}
+
+func TestClaimPausedGenericTaskWaitsForAllocationAndClaimsOnce(t *testing.T) {
+	_, owner, ctx := setupAPITest(t, nil)
+	id := addGenericTaskForAuthZTest(ctx, t, owner, 11, nil, model.TaskStatePaused)
+	allocationID := model.AllocationID(id.String() + ".0")
+
+	claimed, err := claimPausedGenericTask(ctx, id, allocationID)
+	require.NoError(t, err)
+	require.False(t, claimed)
+
+	_, err = db.Bun().NewUpdate().Table("allocations").Set("end_time = ?", time.Now().UTC()).
+		Where("allocation_id = ?", allocationID).Exec(ctx)
+	require.NoError(t, err)
+	claimed, err = claimPausedGenericTask(ctx, id, allocationID)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	claimed, err = claimPausedGenericTask(ctx, id, allocationID)
+	require.NoError(t, err)
+	require.False(t, claimed)
+
+	require.NoError(t, rollbackUnpauseState(ctx, id, allocationID))
+	newAllocationID := model.AllocationID(id.String() + ".1")
+	now := time.Now().UTC()
+	require.NoError(t, db.AddAllocation(ctx, &model.Allocation{
+		AllocationID: newAllocationID, TaskID: id, Slots: 1,
+		ResourcePool: "default", StartTime: &now, EndTime: &now, Ports: map[string]int{},
+	}))
+	_, spec, err := getGenericTaskSpec(ctx, id)
+	require.NoError(t, err)
+	require.NoError(t, persistGenericTaskSpec(ctx, id, *spec, newAllocationID))
+	claimed, err = claimPausedGenericTask(ctx, id, allocationID)
+	require.NoError(t, err)
+	require.False(t, claimed, "a stale allocation must not reserve a newer paused task")
+}
+
+func TestConcurrentUnpauseGenericTaskStartsOnce(t *testing.T) {
+	api, owner, ctx := setupAPITest(t, nil)
+	id := addGenericTaskForAuthZTest(ctx, t, owner, 11, nil, model.TaskStatePaused)
+	oldAllocationID := model.AllocationID(id.String() + ".0")
+	_, spec, err := getGenericTaskSpec(ctx, id)
+	require.NoError(t, err)
+	spec.GenericTaskConfig = model.DefaultConfigGenericTaskConfig(nil)
+	spec.GenericTaskConfig.Resources.SetResourcePool("default")
+	require.NoError(t, persistGenericTaskSpec(ctx, id, *spec, oldAllocationID))
+	_, err = db.Bun().NewUpdate().Table("allocations").Set("end_time = ?", time.Now().UTC()).
+		Where("allocation_id = ?", oldAllocationID).Exec(ctx)
+	require.NoError(t, err)
+
+	service := &lifecycleAllocationService{
+		running: map[model.AllocationID]bool{},
+		started: make(chan struct{}), release: make(chan struct{}),
+	}
+	releaseStart := sync.OnceFunc(func() { close(service.release) })
+	t.Cleanup(releaseStart)
+	oldService := task.DefaultService
+	task.DefaultService = service
+	t.Cleanup(func() { task.DefaultService = oldService })
+	jobID := spec.JobID
+	require.NoError(t, tasklist.GroupPriorityChangeRegistry.Add(jobID, func(int) error { return nil }))
+	t.Cleanup(func() { _ = tasklist.GroupPriorityChangeRegistry.Delete(jobID) })
+
+	errors := make(chan error, 2)
+	request := &apiv1.UnpauseGenericTaskRequest{TaskId: id.String()}
+	go func() { _, err := api.UnpauseGenericTask(ctx, request); errors <- err }()
+	select {
+	case <-service.started:
+	case err := <-errors:
+		require.NoError(t, err)
+		t.Fatal("unpause did not start an allocation")
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for allocation start")
+	}
+	go func() { _, err := api.UnpauseGenericTask(ctx, request); errors <- err }()
+	select {
+	case err := <-errors:
+		require.Error(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("second unpause did not return while the first start was pending")
+	}
+	releaseStart()
+	select {
+	case err := <-errors:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("first unpause did not complete")
+	}
+	require.Equal(t, []model.AllocationID{model.AllocationID(id.String() + ".1")}, service.starts)
 }
 
 func TestPropagateTaskState(t *testing.T) {

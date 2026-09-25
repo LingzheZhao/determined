@@ -646,6 +646,7 @@ func (a *apiServer) PauseGenericTask(
 		model.TaskStateCanceled,
 		model.TaskStateCompleted,
 		model.TaskStatePaused,
+		model.TaskStateStoppingPaused,
 		model.TaskStateError,
 		model.TaskStateStoppingError,
 		model.TaskStateStoppingCanceled,
@@ -671,16 +672,15 @@ func (a *apiServer) PauseGenericTask(
 		return nil, fmt.Errorf("cannot pause task %s with `no_pause` set to true", req.TaskId)
 	}
 	tasksToPause = filterTasksByState(tasksToPause, overrideStates)
+	// A child with no_pause unset defaults to not being paused. Keep its
+	// persisted state in sync with the allocation that continues to run.
+	tasksToPause = filterPausableGenericTasks(tasksToPause, model.TaskID(req.TaskId))
 	if err := setTaskStates(
 		ctx, tasksToPause, model.TaskStateStoppingPaused, overrideStates,
 	); err != nil {
 		return nil, err
 	}
 	for _, pausingTask := range tasksToPause {
-		// If task is not the root we default 'nil' no_pause as true
-		if pausingTask.TaskID != model.TaskID(req.TaskId) && (pausingTask.NoPause == nil || *pausingTask.NoPause) {
-			continue
-		}
 		allocationID, err := getAllocationFromTaskID(ctx, pausingTask.TaskID)
 		if err != nil {
 			return nil, err
@@ -693,6 +693,16 @@ func (a *apiServer) PauseGenericTask(
 		}
 	}
 	return &apiv1.PauseGenericTaskResponse{}, nil
+}
+
+func filterPausableGenericTasks(tasks []model.Task, rootID model.TaskID) []model.Task {
+	pausable := make([]model.Task, 0, len(tasks))
+	for _, taskModel := range tasks {
+		if taskModel.TaskID == rootID || taskModel.NoPause != nil && !*taskModel.NoPause {
+			pausable = append(pausable, taskModel)
+		}
+	}
+	return pausable
 }
 
 func (a *apiServer) UnpauseGenericTask(
@@ -726,10 +736,18 @@ func (a *apiServer) UnpauseGenericTask(
 	if taskModel.State == nil {
 		return nil, fmt.Errorf("task state is NULL")
 	}
-	if *taskModel.State != model.TaskStatePaused && *taskModel.State != model.TaskStateStoppingPaused {
+	if *taskModel.State != model.TaskStatePaused {
 		return nil, fmt.Errorf("cannot unpause task %s as it is not in paused state", req.TaskId)
 	}
 	for _, resumingTask := range tasksToResume {
+		if resumingTask.State != nil && *resumingTask.State == model.TaskStateStoppingPaused {
+			return nil, fmt.Errorf("cannot unpause task %s while descendant %s is still stopping", req.TaskId, resumingTask.TaskID)
+		}
+	}
+	for _, resumingTask := range tasksToResume {
+		if resumingTask.State == nil || *resumingTask.State != model.TaskStatePaused {
+			continue
+		}
 		allocationString, genericTaskSpec, err := getGenericTaskSpec(ctx, resumingTask.TaskID)
 		if err != nil {
 			return nil, fmt.Errorf("%s (retrieving generic task spec)", err)
@@ -762,6 +780,16 @@ func (a *apiServer) UnpauseGenericTask(
 		resumingAllocationID := model.AllocationID(fmt.Sprintf("%s.%d", resumingTask.TaskID, allocationSpecifier+1))
 		isSingleNode := genericTaskSpec.GenericTaskConfig.Resources.IsSingleNode() != nil &&
 			*genericTaskSpec.GenericTaskConfig.Resources.IsSingleNode()
+		// The exit callback marks the task PAUSED. Confirm the matching old
+		// allocation has also reached its persisted terminal state before
+		// reserving the task for a new allocation.
+		claimed, err := claimPausedGenericTask(ctx, resumingTask.TaskID, allocationID)
+		if err != nil {
+			return nil, err
+		}
+		if !claimed {
+			return nil, fmt.Errorf("cannot unpause task %s: task is no longer paused or its allocation has not stopped", resumingTask.TaskID)
+		}
 		err = task.DefaultService.StartAllocation(
 			logCtx, sproto.AllocateRequest{
 				AllocationID:      resumingAllocationID,
@@ -783,13 +811,19 @@ func (a *apiServer) UnpauseGenericTask(
 				Restore: false,
 			}, a.m.db, a.m.rm, genericTaskSpec, onAllocationExit)
 		if err != nil {
+			rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			rollbackErr := rollbackUnpauseState(rollbackCtx, resumingTask.TaskID, allocationID)
+			cancel()
+			if rollbackErr != nil {
+				return nil, fmt.Errorf("starting allocation: %w; restoring paused state: %v", err, rollbackErr)
+			}
 			return nil, err
 		}
-		err = persistGenericTaskSpec(ctx, resumingTask.TaskID, *genericTaskSpec, resumingAllocationID)
-		if err != nil {
-			return nil, err
-		}
-		err = setUnpauseState(ctx, resumingTask.TaskID)
+		// The allocation was started, so persist its identity even if the
+		// requesting client has disconnected. Bound the database wait.
+		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		err = persistGenericTaskSpec(persistCtx, resumingTask.TaskID, *genericTaskSpec, resumingAllocationID)
+		cancel()
 		if err != nil {
 			return nil, err
 		}
@@ -797,11 +831,28 @@ func (a *apiServer) UnpauseGenericTask(
 	return &apiv1.UnpauseGenericTaskResponse{}, nil
 }
 
-func setUnpauseState(ctx context.Context, taskID model.TaskID) error {
-	_, err := db.Bun().NewUpdate().Table("tasks").
+func claimPausedGenericTask(ctx context.Context, taskID model.TaskID, allocationID model.AllocationID) (bool, error) {
+	result, err := db.Bun().NewUpdate().Table("tasks").
 		Set("task_state = ?", model.TaskStateActive).
 		Set("end_time = NULL").
 		Where("task_id = ?", taskID).
+		Where("task_state = ?", model.TaskStatePaused).
+		Where("EXISTS (SELECT 1 FROM allocations WHERE allocation_id = ? AND task_id = tasks.task_id AND end_time IS NOT NULL)", allocationID).
+		Where("EXISTS (SELECT 1 FROM command_state WHERE task_id = tasks.task_id AND allocation_id = ?)", allocationID).
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	return count == 1, err
+}
+
+func rollbackUnpauseState(ctx context.Context, taskID model.TaskID, allocationID model.AllocationID) error {
+	_, err := db.Bun().NewUpdate().Table("tasks").
+		Set("task_state = ?", model.TaskStatePaused).
+		Set("end_time = (SELECT end_time FROM allocations WHERE allocation_id = ?)", allocationID).
+		Where("task_id = ?", taskID).
+		Where("task_state = ?", model.TaskStateActive).
 		Exec(ctx)
 	return err
 }
