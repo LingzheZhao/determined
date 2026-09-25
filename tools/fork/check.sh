@@ -9,7 +9,7 @@ cd "${repo_root}"
 
 mode=${1:-quick}
 (($# <= 1)) || {
-    echo "usage: tools/fork/check.sh [quick|security|progress|pools|integration-pools]" >&2
+    echo "usage: tools/fork/check.sh [quick|security|progress|pools|integration-pools|integration-tasks]" >&2
     exit 2
 }
 
@@ -111,11 +111,21 @@ integration_pools() {
     (
         cd master
         "${go_bin}" test -race -tags=integration ./internal/rm/agentrm \
-            -run '^(TestAgentRMRoutingTaskRelatedMessages|TestGetResourcePools|TestGetJobQueueStatsRequest|TestDynamicPoolPersistenceRestart|TestDynamicPoolStartupRejects.*)$' \
+            -run '^(TestAgentRMRoutingTaskRelatedMessages|TestGetResourcePools|TestGetJobQueueStatsRequest|TestDynamicPoolPersistenceRestart|TestDynamicPoolStartupRejects.*|TestDynamicPoolPendingWorker.*|TestDynamicPoolRetryWorker.*|TestDynamicPoolReady.*)$' \
             -count=1
         "${go_bin}" test -race -tags=integration ./internal/db \
             -run '^TestDynamicResourcePool.*$' -count=1
     )
+}
+
+integration_tasks() {
+    find_go
+    [[ -n ${DET_INTEGRATION_POSTGRES_URL:-} ]] || die \
+        "set DET_INTEGRATION_POSTGRES_URL to an existing test database; this script does not start Docker"
+    printf '\n==> Generic Task lifecycle and authorization PostgreSQL race tests\n'
+    "${go_bin}" test -race -tags=integration ./master/internal \
+        -run '^(TestGenericTask.*|TestClaimPausedGenericTask.*|TestConcurrentUnpauseGenericTask.*|TestPauseAndUnpauseAuthorizeDescendantsBeforeMutation|TestKillGenericTaskAuthorizesRootTreeBeforeMutation|TestSetTaskStatesOnlyAffectsAuthorizedSnapshot)$' \
+        -count=1
 }
 
 case ${mode} in
@@ -124,6 +134,7 @@ case ${mode} in
     progress) progress ;;
     pools) pools ;;
     integration | integration-pools) integration_pools ;;
+    integration-tasks) integration_tasks ;;
     -h | --help | help)
         cat <<'EOF'
 Usage: tools/fork/check.sh [MODE]
@@ -132,9 +143,10 @@ Usage: tools/fork/check.sh [MODE]
   security           Focused Python archive-safety regressions
   progress           Focused Python progress/metrics reporting regressions
   pools              Dynamic resource-pool Go tests with the race detector
-  integration-pools  Pool persistence/restart race tests using an existing PostgreSQL database
+  integration-pools  Pool persistence/reconciliation race tests using an existing PostgreSQL database
+  integration-tasks  Generic Task lifecycle/authorization race tests using PostgreSQL
 
-Set PYTHON or GO to select existing toolchains. integration-pools also requires
+Set PYTHON or GO to select existing toolchains. Both integration modes require
 DET_INTEGRATION_POSTGRES_URL. The script never installs dependencies or starts services.
 EOF
         ;;
