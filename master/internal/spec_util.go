@@ -137,11 +137,17 @@ func getTaskSessionToken(ctx context.Context, userModel *model.User) (string, er
 func getGenericTaskOnAllocationExit(
 	ctx context.Context,
 	taskID model.TaskID,
+	allocationID model.AllocationID,
 	jobID model.JobID,
 	logCtx logger.Context,
 ) func(ae *task.AllocationExited) {
 	return func(ae *task.AllocationExited) {
 		syslog := logrus.WithField("component", "genericTask").WithFields(logCtx.Fields())
+		defer func() {
+			if err := finishCanceledGenericTaskResume(taskID, allocationID); err != nil {
+				syslog.WithError(err).Error("finishing canceled task resume")
+			}
+		}()
 		if ae.Err != nil {
 			err := db.SetErrorState(taskID, time.Now().UTC())
 			if err != nil {
