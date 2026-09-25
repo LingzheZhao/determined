@@ -125,7 +125,7 @@ func (a *ResourceManager) NormalizeDynamicResourcePoolConfig(
 }
 
 // CreateDynamicResourcePool persists a normalized desired config. The RM-owned worker initializes
-// Pending records, including operations whose HTTP response was interrupted after the insert.
+// Pending records and reconciles Ready records missing a runtime after ambiguous state writes.
 func (a *ResourceManager) CreateDynamicResourcePool(
 	ctx context.Context,
 	idempotencyKey string,
@@ -166,7 +166,8 @@ func (a *ResourceManager) CreateDynamicResourcePool(
 		Config:         configJSON,
 		ConfigHash:     configHash,
 	})
-	if err == nil && record.State == db.DynamicResourcePoolPending {
+	if err == nil && (record.State == db.DynamicResourcePoolPending ||
+		record.State == db.DynamicResourcePoolReady && !a.IsDynamicResourcePoolReady(record.PoolName)) {
 		a.wakeDynamicPoolWorker()
 	}
 	return record, created, err
@@ -233,7 +234,7 @@ func (a *ResourceManager) advancePendingDynamicPools(ctx context.Context) {
 	cancel()
 	if err != nil {
 		if ctx.Err() == nil {
-			a.syslog.WithError(err).Warn("scanning Pending dynamic resource pools")
+			a.syslog.WithError(err).Warn("scanning dynamic resource pools")
 		}
 		return
 	}
@@ -241,18 +242,23 @@ func (a *ResourceManager) advancePendingDynamicPools(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if record.State != db.DynamicResourcePoolPending {
+		if record.State != db.DynamicResourcePoolPending &&
+			(record.State != db.DynamicResourcePoolReady || a.IsDynamicResourcePoolReady(record.PoolName)) {
 			continue
 		}
 		cfg, decodeErr := decodeStoredDynamicResourcePool(record)
 		if decodeErr != nil {
-			_, err = a.failDynamicResourcePool(ctx, record, decodeErr.Error())
+			if record.State == db.DynamicResourcePoolPending {
+				_, err = a.failDynamicResourcePool(ctx, record, decodeErr.Error())
+			} else {
+				err = decodeErr
+			}
 		} else {
 			_, err = a.initializeDynamicResourcePool(ctx, record, cfg)
 		}
 		if err != nil && ctx.Err() == nil {
 			a.syslog.WithError(err).WithField("pool", record.PoolName).
-				Warn("advancing Pending dynamic resource pool")
+				Warn("advancing dynamic resource pool")
 		}
 	}
 }
@@ -268,20 +274,41 @@ func (a *ResourceManager) initializeDynamicResourcePool(
 			if err == nil {
 				err = fmt.Errorf("desired runtime config differs from durable config")
 			}
+			if record.State == db.DynamicResourcePoolReady {
+				return record, err
+			}
 			return a.failDynamicResourcePool(ctx, record, err.Error())
 		}
 		if _, ready := a.registry.readyPool(cfg.PoolName); ready {
+			if record.State == db.DynamicResourcePoolReady {
+				return record, nil
+			}
 			return setDynamicResourcePoolState(
 				a.db, ctx, cfg.PoolName, db.DynamicResourcePoolReady, nil,
 			)
 		}
 	} else if err := a.registry.addDynamicDesired(cfg); err != nil {
+		if record.State == db.DynamicResourcePoolReady {
+			return record, err
+		}
 		return a.failDynamicResourcePool(ctx, record, err.Error())
 	}
 
 	pool, err := createDynamicPoolRuntime(a, cfg)
 	if err != nil {
+		if record.State == db.DynamicResourcePoolReady {
+			return record, err
+		}
 		return a.failDynamicResourcePool(ctx, record, err.Error())
+	}
+	// Ready may have committed even though its original write returned an error. Rebuild its
+	// runtime from the frozen config without changing durable state; transient failures retry.
+	if record.State == db.DynamicResourcePoolReady {
+		if err = a.registry.publishReady(cfg.PoolName, pool); err != nil {
+			stopPreparedDynamicResourcePool(pool)
+			return record, err
+		}
+		return record, nil
 	}
 	persistenceCtx, cancel := dynamicPoolPersistenceContext(ctx)
 	ready, err := setDynamicResourcePoolState(
