@@ -9,7 +9,7 @@ cd "${repo_root}"
 
 mode=${1:-quick}
 (($# <= 1)) || {
-    echo "usage: tools/fork/check.sh [quick|security|pools|integration-pools]" >&2
+    echo "usage: tools/fork/check.sh [quick|security|progress|pools|integration-pools]" >&2
     exit 2
 }
 
@@ -70,6 +70,10 @@ security() {
     run_python_tests "${tests[@]}"
 }
 
+progress() {
+    run_python_tests harness/tests/core/test_progress.py harness/tests/core/test_metrics.py
+}
+
 find_go() {
     go_bin=${GO:-go}
     command -v "${go_bin}" >/dev/null 2>&1 || die \
@@ -117,6 +121,7 @@ integration_pools() {
 case ${mode} in
     quick) quick ;;
     security) security ;;
+    progress) progress ;;
     pools) pools ;;
     integration | integration-pools) integration_pools ;;
     -h | --help | help)
@@ -125,6 +130,7 @@ Usage: tools/fork/check.sh [MODE]
 
   quick              Required archive regression and pool CLI tests if present (default)
   security           Focused Python archive-safety regressions
+  progress           Focused Python progress/metrics reporting regressions
   pools              Dynamic resource-pool Go tests with the race detector
   integration-pools  Pool persistence/restart race tests using an existing PostgreSQL database
 

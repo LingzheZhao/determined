@@ -18,6 +18,9 @@ archive regression still runs.
 Run additional tests only for the area being changed:
 
 ```bash
+# Check progress reporting, bounded shutdown, and existing metrics error behavior.
+tools/fork/check.sh progress
+
 # Run the complete focused Python archive-safety suite.
 tools/fork/check.sh security
 
