@@ -5,11 +5,73 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestDynamicResourcePoolCommittedInsertReadFailure(t *testing.T) {
+	database, cleanup := MustResolveNewPostgresDatabase(t)
+	defer cleanup()
+	MustMigrateTestPostgres(t, database, "file://../../static/migrations", "up")
+
+	originalRead := readCreatedDynamicResourcePool
+	t.Cleanup(func() { readCreatedDynamicResourcePool = originalRead })
+	readFailure := errors.New("injected post-insert read failure")
+	readCreatedDynamicResourcePool = func(
+		_ *PgDB, _ context.Context, _ string,
+	) (DynamicResourcePool, error) {
+		return DynamicResourcePool{}, readFailure
+	}
+	desired := DynamicResourcePool{
+		ClusterName: "agents-a", PoolName: "post-insert-failure",
+		ConfigVersion: 1, IdempotencyKey: "post-insert-failure",
+		Config:     json.RawMessage(`{"pool_name":"post-insert-failure"}`),
+		ConfigHash: "hash-a",
+	}
+	_, created, err := database.CreateDynamicResourcePool(context.Background(), desired)
+	require.True(t, created)
+	require.ErrorIs(t, err, readFailure)
+
+	stored, err := database.DynamicResourcePoolByName(context.Background(), desired.PoolName)
+	require.NoError(t, err)
+	require.Equal(t, DynamicResourcePoolPending, stored.State)
+	readCreatedDynamicResourcePool = originalRead
+	replayed, created, err := database.CreateDynamicResourcePool(context.Background(), desired)
+	require.NoError(t, err)
+	require.False(t, created)
+	require.Equal(t, stored.CreatedAt, replayed.CreatedAt)
+}
+
+func TestDynamicResourcePoolCommittedInsertRequestCanceled(t *testing.T) {
+	database, cleanup := MustResolveNewPostgresDatabase(t)
+	defer cleanup()
+	MustMigrateTestPostgres(t, database, "file://../../static/migrations", "up")
+
+	originalRead := readCreatedDynamicResourcePool
+	t.Cleanup(func() { readCreatedDynamicResourcePool = originalRead })
+	ctx, cancel := context.WithCancel(context.Background())
+	readCreatedDynamicResourcePool = func(
+		database *PgDB, ctx context.Context, name string,
+	) (DynamicResourcePool, error) {
+		cancel()
+		return database.DynamicResourcePoolByName(ctx, name)
+	}
+	desired := DynamicResourcePool{
+		ClusterName: "agents-a", PoolName: "post-insert-canceled",
+		ConfigVersion: 1, IdempotencyKey: "post-insert-canceled",
+		Config:     json.RawMessage(`{"pool_name":"post-insert-canceled"}`),
+		ConfigHash: "hash-a",
+	}
+	_, created, err := database.CreateDynamicResourcePool(ctx, desired)
+	require.True(t, created)
+	require.ErrorIs(t, err, context.Canceled)
+	stored, err := database.DynamicResourcePoolByName(context.Background(), desired.PoolName)
+	require.NoError(t, err)
+	require.Equal(t, DynamicResourcePoolPending, stored.State)
+}
 
 func TestDynamicResourcePoolPersistenceAndIdempotency(t *testing.T) {
 	database, cleanup := MustResolveNewPostgresDatabase(t)

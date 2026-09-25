@@ -82,10 +82,13 @@ The response has this form:
 
 The actual `config` contains the full effective resource-pool configuration.
 Registry passwords and tokens are redacted in API responses. Provider
-credentials cannot be submitted. The server performs initialization
-synchronously after saving `Pending`, so the create response normally contains
-`Ready` or `Failed`; a concurrent list request or a request interrupted after
-the save can observe `Pending`.
+credentials cannot be submitted. A master-owned worker initializes saved
+`Pending` pools. A create or retry response can contain `Pending`; poll the list
+endpoint until the operation becomes `Ready` or `Failed`. The worker rescans
+saved operations periodically, so an insert committed just before a failed
+read or canceled request is still advanced without restarting the master.
+Exact replays return the current operation state and do not start another
+runtime pool.
 
 List all operations, or operations for one resource manager, with:
 

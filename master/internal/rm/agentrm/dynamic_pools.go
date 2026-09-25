@@ -23,6 +23,7 @@ import (
 const dynamicResourcePoolConfigVersion = 1
 
 const dynamicPoolPersistenceTimeout = 10 * time.Second
+const dynamicPoolScanInterval = time.Second
 
 var dynamicPoolNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
@@ -38,6 +39,12 @@ var setDynamicResourcePoolState = func(
 
 var stopPreparedDynamicResourcePool = func(pool *resourcePool) {
 	pool.stop()
+}
+
+var createDynamicPoolRuntime = func(
+	manager *ResourceManager, cfg config.ResourcePoolConfig,
+) (*resourcePool, error) {
+	return manager.createResourcePool(manager.db, cfg, manager.cert)
 }
 
 var (
@@ -117,8 +124,8 @@ func (a *ResourceManager) NormalizeDynamicResourcePoolConfig(
 	return cfg, nil
 }
 
-// CreateDynamicResourcePool persists a normalized desired config before initializing its runtime
-// pool. Exact idempotent replays return the existing operation without retrying a failure.
+// CreateDynamicResourcePool persists a normalized desired config. The RM-owned worker initializes
+// Pending records, including operations whose HTTP response was interrupted after the insert.
 func (a *ResourceManager) CreateDynamicResourcePool(
 	ctx context.Context,
 	idempotencyKey string,
@@ -159,12 +166,10 @@ func (a *ResourceManager) CreateDynamicResourcePool(
 		Config:         configJSON,
 		ConfigHash:     configHash,
 	})
-	if err != nil || !created {
-		return record, created, err
+	if err == nil && record.State == db.DynamicResourcePoolPending {
+		a.wakeDynamicPoolWorker()
 	}
-
-	record, err = a.initializeDynamicResourcePool(ctx, record, cfg)
-	return record, true, err
+	return record, created, err
 }
 
 func validateDynamicPoolIdempotencyKey(idempotencyKey string) error {
@@ -187,27 +192,69 @@ func (a *ResourceManager) RetryDynamicResourcePool(
 	if err != nil {
 		return db.DynamicResourcePool{}, err
 	}
-	cfg, err := decodeStoredDynamicResourcePool(record)
-	if err != nil {
-		msg := err.Error()
-		persistenceCtx, cancel := dynamicPoolPersistenceContext(ctx)
-		defer cancel()
-		failed, updateErr := setDynamicResourcePoolState(
-			a.db, persistenceCtx, poolName, db.DynamicResourcePoolFailed, &msg,
-		)
-		if updateErr != nil {
-			return db.DynamicResourcePool{}, updateErr
-		}
-		return failed, nil
-	}
-	record, initErr := a.initializeDynamicResourcePool(ctx, record, cfg)
-	if errors.Is(initErr, ErrDynamicResourcePoolPersistence) {
-		return record, initErr
-	}
-	if initErr != nil && record.State != db.DynamicResourcePoolFailed {
-		return record, initErr
-	}
+	a.wakeDynamicPoolWorker()
 	return record, nil
+}
+
+func (a *ResourceManager) startDynamicPoolWorker(parentCtx context.Context) {
+	ctx, cancel := context.WithCancel(parentCtx)
+	a.dynamicPoolCancel = cancel
+	a.dynamicPoolWake = make(chan struct{}, 1)
+	a.dynamicPoolDone = make(chan struct{})
+	go func() {
+		defer close(a.dynamicPoolDone)
+		ticker := time.NewTicker(dynamicPoolScanInterval)
+		defer ticker.Stop()
+		for {
+			a.advancePendingDynamicPools(ctx)
+			select {
+			case <-ctx.Done():
+				return
+			case <-a.dynamicPoolWake:
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+func (a *ResourceManager) wakeDynamicPoolWorker() {
+	if a.dynamicPoolWake != nil {
+		select {
+		case a.dynamicPoolWake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// One worker per agent RM serializes initialization, replay, and periodic recovery.
+func (a *ResourceManager) advancePendingDynamicPools(ctx context.Context) {
+	scanCtx, cancel := context.WithTimeout(ctx, dynamicPoolPersistenceTimeout)
+	records, err := a.db.ListDynamicResourcePools(scanCtx, a.config.ClusterName)
+	cancel()
+	if err != nil {
+		if ctx.Err() == nil {
+			a.syslog.WithError(err).Warn("scanning Pending dynamic resource pools")
+		}
+		return
+	}
+	for _, record := range records {
+		if ctx.Err() != nil {
+			return
+		}
+		if record.State != db.DynamicResourcePoolPending {
+			continue
+		}
+		cfg, decodeErr := decodeStoredDynamicResourcePool(record)
+		if decodeErr != nil {
+			_, err = a.failDynamicResourcePool(ctx, record, decodeErr.Error())
+		} else {
+			_, err = a.initializeDynamicResourcePool(ctx, record, cfg)
+		}
+		if err != nil && ctx.Err() == nil {
+			a.syslog.WithError(err).WithField("pool", record.PoolName).
+				Warn("advancing Pending dynamic resource pool")
+		}
+	}
 }
 
 func (a *ResourceManager) initializeDynamicResourcePool(
@@ -232,7 +279,7 @@ func (a *ResourceManager) initializeDynamicResourcePool(
 		return a.failDynamicResourcePool(ctx, record, err.Error())
 	}
 
-	pool, err := a.createResourcePool(a.db, cfg, a.cert)
+	pool, err := createDynamicPoolRuntime(a, cfg)
 	if err != nil {
 		return a.failDynamicResourcePool(ctx, record, err.Error())
 	}
