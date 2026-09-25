@@ -39,6 +39,12 @@ without an owner require an administrator. RBAC uses the existing workspace
 task before any state update or allocation action. Other notebook/shell/command
 authorization policies are unchanged.
 
+Pausing a Generic Task tree stops the requested task and descendants that
+explicitly set `no_pause: false`. Descendants with `no_pause: true` or an unset
+value keep their running allocation and task state. Unpause requires the stopped
+allocation to have finished and its task to be `PAUSED`; repeated requests do
+not create another allocation for a task that has already resumed.
+
 Task-context and proxied checkpoint archives reject escaping paths/links and
 special files. Archive ownership and unsafe permission bits are not restored.
 Contained symbolic links and hard links remain supported, but hard links must
