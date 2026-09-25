@@ -1,5 +1,23 @@
 # Task continuity baseline
 
+## Generic task resume operations
+
+Unpausing a generic task tree records an operation ID, its target members, and
+each member's old and intended allocation ID before starting any member. If a
+later member fails to start, retry unpause on the same root task ID. The root
+may already show ACTIVE; the retry continues the recorded members and keeps
+allocation IDs that were already started.
+
+Pause rejects a conflicting unfinished resume. Kill records cancellation
+for affected members and signals any intended allocations that started. Master
+startup reconciles unfinished resume and cancellation records before orphan
+allocation cleanup. If reconciliation cannot finish, startup fails so an open
+intended allocation is not silently closed; correct the underlying failure and
+restart. The downgrade migration refuses to drop the resume table while any
+operation is unfinished.
+
+## CPU training continuity
+
 The online-pool smoke proves pool publication and work after master recovery. It
 does not prove that an already-running training loop continues during an outage.
 This opt-in CPU probe measures that separate boundary without dispatching
