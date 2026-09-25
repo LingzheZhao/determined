@@ -23,8 +23,8 @@ claims about upstream funding or support are not release guarantees for this for
 M0 candidate distribution builds and the M1 CPU-agent lifecycle have passed
 integration acceptance. An isolated maintenance-to-pools upgrade and database
 backup/restore rollback also passed on the workstation. GPU research workloads and production rollout
-remain release gates. M2 has an opt-in CPU diagnostic baseline; its runtime
-reliability changes and M3–M4 remain planned.
+remain release gates. M2 has an opt-in CPU diagnostic baseline and nonblocking optional progress reporting.
+Reliable metrics/checkpoint recovery and M3–M4 remain planned.
 The [distribution guide](distribution.md) describes candidate artifacts; the
 [dynamic pool guide](dynamic-pools.md) documents the implemented management API.
 The [online pool design](online-resource-pools.md) retains the full acceptance matrix.
@@ -52,11 +52,11 @@ extraction transactional.
 
 - The project lead owns scope, architecture, integration review, and acceptance.
   Keep an explicit next milestone and pick bounded work from its checklist.
-- GPT-5.6-sol subagents implement fixes, tests, build plumbing, and documentation
+- GPT-6-sol subagents implement fixes, tests, build plumbing, and documentation
   in explicitly assigned, non-overlapping files. Each returns the changed paths,
   exact validation performed, and unresolved risks. Review their changes before
   promoting a milestone.
-- GPT-5.6-luna handles read-only status checks: workflow results, tool availability,
+- GPT-6-luna handles read-only status checks: workflow results, tool availability,
   missing artifacts, and progress against the checklist. Escalate new failures to
   the lead; do not silently expand monitoring into scheduler or security changes.
 - Run focused regression checks locally through `tools/fork/check.sh`. The default

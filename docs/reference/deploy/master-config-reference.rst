@@ -793,11 +793,12 @@ agent cannot accept new work, but its slots and running containers are retained 
 values tolerate longer connection failures at the cost of delaying failed-agent cleanup and making
 the unavailable capacity visible for longer.
 
-``agent_reattach_enabled`` (experimental)
-=========================================
+``agent_reattach_enabled`` (deprecated)
+========================================
 
-Whether master & agent try to recover running containers after a restart. On master or agent process
-restart, the agent must reconnect within ``agent_reconnect_wait`` period.
+Deprecated and ignored since 0.21.0: agent reattachment is always enabled. Recovery still depends
+on the agent reconnecting within the pool's ``agent_reconnect_wait`` period and the agent's own
+reconnect attempt/backoff settings. Setting this flag does not extend either recovery window.
 
 ``task_container_defaults``
 ===========================
