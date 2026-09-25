@@ -36,6 +36,7 @@ import (
 // New returns a new ResourceManager, which manages communicating with
 // and scheduling on Determined agents.
 func New(
+	ctx context.Context,
 	db *db.PgDB,
 	e *echo.Echo,
 	rmConfig *config.ResourceManagerWithPoolsConfig,
@@ -81,6 +82,9 @@ func New(
 		resourceManager.stop()
 		return nil, fmt.Errorf("marking dynamic resource pools ready: %w", err)
 	}
+	if db != nil {
+		resourceManager.startDynamicPoolWorker(ctx)
+	}
 	return resourceManager, nil
 }
 
@@ -92,9 +96,12 @@ type ResourceManager struct {
 	cert   *tls.Certificate
 	db     *db.PgDB
 
-	agentService *agents
-	agentUpdates *queue.Queue[agentUpdatedEvent]
-	registry     *poolRegistry
+	agentService      *agents
+	agentUpdates      *queue.Queue[agentUpdatedEvent]
+	registry          *poolRegistry
+	dynamicPoolWake   chan struct{}
+	dynamicPoolCancel context.CancelFunc
+	dynamicPoolDone   chan struct{}
 }
 
 func newAgentResourceManager(
@@ -909,8 +916,17 @@ func (a *ResourceManager) fetchAvgQueuedTime(pool string) (
 
 // mostly for tests.
 func (a *ResourceManager) stop() {
+	a.StopDynamicPoolWorker()
 	for _, entry := range a.registry.readyEntries() {
 		entry.pool.stop()
+	}
+}
+
+// StopDynamicPoolWorker waits for in-flight Pending work before the master closes its database.
+func (a *ResourceManager) StopDynamicPoolWorker() {
+	if a.dynamicPoolCancel != nil {
+		a.dynamicPoolCancel()
+		<-a.dynamicPoolDone
 	}
 }
 

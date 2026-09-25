@@ -4,7 +4,10 @@ package agentrm
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
@@ -32,7 +35,7 @@ func TestDynamicPoolPersistenceRestart(t *testing.T) {
 			MaxAuxContainersPerAgent: 100,
 		}},
 	}
-	first, err := New(database, echo.New(), rmConfig, nil, nil)
+	first, err := New(context.Background(), database, echo.New(), rmConfig, nil, nil)
 	require.NoError(t, err)
 	defer first.stop()
 	staticBefore, ok := first.registry.readyPool("default")
@@ -51,8 +54,14 @@ func TestDynamicPoolPersistenceRestart(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.True(t, created)
-	require.Equal(t, db.DynamicResourcePoolReady, record.State)
-	require.True(t, first.IsDynamicResourcePoolReady(record.PoolName))
+	require.Contains(t, []db.DynamicResourcePoolState{
+		db.DynamicResourcePoolPending, db.DynamicResourcePoolReady,
+	}, record.State)
+	require.Eventually(t, func() bool {
+		stored, readErr := database.DynamicResourcePoolByName(context.Background(), record.PoolName)
+		return readErr == nil && stored.State == db.DynamicResourcePoolReady &&
+			first.IsDynamicResourcePoolReady(record.PoolName)
+	}, 10*time.Second, 20*time.Millisecond)
 	staticAfter, ok := first.registry.readyPool("default")
 	require.True(t, ok)
 	require.Same(t, staticBefore, staticAfter, "online create must preserve existing runtime pools")
@@ -66,7 +75,7 @@ func TestDynamicPoolPersistenceRestart(t *testing.T) {
 	require.True(t, effective.ForcePullImage, "dynamic defaults must remain frozen")
 
 	first.stop()
-	restarted, err := New(database, echo.New(), rmConfig, nil, nil)
+	restarted, err := New(context.Background(), database, echo.New(), rmConfig, nil, nil)
 	require.NoError(t, err)
 	defer restarted.stop()
 	require.True(t, restarted.IsDynamicResourcePoolReady(record.PoolName))
@@ -79,6 +88,160 @@ func TestDynamicPoolPersistenceRestart(t *testing.T) {
 	restored, err := database.DynamicResourcePoolByName(context.Background(), record.PoolName)
 	require.NoError(t, err)
 	require.Equal(t, db.DynamicResourcePoolReady, restored.State)
+}
+
+func TestDynamicPoolPendingWorkerRecoversReplayWithoutRestart(t *testing.T) {
+	database, cleanup := db.MustResolveNewPostgresDatabase(t)
+	defer cleanup()
+	db.MustMigrateTestPostgres(t, database, "file://../../../static/migrations", "up")
+	rmConfig := &config.ResourceManagerWithPoolsConfig{
+		ResourceManager: &config.ResourceManagerConfig{AgentRM: &config.AgentResourceManagerConfig{
+			ClusterName: "agent-cluster", DefaultComputeResourcePool: "default",
+			DefaultAuxResourcePool: "default", Scheduler: config.DefaultSchedulerConfig(),
+		}},
+		ResourcePools: []config.ResourcePoolConfig{{
+			PoolName: "default", MaxAuxContainersPerAgent: 100,
+		}},
+	}
+	manager, err := New(context.Background(), database, echo.New(), rmConfig, nil, nil)
+	require.NoError(t, err)
+	defer manager.stop()
+	staticPool, ok := manager.registry.readyPool("default")
+	require.True(t, ok)
+	originalCreate := createDynamicPoolRuntime
+	t.Cleanup(func() { createDynamicPoolRuntime = originalCreate })
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	var runtimeCreates atomic.Int32
+	createDynamicPoolRuntime = func(
+		manager *ResourceManager, cfg config.ResourcePoolConfig,
+	) (*resourcePool, error) {
+		if cfg.PoolName == "recover-pending" {
+			runtimeCreates.Add(1)
+			started <- struct{}{}
+			<-release
+		}
+		return originalCreate(manager, cfg)
+	}
+
+	cfg := config.ResourcePoolConfig{PoolName: "recover-pending", MaxAuxContainersPerAgent: 100}
+	normalized, err := manager.NormalizeDynamicResourcePoolConfig(
+		cfg, *model.DefaultTaskContainerDefaults(),
+	)
+	require.NoError(t, err)
+	raw, hash, err := marshalDynamicResourcePoolConfig(normalized)
+	require.NoError(t, err)
+	// This is the durable state left by an insert whose following read failed or was canceled.
+	_, created, err := database.CreateDynamicResourcePool(context.Background(), db.DynamicResourcePool{
+		ClusterName: "agent-cluster", PoolName: cfg.PoolName,
+		ConfigVersion: dynamicResourcePoolConfigVersion, IdempotencyKey: "recover-key",
+		Config: raw, ConfigHash: hash,
+	})
+	require.NoError(t, err)
+	require.True(t, created)
+	require.Eventually(t, func() bool {
+		select {
+		case <-started:
+			return true
+		default:
+			return false
+		}
+	}, 10*time.Second, 20*time.Millisecond)
+
+	const replays = 16
+	var group sync.WaitGroup
+	for i := 0; i < replays; i++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			replayed, wasCreated, replayErr := manager.CreateDynamicResourcePool(
+				context.Background(), "recover-key", cfg, *model.DefaultTaskContainerDefaults(),
+			)
+			if replayErr != nil || wasCreated || replayed.PoolName != cfg.PoolName {
+				t.Errorf("replay: record=%+v created=%v err=%v", replayed, wasCreated, replayErr)
+			}
+		}()
+	}
+	group.Wait()
+	releaseOnce.Do(func() { close(release) })
+	require.Eventually(t, func() bool {
+		stored, readErr := database.DynamicResourcePoolByName(context.Background(), cfg.PoolName)
+		return readErr == nil && stored.State == db.DynamicResourcePoolReady &&
+			manager.IsDynamicResourcePoolReady(cfg.PoolName)
+	}, 10*time.Second, 20*time.Millisecond)
+	runtime, ok := manager.registry.readyPool(cfg.PoolName)
+	require.True(t, ok)
+	_, _, err = manager.CreateDynamicResourcePool(
+		context.Background(), "recover-key", cfg, *model.DefaultTaskContainerDefaults(),
+	)
+	require.NoError(t, err)
+	afterReplay, ok := manager.registry.readyPool(cfg.PoolName)
+	require.True(t, ok)
+	require.Same(t, runtime, afterReplay)
+	require.EqualValues(t, 1, runtimeCreates.Load())
+	staticAfter, ok := manager.registry.readyPool("default")
+	require.True(t, ok)
+	require.Same(t, staticPool, staticAfter)
+}
+
+func TestDynamicPoolRetryWorkerStopsWithMasterContext(t *testing.T) {
+	database, cleanup := db.MustResolveNewPostgresDatabase(t)
+	defer cleanup()
+	db.MustMigrateTestPostgres(t, database, "file://../../../static/migrations", "up")
+	masterCtx, cancelMaster := context.WithCancel(context.Background())
+	defer cancelMaster()
+	rmConfig := &config.ResourceManagerWithPoolsConfig{
+		ResourceManager: &config.ResourceManagerConfig{AgentRM: &config.AgentResourceManagerConfig{
+			ClusterName: "agent-cluster", DefaultComputeResourcePool: "default",
+			DefaultAuxResourcePool: "default", Scheduler: config.DefaultSchedulerConfig(),
+		}},
+		ResourcePools: []config.ResourcePoolConfig{{
+			PoolName: "default", MaxAuxContainersPerAgent: 100,
+		}},
+	}
+	manager, err := New(masterCtx, database, echo.New(), rmConfig, nil, nil)
+	require.NoError(t, err)
+	defer manager.stop()
+	// Keep the initial scanner out of the setup window while arranging a durable failure.
+	manager.StopDynamicPoolWorker()
+	cfg := config.ResourcePoolConfig{PoolName: "retry-failed", MaxAuxContainersPerAgent: 100}
+	normalized, err := manager.NormalizeDynamicResourcePoolConfig(
+		cfg, *model.DefaultTaskContainerDefaults(),
+	)
+	require.NoError(t, err)
+	raw, hash, err := marshalDynamicResourcePoolConfig(normalized)
+	require.NoError(t, err)
+	_, created, err := database.CreateDynamicResourcePool(context.Background(), db.DynamicResourcePool{
+		ClusterName: "agent-cluster", PoolName: cfg.PoolName,
+		ConfigVersion: dynamicResourcePoolConfigVersion, IdempotencyKey: "retry-key",
+		Config: raw, ConfigHash: hash,
+	})
+	require.NoError(t, err)
+	require.True(t, created)
+	failure := "previous runtime initialization failed"
+	_, err = database.SetDynamicResourcePoolState(
+		context.Background(), cfg.PoolName, db.DynamicResourcePoolFailed, &failure,
+	)
+	require.NoError(t, err)
+
+	manager.startDynamicPoolWorker(masterCtx)
+	retried, err := manager.RetryDynamicResourcePool(context.Background(), cfg.PoolName)
+	require.NoError(t, err)
+	require.Equal(t, db.DynamicResourcePoolPending, retried.State)
+	require.Eventually(t, func() bool {
+		stored, readErr := database.DynamicResourcePoolByName(context.Background(), cfg.PoolName)
+		return readErr == nil && stored.State == db.DynamicResourcePoolReady &&
+			manager.IsDynamicResourcePoolReady(cfg.PoolName)
+	}, 10*time.Second, 20*time.Millisecond)
+
+	cancelMaster()
+	select {
+	case <-manager.dynamicPoolDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("dynamic pool worker did not exit after master context cancellation")
+	}
 }
 
 func TestDynamicPoolStartupRejectsUnsupportedVersion(t *testing.T) {

@@ -88,6 +88,35 @@ command_logs_contain() {
     det command logs "${command_id}" 2>/dev/null | grep -q "${expected_text}"
 }
 
+dynamic_pool_ready() {
+    local status
+    status=$(curl --fail --silent --show-error -H "${auth_header}" \
+        "${dynamic_url}" | jq -er \
+        '.resource_pools[] | select(.pool_name == "fork-smoke-dynamic") | .state') || return 1
+    if [[ ${status} == Failed ]]; then
+        echo "dynamic pool initialization failed" >&2
+        return 2
+    fi
+    [[ ${status} == Ready ]]
+}
+
+wait_for_dynamic_pool_ready() {
+    local status
+    for _ in $(seq 1 60); do
+        if dynamic_pool_ready; then
+            return 0
+        else
+            status=$?
+            if ((status == 2)); then
+                return 2
+            fi
+        fi
+        sleep 2
+    done
+    echo "timed out waiting for dynamic pool initialization" >&2
+    return 1
+}
+
 expect_http_status() {
     expected_status=$1
     shift
@@ -175,8 +204,9 @@ create_json=$(curl --fail --silent --show-error \
     -H "${auth_header}" -H 'Content-Type: application/json' \
     --data "${dynamic_body}" \
     "${dynamic_url}")
-jq -e '.pool_name == "fork-smoke-dynamic" and .state == "Ready"' \
+jq -e '.pool_name == "fork-smoke-dynamic" and (.state == "Pending" or .state == "Ready")' \
     <<<"${create_json}" >/dev/null
+wait_for_dynamic_pool_ready
 
 # An exact replay must return the existing operation without duplicating the pool.
 expect_http_status 200 \

@@ -1065,6 +1065,7 @@ func (m *Master) postTaskLogs(c echo.Context) (interface{}, error) {
 }
 
 func (m *Master) buildRM(
+	ctx context.Context,
 	db *db.PgDB,
 	echo *echo.Echo,
 	rmConfigs []*config.ResourceManagerWithPoolsConfig,
@@ -1078,7 +1079,7 @@ func (m *Master) buildRM(
 		clusterName := config.ResourceManager.ClusterName()
 		switch {
 		case config.ResourceManager.AgentRM != nil:
-			agentRM, err := agentrm.New(db, echo, config, opts, cert)
+			agentRM, err := agentrm.New(ctx, db, echo, config, opts, cert)
 			if err != nil {
 				return nil, err
 			}
@@ -1123,7 +1124,7 @@ func (m *Master) buildRM(
 			}
 			clusterNames[rmClusterName] = 0
 
-			agentRM, err := agentrm.New(db, echo, cfg, opts, cert)
+			agentRM, err := agentrm.New(ctx, db, echo, cfg, opts, cert)
 			if err != nil {
 				return nil, fmt.Errorf("resource manager %s: %w", c.ClusterName(), err)
 			}
@@ -1191,6 +1192,8 @@ func (m *Master) Run(ctx context.Context, gRPCLogInitDone chan struct{}) error {
 		return err
 	}
 	defer closeWithErrCheck("db", m.db)
+	poolWorkerCtx, cancelPoolWorkers := context.WithCancel(ctx)
+	defer cancelPoolWorkers()
 
 	if !isOldCluster {
 		// This has to happen after setup, since creating the built-in users without a
@@ -1381,7 +1384,7 @@ func (m *Master) Run(ctx context.Context, gRPCLogInitDone chan struct{}) error {
 	}
 
 	// Resource Manager.
-	if m.rm, err = m.buildRM(m.db, m.echo, m.config.ResourceManagers(),
+	if m.rm, err = m.buildRM(poolWorkerCtx, m.db, m.echo, m.config.ResourceManagers(),
 		&m.config.TaskContainerDefaults,
 		&aproto.MasterSetAgentOptions{
 			MasterInfo:     m.Info(),
@@ -1391,6 +1394,14 @@ func (m *Master) Run(ctx context.Context, gRPCLogInitDone chan struct{}) error {
 	); err != nil {
 		return fmt.Errorf("could not initialize resource manager(s): %w", err)
 	}
+	defer func() {
+		cancelPoolWorkers()
+		for _, resourceManager := range m.allRms {
+			if agentRM, ok := resourceManager.(*agentrm.ResourceManager); ok {
+				agentRM.StopDynamicPoolWorker()
+			}
+		}
+	}()
 	m.registerDynamicResourcePoolRoutes()
 
 	jobservice.SetDefaultService(m.rm)

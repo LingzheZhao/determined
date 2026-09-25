@@ -31,6 +31,13 @@ var (
 	ErrDynamicResourcePoolNotFailed = errors.New("dynamic resource pool is not failed")
 )
 
+// Kept as a package variable so integration tests can fail the read after a committed insert.
+var readCreatedDynamicResourcePool = func(
+	database *PgDB, ctx context.Context, poolName string,
+) (DynamicResourcePool, error) {
+	return database.DynamicResourcePoolByName(ctx, poolName)
+}
+
 // DynamicResourcePool is the durable desired configuration and operation status for a dynamic
 // resource pool. Config is the normalized, effective ResourcePoolConfig JSON.
 type DynamicResourcePool struct {
@@ -74,7 +81,7 @@ ON CONFLICT DO NOTHING`,
 		return DynamicResourcePool{}, false, fmt.Errorf("checking dynamic resource pool insert: %w", err)
 	}
 	if rows == 1 {
-		stored, err = db.DynamicResourcePoolByName(ctx, record.PoolName)
+		stored, err = readCreatedDynamicResourcePool(db, ctx, record.PoolName)
 		return stored, true, err
 	}
 
