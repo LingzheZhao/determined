@@ -915,7 +915,7 @@ func (m *Master) restoreGenericTasks(ctx context.Context) error {
 			return err
 		}
 
-		onAllocationExit := getGenericTaskOnAllocationExit(ctx, taskID, *jobID, logCtx)
+		onAllocationExit := getGenericTaskOnAllocationExit(ctx, taskID, snapshots[i].AllocationID, *jobID, logCtx)
 
 		isSingleNode := snapshots[i].GenericTaskSpec.GenericTaskConfig.Resources.IsSingleNode() != nil &&
 			*snapshots[i].GenericTaskSpec.GenericTaskConfig.Resources.IsSingleNode()
@@ -1435,6 +1435,9 @@ func (m *Master) Run(ctx context.Context, gRPCLogInitDone chan struct{}) error {
 
 	// Restore generic tasks
 	if err = m.restoreGenericTasks(ctx); err != nil {
+		return err
+	}
+	if err = m.recoverGenericTaskResumes(ctx); err != nil {
 		return err
 	}
 

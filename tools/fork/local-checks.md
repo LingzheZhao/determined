@@ -27,13 +27,17 @@ tools/fork/check.sh security
 # Run registry, scheduler, and dynamic-pool unit tests with Go's race detector.
 tools/fork/check.sh pools
 
-# Run dynamic-pool persistence and restart tests against an existing test database.
+# Run pool persistence, Pending/Ready reconciliation, and restart regressions.
 DET_INTEGRATION_POSTGRES_URL='postgres://postgres:postgres@localhost:5432/determined?sslmode=disable' \
   tools/fork/check.sh integration-pools
+
+# Run Generic Task pause/resume, concurrency, and authorization regressions.
+DET_INTEGRATION_POSTGRES_URL='postgres://postgres:postgres@localhost:5432/determined?sslmode=disable' \
+  tools/fork/check.sh integration-tasks
 ```
 
 `pools` and `integration-pools` require the dynamic-pool source files, so they fail with a clear
-message on a maintenance-only checkout. The integration mode never starts PostgreSQL or Docker;
+message on a maintenance-only checkout. Neither integration mode starts PostgreSQL or Docker;
 the database URL must point to a disposable database that is already running.
 
 The Go modes expect the repository's generated mocks and development dependencies to be ready.
