@@ -87,6 +87,10 @@ credentials cannot be submitted. A master-owned worker initializes saved
 endpoint until the operation becomes `Ready` or `Failed`. The worker rescans
 saved operations periodically, so an insert committed just before a failed
 read or canceled request is still advanced without restarting the master.
+It also reconstructs a `Ready` pool whose runtime was not published after an
+ambiguous database write. Reconstruction uses the saved effective configuration
+and retries transient runtime failures. `Failed` pools still require explicit
+retry.
 Exact replays return the current operation state and do not start another
 runtime pool.
 
