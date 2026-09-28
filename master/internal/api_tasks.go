@@ -80,19 +80,45 @@ func (a *apiServer) canDoActionsOnTask(
 	ctx context.Context, taskID model.TaskID,
 	actions ...func(context.Context, model.User, *model.Experiment) error,
 ) (*model.AccessScopeID, *int, error) {
-	errTaskNotFound := api.NotFoundErrs("task", fmt.Sprint(taskID), true)
-	t, err := db.TaskByID(ctx, taskID)
-	if errors.Is(err, db.ErrNotFound) {
-		return nil, nil, errTaskNotFound
-	} else if err != nil {
+	// Preserve GetTask's original ordering: resolve the task before reading the gRPC user.
+	t, err := taskForAction(ctx, taskID)
+	if err != nil {
 		return nil, nil, err
 	}
-
 	curUser, _, err := grpcutil.GetUser(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
+	return a.canDoActionsOnLoadedTaskForUser(ctx, taskID, t, *curUser, actions...)
+}
 
+// canDoActionsOnTaskForUser keeps Echo and gRPC task reads on the same RBAC path.
+func (a *apiServer) canDoActionsOnTaskForUser(
+	ctx context.Context, taskID model.TaskID, curUser model.User,
+	actions ...func(context.Context, model.User, *model.Experiment) error,
+) (*model.AccessScopeID, *int, error) {
+	t, err := taskForAction(ctx, taskID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return a.canDoActionsOnLoadedTaskForUser(ctx, taskID, t, curUser, actions...)
+}
+
+func taskForAction(ctx context.Context, taskID model.TaskID) (*model.Task, error) {
+	t, err := db.TaskByID(ctx, taskID)
+	if errors.Is(err, db.ErrNotFound) {
+		return nil, api.NotFoundErrs("task", fmt.Sprint(taskID), true)
+	} else if err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+func (a *apiServer) canDoActionsOnLoadedTaskForUser(
+	ctx context.Context, taskID model.TaskID, t *model.Task, curUser model.User,
+	actions ...func(context.Context, model.User, *model.Experiment) error,
+) (*model.AccessScopeID, *int, error) {
+	errTaskNotFound := api.NotFoundErrs("task", fmt.Sprint(taskID), true)
 	switch t.TaskType {
 	case model.TaskTypeTrial:
 		isExp, exp, err := expFromTaskID(ctx, taskID)
@@ -104,11 +130,11 @@ func (a *apiServer) canDoActionsOnTask(
 			return nil, nil, err
 		}
 
-		if err = expauth.AuthZProvider.Get().CanGetExperiment(ctx, *curUser, exp); err != nil {
+		if err = expauth.AuthZProvider.Get().CanGetExperiment(ctx, curUser, exp); err != nil {
 			return nil, nil, authz.SubIfUnauthorized(err, errTaskNotFound)
 		}
 		for _, action := range actions {
-			if err = action(ctx, *curUser, exp); err != nil {
+			if err = action(ctx, curUser, exp); err != nil {
 				return nil, nil, status.Error(codes.PermissionDenied, err.Error())
 			}
 		}
@@ -118,7 +144,7 @@ func (a *apiServer) canDoActionsOnTask(
 		}
 		return ptrs.Ptr(model.AccessScopeID(workspaceID)), ptrs.Ptr(exp.ID), nil
 	default: // NTSC case + checkpointGC.
-		ok, workspaceID, err := canAccessNTSCTask(ctx, *curUser, taskID)
+		ok, workspaceID, err := canAccessNTSCTask(ctx, curUser, taskID)
 		if err != nil {
 			if !ok || authz.IsPermissionDenied(err) {
 				return nil, nil, errTaskNotFound

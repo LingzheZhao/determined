@@ -1531,6 +1531,8 @@ func (m *Master) Run(ctx context.Context, gRPCLogInitDone chan struct{}) error {
 		c.Response().Header().Set("Cache-Control", "no-store")
 		return c.JSON(http.StatusOK, m.config.Integrations.GrafanaTaskResources)
 	})
+	m.echo.GET("/ui/task-resources", m.getTaskResourcesCapability)
+	m.echo.GET("/ui/task-resources/:task_id", m.getTaskResources)
 	m.echo.GET("/health", m.healthCheckEndpoint)
 
 	experimentsGroup := m.echo.Group("/experiments")
