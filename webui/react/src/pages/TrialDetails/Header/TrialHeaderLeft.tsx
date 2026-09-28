@@ -5,10 +5,13 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 
 import ExperimentIcons from 'components/ExperimentIcons';
+import GrafanaTaskResourcesLink from 'components/GrafanaTaskResourcesLink';
 import useFeature from 'hooks/useFeature';
+import useGrafanaTaskResources from 'hooks/useGrafanaTaskResources';
 import { paths } from 'routes/utils';
 import { ExperimentBase, TrialDetails } from 'types';
 import { hex2hsl } from 'utils/color';
+import { buildGrafanaTaskResourcesUrl } from 'utils/grafanaTaskResources';
 
 import css from './TrialHeaderLeft.module.scss';
 
@@ -22,6 +25,14 @@ const labelColor = '#CC0000';
 
 const TrialHeaderLeft: React.FC<Props> = ({ experiment, trial }: Props) => {
   const f_flat_runs = useFeature().isOn('flat_runs');
+  const grafanaConfig = useGrafanaTaskResources();
+  const grafanaUrl = trial.taskId
+    ? buildGrafanaTaskResourcesUrl(grafanaConfig, {
+        endTime: trial.endTime,
+        startTime: trial.startTime,
+        taskId: trial.taskId,
+      })
+    : undefined;
 
   return (
     <div className={css.base}>
@@ -46,6 +57,7 @@ const TrialHeaderLeft: React.FC<Props> = ({ experiment, trial }: Props) => {
             </Tooltip>
           ))}
       </div>
+      {grafanaUrl && <GrafanaTaskResourcesLink className={css.resources} url={grafanaUrl} />}
     </div>
   );
 };

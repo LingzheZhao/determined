@@ -854,6 +854,8 @@ interface Allocation {
 
 export interface TaskItem {
   allocations: Allocation[];
+  endTime?: string;
+  startTime: string;
   taskId: string;
 }
 

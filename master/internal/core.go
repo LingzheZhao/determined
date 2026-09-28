@@ -1525,6 +1525,12 @@ func (m *Master) Run(ctx context.Context, gRPCLogInitDone chan struct{}) error {
 		filepath.Join(m.config.Root, "swagger/determined/api/v1/api.swagger.json"))
 
 	m.echo.GET("/info", api.Route(m.getInfo))
+	// The normal HTTP authentication middleware protects this UI-only configuration route.
+	// Expose no master config or Grafana credentials to the browser.
+	m.echo.GET("/ui/grafana-task-resources", func(c echo.Context) error {
+		c.Response().Header().Set("Cache-Control", "no-store")
+		return c.JSON(http.StatusOK, m.config.Integrations.GrafanaTaskResources)
+	})
 	m.echo.GET("/health", m.healthCheckEndpoint)
 
 	experimentsGroup := m.echo.Group("/experiments")
