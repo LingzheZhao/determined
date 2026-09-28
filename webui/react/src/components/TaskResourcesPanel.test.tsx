@@ -23,13 +23,25 @@ const response = (allocation: string) => ({
     }),
   ok: true,
 });
-const page = (taskId: string) => (
+const page = (taskId: string, initialAllocationId?: string) => (
   <UIProvider theme={DefaultTheme.Light}>
-    <TaskResourcesPanel startTime="2026-01-01T00:00:00Z" taskId={taskId} />
+    <TaskResourcesPanel
+      initialAllocationId={initialAllocationId}
+      startTime="2026-01-01T00:00:00Z"
+      taskId={taskId}
+    />
   </UIProvider>
 );
 
 afterEach(() => vi.unstubAllGlobals());
+
+it('retains loaded samples when an allocation deep link changes within the same task', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response('selected-allocation')));
+  const view = render(page('task'));
+  expect(await screen.findByText('selected-allocation')).toBeInTheDocument();
+  view.rerender(page('task', 'selected-allocation'));
+  expect(screen.getAllByText('selected-allocation').length).toBeGreaterThan(1);
+});
 
 it('ignores a late response after changing tasks and aborts the previous request', async () => {
   let resolveOld!: (value: unknown) => void;

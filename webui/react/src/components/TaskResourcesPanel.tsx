@@ -78,8 +78,9 @@ const TaskResourcesPanel: React.FC<Props> = ({
 
   useEffect(() => {
     setAllocation(initialAllocationId || '');
-    setPayload(undefined);
   }, [taskId, initialAllocationId]);
+
+  useEffect(() => setPayload(undefined), [taskId]);
 
   useEffect(() => {
     if (!enabled || !range || !taskId) return;
