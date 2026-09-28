@@ -136,6 +136,7 @@ export default defineConfig(({ mode }) => ({
     port: 3001,
     proxy: {
       '/api': { target: webpackProxyUrl },
+      '/ui': { target: webpackProxyUrl },
       '/proxy': { target: webpackProxyUrl },
       '/stream': {
         target: websocketProxyUrl,
@@ -155,6 +156,7 @@ export default defineConfig(({ mode }) => ({
     port: 3000,
     proxy: {
       '/api': { target: webpackProxyUrl },
+      '/ui': { target: webpackProxyUrl },
       '/proxy': { target: webpackProxyUrl },
       '/stream': {
         target: websocketProxyUrl,

@@ -117,6 +117,13 @@ const routes: RouteConfig[] = [
   },
   {
     icon: 'tasks',
+    id: 'taskResources',
+    needAuth: true,
+    path: '/tasks/:taskId/resources',
+    title: 'Task Resources',
+  },
+  {
+    icon: 'tasks',
     id: 'taskList',
     needAuth: true,
     path: '/tasks',
