@@ -39,7 +39,7 @@ attributions.rst: $(shell find ../tools/scripts/licenses -type f)
 rebrand:
 	python rebrand-docs.py . .
 
-build/sp-%.stamp: $(SPHINXWRAPPER) conf.py attributions.rst $(shell find . -name site -prune -o -type f \( -name '*.rst' -o -name '*.html' -o -name '*.css' \) -print) $(shell find assets -type f) $(shell find _templates -type f) build/examples.stamp build/helm.stamp build/swagger.stamp
+build/sp-%.stamp: $(SPHINXWRAPPER) conf.py attributions.rst $(shell find . -name site -prune -o -type f \( -name '*.rst' -o -name '*.md' -o -name '*.html' -o -name '*.css' \) -print) $(shell find assets -type f) $(shell find _templates -type f) build/examples.stamp build/helm.stamp build/swagger.stamp
 	$(SPHINXWRAPPER) $(SPHINXBUILD) -M $* . site $(SPHINXOPTS)
 	mkdir -p build
 	touch $@

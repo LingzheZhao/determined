@@ -198,9 +198,11 @@ const ExperimentDetailsHeader: React.FC<Props> = ({
     expPermissions.canMoveExperiment({ experiment });
   const canModifyExp = canActionExperiment(Action.Move, experiment) &&
     expPermissions.canModifyExperiment({
+      userId: experiment.userId,
       workspace: { id: experiment.workspaceId },
     });
   const canPausePlay = expPermissions.canModifyExperiment({
+    userId: experiment.userId,
     workspace: { id: experiment.workspaceId },
   });
 
@@ -218,7 +220,7 @@ const ExperimentDetailsHeader: React.FC<Props> = ({
   const disabled =
     experiment?.parentArchived ||
     experiment?.archived ||
-    !expPermissions.canModifyExperimentMetadata({ workspace: { id: experiment?.workspaceId } });
+    !expPermissions.canModifyExperimentMetadata({ userId: experiment?.userId, workspace: { id: experiment?.workspaceId } });
 
   const handlePauseClick = useCallback(async () => {
     setIsChangingState(true);

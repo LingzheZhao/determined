@@ -55,11 +55,14 @@ export const getActionsForFlatRun = (
           return permissions.canMoveFlatRun({ flatRun });
         case FlatRunAction.Archive:
         case FlatRunAction.Unarchive:
-          return permissions.canModifyFlatRun({ workspace });
+          return permissions.canModifyFlatRun({ userId: flatRun.userId, workspace });
         case FlatRunAction.Pause:
         case FlatRunAction.Resume:
         case FlatRunAction.Kill:
-          return permissions.canModifyFlatRun({ workspace }) && !flatRun.experiment?.unmanaged;
+          return (
+            permissions.canModifyFlatRun({ userId: flatRun.userId, workspace }) &&
+            !flatRun.experiment?.unmanaged
+          );
         default:
           return true;
       }

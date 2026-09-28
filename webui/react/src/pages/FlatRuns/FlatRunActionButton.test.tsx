@@ -6,6 +6,17 @@ import UIProvider, { DefaultTheme } from 'hew/Theme';
 import FlatRunActionButton from 'pages/FlatRuns/FlatRunActionButton';
 import { FlatRun, RunState } from 'types';
 
+vi.mock('stores/users', async (importOriginal) => {
+  const loadable = await import('hew/utils/loadable');
+  const observable = await import('utils/observable');
+  return {
+    ...(await importOriginal<typeof import('stores/users')>()),
+    default: {
+      currentUser: observable.observable(loadable.Loaded({ id: 101, isAdmin: false })),
+    },
+  };
+});
+
 vi.mock('services/api', async (importOriginal) => ({
   __esModule: true,
   ...(await importOriginal<typeof import('services/api')>()),
@@ -54,6 +65,7 @@ describe('canActionFlatRun function', () => {
         projectName: 'test',
         startTime: dayjs('2024-05-24T23:03:45.415603Z').toDate(),
         state: RunState.Active,
+        userId: 101,
         workspaceId: 10,
         workspaceName: 'test',
       },

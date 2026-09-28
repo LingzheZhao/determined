@@ -178,11 +178,11 @@ const usePermissions = (): PermissionsHook => {
         canEditWebhooks(rbacOpts, args, args1),
       canManageResourcePoolBindings: canManageResourcePoolBindings(rbacOpts),
       canModifyExperiment: (args: WorkspacePermissionsArgs) =>
-        canModifyExperiment(rbacOpts, args.workspace),
+        canModifyExperiment(rbacOpts, args.workspace, args.userId),
       canModifyExperimentMetadata: (args: WorkspacePermissionsArgs) =>
-        canModifyExperimentMetadata(rbacOpts, args.workspace),
+        canModifyExperimentMetadata(rbacOpts, args.workspace, args.userId),
       canModifyFlatRun: (args: WorkspacePermissionsArgs) =>
-        canModifyFlatRun(rbacOpts, args.workspace),
+        canModifyFlatRun(rbacOpts, args.workspace, args.userId),
       canModifyGlobalConfigPolicies: canModifyGlobalConfigPolicies(rbacOpts),
       canModifyGroups: canModifyGroups(rbacOpts),
       canModifyModel: (args: ModelPermissionsArgs) => canModifyModel(rbacOpts, args.model),
@@ -202,7 +202,7 @@ const usePermissions = (): PermissionsHook => {
         canModifyWorkspaceCheckpointStorage(rbacOpts, args.workspace),
       canModifyWorkspaceConfigPolicies: canModifyWorkspaceConfigPolicies(rbacOpts),
       canModifyWorkspaceNSC: (args: WorkspacePermissionsArgs) =>
-        canModifyWorkspaceNSC(rbacOpts, args.workspace),
+        canModifyWorkspaceNSC(rbacOpts, args.workspace, args.userId),
       canMoveExperiment: (args: ExperimentPermissionsArgs) =>
         canMoveExperiment(rbacOpts, args.experiment),
       canMoveExperimentsTo: (args: MovePermissionsArgs) =>
@@ -357,19 +357,31 @@ const canDeleteExperiment = (
 };
 
 const canModifyExperiment = (
-  { rbacEnabled, userAssignments, userRoles }: RbacOptsProps,
+  { currentUser, rbacEnabled, userAssignments, userRoles }: RbacOptsProps,
   workspace?: PermissionWorkspace,
+  userId?: number,
 ): boolean => {
   const permitted = relevantPermissions(userAssignments, userRoles, workspace?.id);
-  return !!workspace && (!rbacEnabled || permitted.has(V1PermissionType.UPDATEEXPERIMENT));
+  return (
+    !!workspace &&
+    (rbacEnabled
+      ? permitted.has(V1PermissionType.UPDATEEXPERIMENT)
+      : !!currentUser && (currentUser.isAdmin || (userId != null && currentUser.id === userId)))
+  );
 };
 
 const canModifyExperimentMetadata = (
-  { rbacEnabled, userAssignments, userRoles }: RbacOptsProps,
+  { currentUser, rbacEnabled, userAssignments, userRoles }: RbacOptsProps,
   workspace?: PermissionWorkspace,
+  userId?: number,
 ): boolean => {
   const permitted = relevantPermissions(userAssignments, userRoles, workspace?.id);
-  return !!workspace && (!rbacEnabled || permitted.has(V1PermissionType.UPDATEEXPERIMENTMETADATA));
+  return (
+    !!workspace &&
+    (rbacEnabled
+      ? permitted.has(V1PermissionType.UPDATEEXPERIMENTMETADATA)
+      : !!currentUser && (currentUser.isAdmin || (userId != null && currentUser.id === userId)))
+  );
 };
 
 const canMoveExperiment = (
@@ -711,11 +723,14 @@ const canCreateWorkspaceNSC = (
 };
 
 const canModifyWorkspaceNSC = (
-  { rbacEnabled, userAssignments, userRoles }: RbacOptsProps,
+  { currentUser, rbacEnabled, userAssignments, userRoles }: RbacOptsProps,
   workspace?: PermissionWorkspace,
+  userId?: number,
 ): boolean => {
   const permitted = relevantPermissions(userAssignments, userRoles, workspace?.id);
-  return !rbacEnabled || permitted.has(V1PermissionType.UPDATENSC);
+  return rbacEnabled
+    ? permitted.has(V1PermissionType.UPDATENSC)
+    : !!currentUser && (currentUser.isAdmin || (userId != null && currentUser.id === userId));
 };
 
 /* Webhooks */
@@ -787,10 +802,11 @@ const canCreateFlatRun = (
 
 // alias of canModifyExperiment
 const canModifyFlatRun = (
-  { rbacEnabled, userAssignments, userRoles }: RbacOptsProps,
+  opts: RbacOptsProps,
   workspace?: PermissionWorkspace,
+  userId?: number,
 ): boolean => {
-  return canModifyExperiment({ rbacEnabled, userAssignments, userRoles }, workspace);
+  return canModifyExperiment(opts, workspace, userId);
 };
 
 const canDeleteFlatRun = (

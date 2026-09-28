@@ -47,6 +47,7 @@ import {
 import handleError, { ErrorLevel } from 'utils/error';
 import {
   canActionExperiment,
+  getActionsForExperiment,
   getActionsForExperimentsUnion,
   getProjectExperimentForExperimentItem,
 } from 'utils/experiment';
@@ -209,7 +210,12 @@ const TableActionBar: React.FC<Props> = ({
   const sendBatchActions = useCallback(
     async (action: BatchAction): Promise<BulkActionResult | void> => {
       const validExperimentIds = selectedExperiments
-        .filter((exp) => !exp.unmanaged && canActionExperiment(action, exp))
+        .filter(
+          (exp) =>
+            !exp.unmanaged &&
+            canActionExperiment(action, exp) &&
+            getActionsForExperiment(exp, [action], permissions).includes(action),
+        )
         .map((exp) => exp.id);
       const params = {
         experimentIds: validExperimentIds,
@@ -255,6 +261,7 @@ const TableActionBar: React.FC<Props> = ({
       ExperimentMoveModal,
       ExperimentRetainLogsModal,
       openExperimentTensorBoardModal,
+      permissions,
       project,
     ],
   );
@@ -474,6 +481,7 @@ const TableActionBar: React.FC<Props> = ({
           (id) =>
             canActionExperiment(ExperimentAction.RetainLogs, experimentMap[id]) &&
             permissions.canModifyExperiment({
+              userId: experimentMap[id].userId,
               workspace: { id: experimentMap[id].workspaceId },
             }),
         )}

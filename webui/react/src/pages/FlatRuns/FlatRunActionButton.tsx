@@ -24,7 +24,7 @@ import {
 import projectStore from 'stores/projects';
 import { BulkActionResult, ExperimentAction, FlatRun, Project } from 'types';
 import handleError from 'utils/error';
-import { canActionFlatRun, getActionsForFlatRunsUnion } from 'utils/flatRun';
+import { canActionFlatRun, getActionsForFlatRun, getActionsForFlatRunsUnion } from 'utils/flatRun';
 import { capitalizeWord, pluralizer } from 'utils/string';
 
 const BATCH_ACTIONS = [
@@ -81,7 +81,11 @@ const FlatRunActionButton = ({
   const sendBatchActions = useCallback(
     async (action: BatchAction): Promise<BulkActionResult | void> => {
       const validRunIds = selectedRuns
-        .filter((exp) => canActionFlatRun(action, exp))
+        .filter(
+          (run) =>
+            canActionFlatRun(action, run) &&
+            getActionsForFlatRun(run, [action], permissions).includes(action),
+        )
         .map((run) => run.id);
       const params = {
         projectId,
@@ -105,7 +109,7 @@ const FlatRunActionButton = ({
           return await resumeRuns(params);
       }
     },
-    [flatRunMoveModalOpen, projectId, selectedRuns],
+    [flatRunMoveModalOpen, projectId, selectedRuns, permissions],
   );
 
   const submitBatchAction = useCallback(

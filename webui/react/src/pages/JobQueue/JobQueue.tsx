@@ -18,6 +18,7 @@ import {
 } from 'components/Table/Table';
 import { V1SchedulerTypeToLabel } from 'constants/states';
 import useFeature from 'hooks/useFeature';
+import usePermissions from 'hooks/usePermissions';
 import usePolling from 'hooks/usePolling';
 import { useSettings } from 'hooks/useSettings';
 import useTaskResourcesEnabled from 'hooks/useTaskResourcesEnabled';
@@ -46,6 +47,7 @@ interface Props {
 
 const JobQueue: React.FC<Props> = ({ rpStats, selectedRp, jobState }) => {
   const resourcesEnabled = useTaskResourcesEnabled();
+  const { canModifyExperiment, canModifyWorkspaceNSC } = usePermissions();
   const users = Loadable.getOrElse([], useObservable(userStore.getUsers()));
   const [managingJob, setManagingJob] = useState<Job>();
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -124,18 +126,22 @@ const JobQueue: React.FC<Props> = ({ rpStats, selectedRp, jobState }) => {
       if (!('entityId' in job) || !job.entityId) return {};
       const triggers: Triggers<JobAction> = {};
       const commandType = jobTypeToCommandType(job.type);
+      const canControl =
+        job.type === JobType.EXPERIMENT
+          ? canModifyExperiment({ userId: job.userId, workspace: { id: job.workspaceId } })
+          : canModifyWorkspaceNSC({ userId: job.userId, workspace: { id: job.workspaceId } });
 
       if (commandType) {
-        triggers[JobAction.Kill] = () => {
-          killTask({ id: job.entityId, type: commandType });
-        };
+        if (canControl) {
+          triggers[JobAction.Kill] = () => killTask({ id: job.entityId, type: commandType });
+        }
         triggers[JobAction.ViewLog] = () => {
           routeToReactUrl(paths.taskLogs({ id: job.entityId, name: job.name, type: commandType }));
         };
       }
 
       // if job is an experiment type add action to kill it
-      if (job.type === JobType.EXPERIMENT) {
+      if (job.type === JobType.EXPERIMENT && canControl) {
         triggers[JobAction.Cancel] = async () => {
           await cancelExperiment({ experimentId: parseInt(job.entityId, 10) });
         };
@@ -154,7 +160,7 @@ const JobQueue: React.FC<Props> = ({ rpStats, selectedRp, jobState }) => {
         }
       }
 
-      if (canManageJob(job, selectedRp)) {
+      if (canControl && canManageJob(job, selectedRp)) {
         triggers[JobAction.ManageJob] = () => setManagingJob(job);
       }
 
@@ -169,7 +175,7 @@ const JobQueue: React.FC<Props> = ({ rpStats, selectedRp, jobState }) => {
       });
       return triggers;
     },
-    [selectedRp, fetchJobsTable, resourcesEnabled],
+    [selectedRp, fetchJobsTable, resourcesEnabled, canModifyExperiment, canModifyWorkspaceNSC],
   );
 
   const onModalClose = useCallback(() => {

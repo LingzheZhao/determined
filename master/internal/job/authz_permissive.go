@@ -27,6 +27,14 @@ func (a *JobAuthZPermissive) CanControlJobQueue(
 	return (&JobAuthZBasic{}).CanControlJobQueue(ctx, curUser)
 }
 
+// CanControlJobQueueUpdate follows the Basic ownership rule in permissive mode.
+func (a *JobAuthZPermissive) CanControlJobQueueUpdate(
+	ctx context.Context, curUser model.User, jobID model.JobID,
+) error {
+	_ = (&JobAuthZRBAC{}).CanControlJobQueueUpdate(ctx, curUser, jobID)
+	return (&JobAuthZBasic{}).CanControlJobQueueUpdate(ctx, curUser, jobID)
+}
+
 func init() {
 	AuthZProvider.Register("permissive", &JobAuthZPermissive{})
 }

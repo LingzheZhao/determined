@@ -4,12 +4,15 @@ import (
 	"context"
 
 	"github.com/determined-ai/determined/master/internal/api"
+	"github.com/determined-ai/determined/master/internal/api/apiutils"
+	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/job/jobservice"
 	"github.com/determined-ai/determined/master/internal/rm"
 
 	"github.com/determined-ai/determined/master/internal/authz"
 	"github.com/determined-ai/determined/master/internal/grpcutil"
 	"github.com/determined-ai/determined/master/internal/job"
+	"github.com/determined-ai/determined/master/pkg/model"
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
 	"github.com/determined-ai/determined/proto/pkg/jobv1"
 )
@@ -120,9 +123,29 @@ func (a *apiServer) UpdateJobQueue(
 	if permErr != nil {
 		return nil, permErr
 	}
-	err = jobservice.DefaultService.UpdateJobQueue(req.Updates)
+	// Preflight the whole batch so an unauthorized target cannot be changed by a
+	// priority, weight, or resource-pool update, even when another target is owned.
+	err = updateJobQueueAuthorized(ctx, *curUser, req.Updates,
+		job.AuthZProvider.Get().CanControlJobQueueUpdate,
+		jobservice.DefaultService.UpdateJobQueue)
 	if err != nil {
 		return nil, err
 	}
 	return &apiv1.UpdateJobQueueResponse{}, nil
+}
+
+func updateJobQueueAuthorized(
+	ctx context.Context, curUser model.User, updates []*jobv1.QueueControl,
+	authorize func(context.Context, model.User, model.JobID) error,
+	apply func([]*jobv1.QueueControl) error,
+) error {
+	for _, update := range updates {
+		if update == nil || update.JobId == "" {
+			return apiutils.MapAndFilterErrors(db.ErrInvalidInput, nil, nil)
+		}
+		if err := authorize(ctx, curUser, model.JobID(update.JobId)); err != nil {
+			return apiutils.MapAndFilterErrors(err, nil, nil)
+		}
+	}
+	return apply(updates)
 }

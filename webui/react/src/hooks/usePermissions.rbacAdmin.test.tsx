@@ -1,8 +1,8 @@
-import { screen } from '@testing-library/react';
+import { renderHook, screen } from '@testing-library/react';
 
 import { V1PermissionType } from 'services/api-ts-sdk/api';
 
-import { setup } from './usePermissions.common';
+import { setup, usePermissionsHook } from './usePermissions.common';
 
 vi.mock('stores/determinedInfo', async (importOriginal) => {
   const observable = await import('utils/observable');
@@ -49,6 +49,9 @@ vi.mock('stores/permissions', async (importOriginal) => {
           {
             id: V1PermissionType.VIEWWORKSPACE,
           },
+          { id: V1PermissionType.UPDATENSC },
+          { id: V1PermissionType.UPDATEEXPERIMENT },
+          { id: V1PermissionType.UPDATEEXPERIMENTMETADATA },
         ],
       },
     ]),
@@ -73,5 +76,17 @@ describe('usePermissions for RBAC admin user', () => {
     expect(screen.queryByText('canModifyWorkspace')).toBeInTheDocument();
     expect(screen.queryByText('canDeleteWorkspace')).toBeInTheDocument();
     expect(screen.queryByText('canViewWorkspace')).toBeInTheDocument();
+  });
+
+  it('uses workspace permissions for controls with RBAC enabled', () => {
+    const { result } = renderHook(() => usePermissionsHook());
+    for (const check of [
+      result.current.canModifyWorkspaceNSC,
+      result.current.canModifyExperiment,
+      result.current.canModifyExperimentMetadata,
+      result.current.canModifyFlatRun,
+    ]) {
+      expect(check({ userId: 102, workspace: { id: 10 } })).toBe(true);
+    }
   });
 });

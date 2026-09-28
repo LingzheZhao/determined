@@ -112,6 +112,10 @@ type allocation struct {
 
 	// State of all our resources.
 	resources resourcesList
+	// Each resource contributes one allocation/task mapping and, when available,
+	// container/runtime/GPU mappings. Track registrations across duplicate RM
+	// notifications so restore and termination keep the gauge counts balanced.
+	metricsRegistered map[sproto.ResourcesID]bool
 	// Separates the existence of resources from us having started them.
 	resourcesStarted bool
 	// Tracks the initial container exit, unless we caused the failure by killed the trial.
@@ -177,7 +181,8 @@ func newAllocation(
 		},
 		specifier: specifier,
 
-		resources: resourcesList{},
+		resources:         resourcesList{},
+		metricsRegistered: make(map[sproto.ResourcesID]bool),
 
 		logCtx: req.LogContext,
 	}
@@ -563,6 +568,7 @@ func (a *allocation) finalize(
 	severity logrus.Level,
 	exitErr error,
 ) {
+	a.clearResourceMetrics()
 	defer a.rm.Release(sproto.ResourcesReleased{
 		AllocationID: a.req.AllocationID,
 		ResourcePool: a.req.ResourcePool,
@@ -677,6 +683,14 @@ func (a *allocation) resourcesAllocated(msg *sproto.ResourcesAllocated) error {
 				}
 			}
 		}
+		// The master process has a fresh Prometheus registry after a restart.
+		// Restored resources already have Started set, so a repeated Running
+		// notification is ignored below and cannot rebuild these mappings.
+		for id, r := range a.resources {
+			if r.Started != nil && r.Exited == nil {
+				a.registerResourceMetrics(id)
+			}
+		}
 	} else {
 		spec := a.specifier.ToTaskSpec()
 
@@ -774,8 +788,7 @@ func (a *allocation) resourcesStateChanged(msg *sproto.ResourcesStateChanged) {
 			Log: fmt.Sprintf("Resources for %s have started", a.req.Name),
 		})
 
-		prom.AssociateAllocationTask(a.req.AllocationID, a.req.TaskID, a.req.Name, a.req.JobID)
-		prom.AddAllocationResources(a.resources[msg.ResourcesID].Summary(), msg.ResourcesStarted)
+		a.registerResourceMetrics(msg.ResourcesID)
 
 	case sproto.Terminated:
 		if a.resources[msg.ResourcesID].Exited != nil {
@@ -791,6 +804,7 @@ func (a *allocation) resourcesStateChanged(msg *sproto.ResourcesStateChanged) {
 		a.setMostProgressedModelState(model.AllocationStateTerminating)
 
 		a.resources[msg.ResourcesID].Exited = msg.ResourcesStopped
+		a.unregisterResourceMetrics(msg.ResourcesID)
 
 		a.syslog.Infof("releasing resources %s", msg.ResourcesID)
 		a.rm.Release(sproto.ResourcesReleased{
@@ -835,14 +849,44 @@ func (a *allocation) resourcesStateChanged(msg *sproto.ResourcesStateChanged) {
 			a.tryExit(msg.ResourcesStopped.String())
 		}
 
-		for cID := range a.resources {
-			prom.DisassociateAllocationTask(a.req.AllocationID, a.req.TaskID, a.req.Name, a.req.JobID)
-			prom.RemoveAllocationResources(a.resources[cID].Summary())
-		}
 	}
 
 	if err := db.UpdateAllocationState(context.TODO(), a.model); err != nil {
 		a.syslog.Error(err)
+	}
+}
+
+// registerResourceMetrics records one contribution per started resource. The
+// allocation actor holds a.mu while processing RM events and restore.
+func (a *allocation) registerResourceMetrics(id sproto.ResourcesID) {
+	if a.metricsRegistered[id] {
+		return
+	}
+	r := a.resources[id]
+	if r == nil || r.Started == nil || r.Exited != nil {
+		return
+	}
+	if a.metricsRegistered == nil {
+		a.metricsRegistered = make(map[sproto.ResourcesID]bool)
+	}
+	prom.AssociateAllocationTask(a.req.AllocationID, a.req.TaskID, a.req.Name, a.req.JobID)
+	prom.AddAllocationResources(r.Summary(), r.Started)
+	a.metricsRegistered[id] = true
+}
+
+func (a *allocation) unregisterResourceMetrics(id sproto.ResourcesID) {
+	if !a.metricsRegistered[id] {
+		return
+	}
+	r := a.resources[id]
+	prom.DisassociateAllocationTask(a.req.AllocationID, a.req.TaskID, a.req.Name, a.req.JobID)
+	prom.RemoveAllocationResources(r.Summary(), r.Started)
+	delete(a.metricsRegistered, id)
+}
+
+func (a *allocation) clearResourceMetrics() {
+	for id := range a.metricsRegistered {
+		a.unregisterResourceMetrics(id)
 	}
 }
 

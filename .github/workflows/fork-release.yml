@@ -6,7 +6,7 @@ on:  # yamllint disable-line rule:truthy
       release_tag:
         description: Numeric version (the existing Git tag for a final release)
         required: true
-        default: '0.40.0'
+        default: '0.40.1'
         type: string
       candidate:
         description: Publish the current open PR head as an isolated candidate
@@ -166,6 +166,7 @@ jobs:
       - uses: arduino/setup-protoc@v3
         with:
           version: '25.3'
+          repo-token: ${{ github.token }}
 
       - name: Build SDK wheel
         run: |
@@ -254,7 +255,7 @@ jobs:
             }
           done
 
-      - name: Publish GitHub prerelease with SDK wheel
+      - name: Publish GitHub release with SDK wheel
         if: env.ALREADY_PUBLISHED != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -268,10 +269,12 @@ jobs:
           import sys
 
           source = pathlib.Path('docs/release-notes.rst').read_text().splitlines()
-          title = f'Version {os.environ["VERSION"]} (research-cluster fork)'
-          start = source.index(title) + 1
-          # The next version heading ends this tag's release notes.
-          end = next(i for i in range(start, len(source)) if source[i].startswith(' Version ') and source[i].strip() != f'Version {os.environ["VERSION"]}')
+          title = f'Version {os.environ["VERSION"]}'
+          start = next(i for i, line in enumerate(source)
+                       if line.strip() in (title, f'{title} (research-cluster fork)')) + 1
+          # Patch versions share a major/minor section; stop at the next version heading.
+          end = next((i for i in range(start, len(source))
+                      if source[i].strip().startswith('Version ')), len(source))
           sections = []
           heading = None
           for line in source[start:end]:
@@ -306,16 +309,17 @@ jobs:
           PY
           if [[ "$EXISTING_DRAFT" == true ]]; then
             if [[ "$IS_CANDIDATE" == true ]]; then title="Determined $RELEASE_TAG (PR candidate)"; else title="Determined $VERSION"; fi
-            gh release edit "$RELEASE_TAG" --target "$SOURCE_SHA" --title "$title" --notes-file "$notes" --prerelease --verify-tag
+            gh release edit "$RELEASE_TAG" --target "$SOURCE_SHA" --title "$title" --notes-file "$notes" --prerelease="$IS_CANDIDATE" --verify-tag
           else
             if [[ "$IS_CANDIDATE" == true ]]; then
               gh release create "$RELEASE_TAG" --target "$SOURCE_SHA" --title "Determined $RELEASE_TAG (PR candidate)" --notes-file "$notes" --prerelease --draft
             else
-              gh release create "$RELEASE_TAG" --target "$SOURCE_SHA" --title "Determined $VERSION" --notes-file "$notes" --prerelease --draft --verify-tag
+              gh release create "$RELEASE_TAG" --target "$SOURCE_SHA" --title "Determined $VERSION" --notes-file "$notes" --prerelease=false --draft --verify-tag
             fi
           fi
           gh release upload "$RELEASE_TAG" harness/dist/*.whl --clobber
-          gh release edit "$RELEASE_TAG" --draft=false --prerelease
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease="$IS_CANDIDATE"
+          if [[ "$IS_CANDIDATE" != true ]]; then gh release edit "$RELEASE_TAG" --latest; fi
           downloaded=$(mktemp -d "${RUNNER_TEMP}/release-download-XXXXXXXX")
           gh release download "$RELEASE_TAG" --pattern '*.whl' --dir "$downloaded"
           for wheel in harness/dist/*.whl; do cmp "$wheel" "$downloaded/$(basename "$wheel")"; done

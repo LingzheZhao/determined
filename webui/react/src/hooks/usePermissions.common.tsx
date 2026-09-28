@@ -4,11 +4,15 @@ import React from 'react';
 
 import usePermissions from 'hooks/usePermissions';
 import { ActionWorkspaceParams } from 'services/types';
+import userStore from 'stores/users';
 
 export const workspace = {
   id: 10,
   name: 'Test Workspace',
 };
+
+export const usePermissionsHook = usePermissions;
+export const testUserStore = userStore;
 
 vi.mock('services/api', () => ({
   getWorkspace: (params: ActionWorkspaceParams) => {
@@ -25,8 +29,8 @@ vi.mock('stores/users', async (importOriginal) => {
   const store = {
     currentUser: observable.observable(
       loadable.Loaded({
-        admin: false,
         id: 101,
+        isAdmin: false,
       }),
     ),
   };

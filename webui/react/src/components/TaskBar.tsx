@@ -77,7 +77,8 @@ export const TaskBar: React.FC<Props> = ({
       {
         disabled: Loadable.match(task, {
           _: () => true,
-          Loaded: (t) => !canModifyWorkspaceNSC({ workspace: { id: t.workspaceId } }),
+          Loaded: (t) =>
+            !canModifyWorkspaceNSC({ userId: t.userId, workspace: { id: t.workspaceId } }),
         }),
         key: MenuKey.Kill,
         label: 'Kill',

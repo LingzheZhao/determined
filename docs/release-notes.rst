@@ -10,6 +10,26 @@
  Version 0.40
 **************
 
+Version 0.40.1
+==============
+
+**Release Date:** September 29, 2026
+
+**Breaking Changes**
+
+-  Task Control: Under basic authorization, only owners and administrators can control
+   notebooks, shells, commands, TensorBoards, and experiments, including bulk actions.
+
+**New Features**
+
+-  API: Query task CPU, memory, GPU, and allocation metrics through the REST API.
+
+**Bug Fixes**
+
+-  WebUI: Hide task and experiment controls that the current user cannot use.
+
+-  Resources: Restore live metrics for running tasks after a master restart.
+
 Version 0.40.0 (research-cluster fork)
 ======================================
 
@@ -45,13 +65,9 @@ open-source project.
 
 -  Archives: Validate paths, links, and file types when extracting task contexts and checkpoints.
 
-See `resource pools
-<https://github.com/WU-CVGL/determined/blob/main/docs/maintenance/dynamic-pools.md>`_,
-`task recovery
-<https://github.com/WU-CVGL/determined/blob/main/docs/maintenance/task-continuity.md>`_, and
-`native resource monitoring
-<https://github.com/WU-CVGL/determined/blob/main/docs/integrations/observability/native-task-resources.rst>`_
-for setup and usage.
+See :doc:`resource pools <maintenance/dynamic-pools>`,
+:doc:`task recovery <maintenance/task-continuity>`, and
+:ref:`native resource monitoring <native-task-resources>` for setup and usage.
 
 **************
  Version 0.38

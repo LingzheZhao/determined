@@ -90,7 +90,12 @@ func (m *Master) getTaskResources(c echo.Context) error {
 	if !conf.Enabled() {
 		return echo.NewHTTPError(http.StatusNotFound, "task resources are disabled")
 	}
-	return serveTaskResources(c, conf, taskResourceDependencies{
+	return serveTaskResources(c, conf, m.taskResourceDependencies())
+}
+
+func (m *Master) taskResourceDependencies() taskResourceDependencies {
+	conf := m.config.Integrations.TaskResources
+	return taskResourceDependencies{
 		authorize: func(ctx context.Context, user model.User, taskID string) error {
 			_, _, err := (&apiServer{m: m}).canDoActionsOnTaskForUser(
 				ctx, model.TaskID(taskID), user,
@@ -105,7 +110,7 @@ func (m *Master) getTaskResources(c echo.Context) error {
 		query: func(ctx context.Context, expr string, r taskResourceRange) ([]prometheusTaskSeries, error) {
 			return queryTaskPrometheus(ctx, conf.PrometheusURL, expr, r)
 		},
-	})
+	}
 }
 
 type taskResourceDependencies struct {
@@ -116,37 +121,49 @@ type taskResourceDependencies struct {
 
 func serveTaskResources(c echo.Context, conf config.TaskResourcesConfig, deps taskResourceDependencies) error {
 	user := c.(*detcontext.DetContext).MustGetUser()
-	taskID := c.Param("task_id")
-	if taskID == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "task_id is required")
-	}
-	// Authorize before inspecting query parameters, allocation ownership, or Prometheus.
-	if err := deps.authorize(c.Request().Context(), user, taskID); err != nil {
-		if code := grpcTaskResourcesAuthCode(err); code != 0 {
-			return echo.NewHTTPError(code, api.NotFoundErrMsg("task", taskID))
-		}
+	resp, err := collectTaskResources(c.Request().Context(), user, c.Param("task_id"),
+		c.QueryParams(), conf, deps)
+	if err != nil {
 		return err
 	}
-	r, allocationID, err := parseTaskResourceRange(c.QueryParams(), time.Now())
+	return c.JSON(http.StatusOK, resp)
+}
+
+// collectTaskResources is shared by the UI endpoint and the v1 API. It checks task
+// authorization before reading any query parameter or consulting Prometheus.
+func collectTaskResources(ctx context.Context, user model.User, taskID string, params url.Values,
+	conf config.TaskResourcesConfig, deps taskResourceDependencies,
+) (taskResourceResponse, error) {
+	if taskID == "" {
+		return taskResourceResponse{}, echo.NewHTTPError(http.StatusBadRequest, "task_id is required")
+	}
+	// Authorize before inspecting query parameters, allocation ownership, or Prometheus.
+	if err := deps.authorize(ctx, user, taskID); err != nil {
+		if code := grpcTaskResourcesAuthCode(err); code != 0 {
+			return taskResourceResponse{}, echo.NewHTTPError(code, api.NotFoundErrMsg("task", taskID))
+		}
+		return taskResourceResponse{}, err
+	}
+	r, allocationID, err := parseTaskResourceRange(params, time.Now())
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		return taskResourceResponse{}, echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	if allocationID != "" {
-		belongs, err := deps.allocationBelongs(c.Request().Context(), taskID, allocationID)
+		belongs, err := deps.allocationBelongs(ctx, taskID, allocationID)
 		if err != nil {
-			return err
+			return taskResourceResponse{}, err
 		}
 		if !belongs {
-			return echo.NewHTTPError(http.StatusNotFound, "allocation not found")
+			return taskResourceResponse{}, echo.NewHTTPError(http.StatusNotFound, "allocation not found")
 		}
 	}
-	ctx, cancel := context.WithTimeout(c.Request().Context(), taskResourceTimeout)
+	ctx, cancel := context.WithTimeout(ctx, taskResourceTimeout)
 	defer cancel()
 	select {
 	case taskResourceSlots <- struct{}{}:
 		defer func() { <-taskResourceSlots }()
 	case <-ctx.Done():
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "task resource query capacity exhausted")
+		return taskResourceResponse{}, echo.NewHTTPError(http.StatusServiceUnavailable, "task resource query capacity exhausted")
 	}
 
 	resp := taskResourceResponse{Enabled: true, Series: []taskResourceSeries{},
@@ -155,15 +172,15 @@ func serveTaskResources(c echo.Context, conf config.TaskResourcesConfig, deps ta
 		results, err := deps.query(ctx, q.Expr, r)
 		if err != nil {
 			// Never return a Prometheus response body or configured URL to browsers or logs.
-			return echo.NewHTTPError(http.StatusBadGateway, "task resource metrics are unavailable")
+			return taskResourceResponse{}, echo.NewHTTPError(http.StatusBadGateway, "task resource metrics are unavailable")
 		}
 		for _, result := range results {
 			if result.Metric["task_id"] != taskID ||
 				result.Metric["det_cluster"] != conf.DetCluster {
-				return echo.NewHTTPError(http.StatusBadGateway, "task resource metrics are invalid")
+				return taskResourceResponse{}, echo.NewHTTPError(http.StatusBadGateway, "task resource metrics are invalid")
 			}
 			if allocationID != "" && result.Metric["allocation_id"] != allocationID {
-				return echo.NewHTTPError(http.StatusBadGateway, "task resource metrics are invalid")
+				return taskResourceResponse{}, echo.NewHTTPError(http.StatusBadGateway, "task resource metrics are invalid")
 			}
 			series := taskResourceSeries{Metric: q.Metric, Labels: taskResourceLabels{
 				AllocationID: result.Metric["allocation_id"], Node: result.Metric["node"],
@@ -178,7 +195,7 @@ func serveTaskResources(c echo.Context, conf config.TaskResourcesConfig, deps ta
 			b.Metric+"/"+b.Labels.AllocationID+"/"+b.Labels.Node+"/"+b.Labels.GPUUUID
 	})
 	resp.Warnings = taskResourceWarnings(resp.Series)
-	return c.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func grpcTaskResourcesAuthCode(err error) int {

@@ -73,7 +73,12 @@ const TaskActionDropdown: React.FC<Props> = ({ task, onComplete, children }: Pro
       },
     ];
     if (resourcesEnabled) items.unshift({ key: Action.ViewResources, label: 'View Resources' });
-    if (isTaskKillable(task, canModifyWorkspaceNSC({ workspace: { id: task.workspaceId } }))) {
+    if (
+      isTaskKillable(
+        task,
+        canModifyWorkspaceNSC({ userId: task.userId, workspace: { id: task.workspaceId } }),
+      )
+    ) {
       items.push({ key: Action.Kill, label: 'Kill' });
     }
     if (isConnectable(task)) {

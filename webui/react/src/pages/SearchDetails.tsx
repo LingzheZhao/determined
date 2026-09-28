@@ -85,6 +85,7 @@ const SearchDetails: React.FC = () => {
   const editableNotes =
     experiment &&
     canModifyExperimentMetadata({
+      userId: experiment.userId,
       workspace: { id: experiment.workspaceId },
     });
 

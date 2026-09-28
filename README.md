@@ -100,10 +100,10 @@ To install this fork's CLI and Python SDK from the repository:
 python -m pip install 'git+https://github.com/WU-CVGL/determined.git@main#subdirectory=harness'
 ```
 
-After the 0.40.0 tag is published, pin the release and its package version:
+Pin the release and its package version:
 
 ```bash
-VERSION=0.40.0 python -m pip install 'git+https://github.com/WU-CVGL/determined.git@0.40.0#subdirectory=harness'
+VERSION=0.40.1 python -m pip install 'git+https://github.com/WU-CVGL/determined.git@0.40.1#subdirectory=harness'
 ```
 
 This installs the CLI and SDK only. To run this fork's master and agent, use matching

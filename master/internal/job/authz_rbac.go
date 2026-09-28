@@ -135,6 +135,13 @@ func (a *JobAuthZRBAC) CanControlJobQueue(
 		rbacv1.PermissionType_PERMISSION_TYPE_CONTROL_STRICT_JOB_QUEUE)
 }
 
+// CanControlJobQueueUpdate preserves the existing RBAC queue authorization model.
+func (a *JobAuthZRBAC) CanControlJobQueueUpdate(
+	ctx context.Context, curUser model.User, jobID model.JobID,
+) error {
+	return nil
+}
+
 func init() {
 	AuthZProvider.Register("rbac", &JobAuthZRBAC{})
 }
