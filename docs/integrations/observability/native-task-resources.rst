@@ -8,6 +8,13 @@ The native **Resources** tab shows task CPU, memory, assigned GPU metrics, and a
 lifetimes inside the Determined WebUI. Trial details include the tab; task logs link to a
 dedicated resource page. The page uses the existing Determined login and task permissions.
 
+Choose **View Resources** from a task row's action menu, an experiment's action menu, or a
+supported job's action menu under **Cluster > Resource Pool > Active Tasks**. Task entries open
+that task directly. Experiment entries open a Trial selector so multiple Trials are not silently
+combined or reduced to an arbitrary Trial. Generic Tasks in the cluster queue link to their own
+resource page. External jobs and entries without a visible entity ID do not offer this action.
+These actions appear only when native resource monitoring is enabled.
+
 Enable the integration in the master configuration and restart the master:
 
 .. code:: yaml

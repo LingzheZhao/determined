@@ -195,6 +195,8 @@ const experimentCheckers: Record<ExperimentAction, ExperimentChecker> = {
 
   [ExperimentAction.ViewLogs]: alwaysTrueExperimentChecker,
 
+  [ExperimentAction.ViewResources]: alwaysTrueExperimentChecker,
+
   [ExperimentAction.SwitchPin]: alwaysTrueExperimentChecker,
 
   [ExperimentAction.RetainLogs]: alwaysTrueExperimentChecker,
@@ -235,6 +237,7 @@ export const getActionsForExperiment = (
           return permissions.canDeleteExperiment({ experiment });
 
         case ExperimentAction.DownloadCode:
+        case ExperimentAction.ViewResources:
           return permissions.canViewExperimentArtifacts({ workspace });
 
         case ExperimentAction.OpenTensorBoard:

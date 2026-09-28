@@ -515,6 +515,7 @@ export const ExperimentAction = {
   SwitchPin: 'Switch Pin',
   Unarchive: 'Unarchive',
   ViewLogs: 'View Logs',
+  ViewResources: 'View Resources',
 } as const;
 
 export type ExperimentAction = ValueOf<typeof ExperimentAction>;
@@ -949,6 +950,7 @@ export const TaskAction = {
   CopyTaskID: 'Copy Task ID',
   Kill: 'Kill',
   ViewLogs: 'View Logs',
+  ViewResources: 'View Resources',
 } as const;
 
 export type TaskAction = ValueOf<typeof TaskAction>;
@@ -1078,6 +1080,7 @@ export const JobAction = {
   ManageJob: 'Manage Job',
   MoveToTop: 'Move To Top',
   ViewLog: 'View Logs',
+  ViewResources: 'View Resources',
 } as const;
 
 export type JobAction = ValueOf<typeof JobAction>;

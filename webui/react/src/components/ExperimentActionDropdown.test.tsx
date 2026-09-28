@@ -33,8 +33,11 @@ const mockNavigatorClipboard = () => {
 
 vi.mock('routes/utils', () => ({
   handlePath: vi.fn(),
+  paths: { experimentResources: (id: number) => `/experiments/${id}/resources` },
   serverAddress: () => 'http://localhost',
 }));
+
+vi.mock('hooks/useTaskResourcesEnabled', () => ({ default: () => true }));
 
 vi.mock('services/api', () => ({
   archiveExperiment: vi.fn(),
@@ -104,6 +107,17 @@ const setup = (link?: string, state?: RunState, archived?: boolean) => {
 };
 
 describe('ExperimentActionDropdown', () => {
+  beforeEach(() => vi.mocked(handlePath).mockClear());
+
+  it('opens the experiment resource selector when artifacts are visible', async () => {
+    mocks.canViewExperimentArtifacts.mockImplementation(() => true);
+    setup();
+    await user.click(screen.getByText(Action.ViewResources));
+    expect(handlePath).toHaveBeenCalledWith(expect.anything(), {
+      path: `/experiments/${experiment.id}/resources`,
+    });
+  });
+
   it('should provide Copy Data option', async () => {
     setup();
     mockNavigatorClipboard();

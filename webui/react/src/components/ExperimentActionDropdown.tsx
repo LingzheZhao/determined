@@ -21,7 +21,8 @@ import InterstitialModalComponent, {
 } from 'components/InterstitialModalComponent';
 import useFeature from 'hooks/useFeature';
 import usePermissions from 'hooks/usePermissions';
-import { handlePath } from 'routes/utils';
+import useTaskResourcesEnabled from 'hooks/useTaskResourcesEnabled';
+import { handlePath, paths } from 'routes/utils';
 import {
   activateExperiment,
   archiveExperiment,
@@ -79,6 +80,7 @@ const dropdownActions = [
   Action.Move,
   Action.RetainLogs,
   Action.OpenTensorBoard,
+  Action.ViewResources,
   Action.HyperparameterSearch,
   Action.Delete,
 ];
@@ -112,6 +114,7 @@ const ExperimentActionDropdown: React.FC<Props> = ({
   const confirm = useConfirm();
   const { openToast } = useToast();
   const f_flat_runs = useFeature().isOn('flat_runs');
+  const taskResourcesEnabled = useTaskResourcesEnabled();
 
   const entityName = f_flat_runs ? 'search' : 'experiment';
 
@@ -165,7 +168,11 @@ const ExperimentActionDropdown: React.FC<Props> = ({
   }, [experiment.id, onComplete]);
 
   const menuItems = getActionsForExperiment(experiment, dropdownActions, usePermissions())
-    .filter((action) => action !== Action.SwitchPin)
+    .filter(
+      (action) =>
+        action !== Action.SwitchPin &&
+        (action !== Action.ViewResources || taskResourcesEnabled === true),
+    )
     .map((action) => {
       return { danger: action === Action.Delete, key: action, label: action };
     });
@@ -224,6 +231,9 @@ const ExperimentActionDropdown: React.FC<Props> = ({
             openCommandResponse(commandResponse);
             break;
           }
+          case Action.ViewResources:
+            handlePath(e, { path: paths.experimentResources(experiment.id) });
+            break;
           case Action.SwitchPin: {
             // TODO: leaving old code behind for when we want to enable this for our current experiment list.
             // const newPinned = { ...(settings?.pinned ?? {}) };
