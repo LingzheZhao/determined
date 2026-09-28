@@ -2,10 +2,11 @@ package experiment
 
 import (
 	"context"
-	"fmt"
+	"slices"
 
 	"github.com/uptrace/bun"
 
+	"github.com/determined-ai/determined/master/internal/authz"
 	"github.com/determined-ai/determined/master/pkg/model"
 	"github.com/determined-ai/determined/proto/pkg/projectv1"
 	"github.com/determined-ai/determined/proto/pkg/rbacv1"
@@ -28,23 +29,25 @@ func (a *ExperimentAuthZBasic) CanGetExperimentArtifacts(
 	return nil
 }
 
-// CanDeleteExperiment returns an error if the experiment
-// is not owned by the current user and the current user is not an admin.
+// CanDeleteExperiment allows only the owner or an administrator.
 func (a *ExperimentAuthZBasic) CanDeleteExperiment(
 	ctx context.Context, curUser model.User, e *model.Experiment,
 ) error {
-	curUserIsOwner := e.OwnerID == nil || *e.OwnerID == curUser.ID
-	if !curUser.Admin && !curUserIsOwner {
-		return fmt.Errorf("non admin users may not delete other user's experiments")
-	}
-	return nil
+	return a.CanEditExperiment(ctx, curUser, e)
 }
 
-// FilterExperimentsQuery returns the query unmodified and a nil error.
+// FilterExperimentsQuery limits destructive and control operations to owned experiments.
+// Read-only queries retain the normal OSS visibility behavior.
 func (a *ExperimentAuthZBasic) FilterExperimentsQuery(
 	ctx context.Context, curUser model.User, proj *projectv1.Project, query *bun.SelectQuery,
 	permissions []rbacv1.PermissionType,
 ) (*bun.SelectQuery, error) {
+	if !curUser.Admin && (slices.Contains(permissions,
+		rbacv1.PermissionType_PERMISSION_TYPE_UPDATE_EXPERIMENT) ||
+		slices.Contains(permissions, rbacv1.PermissionType_PERMISSION_TYPE_UPDATE_EXPERIMENT_METADATA) ||
+		slices.Contains(permissions, rbacv1.PermissionType_PERMISSION_TYPE_DELETE_EXPERIMENT)) {
+		query = query.Where("e.owner_id = ?", curUser.ID)
+	}
 	return query, nil
 }
 
@@ -62,18 +65,24 @@ func (a *ExperimentAuthZBasic) CanPreviewHPSearch(
 	return nil
 }
 
-// CanEditExperiment always returns a nil error.
+// CanEditExperiment allows only the owner or an administrator. An absent owner
+// is not authority for a non-administrator to change an experiment.
 func (a *ExperimentAuthZBasic) CanEditExperiment(
 	ctx context.Context, curUser model.User, e *model.Experiment,
 ) error {
-	return nil
+	if curUser.Admin || e != nil && e.OwnerID != nil && *e.OwnerID == curUser.ID {
+		return nil
+	}
+	return authz.PermissionDeniedError{}.WithPrefix(
+		"non-admin users may not control other users' experiments",
+	)
 }
 
-// CanEditExperimentsMetadata always returns a nil error.
+// CanEditExperimentsMetadata follows the same owner rule as other mutations.
 func (a *ExperimentAuthZBasic) CanEditExperimentsMetadata(
 	ctx context.Context, curUser model.User, e *model.Experiment,
 ) error {
-	return nil
+	return a.CanEditExperiment(ctx, curUser, e)
 }
 
 // CanCreateExperiment always returns a nil error.
@@ -90,32 +99,32 @@ func (a *ExperimentAuthZBasic) CanForkFromExperiment(
 	return nil
 }
 
-// CanSetExperimentsMaxSlots always returns a nil error.
+// CanSetExperimentsMaxSlots follows the experiment owner rule.
 func (a *ExperimentAuthZBasic) CanSetExperimentsMaxSlots(
 	ctx context.Context, curUser model.User, e *model.Experiment, slots int,
 ) error {
-	return nil
+	return a.CanEditExperiment(ctx, curUser, e)
 }
 
-// CanSetExperimentsWeight always returns a nil error.
+// CanSetExperimentsWeight follows the experiment owner rule.
 func (a *ExperimentAuthZBasic) CanSetExperimentsWeight(
 	ctx context.Context, curUser model.User, e *model.Experiment, weight float64,
 ) error {
-	return nil
+	return a.CanEditExperiment(ctx, curUser, e)
 }
 
-// CanSetExperimentsPriority always returns a nil error.
+// CanSetExperimentsPriority follows the experiment owner rule.
 func (a *ExperimentAuthZBasic) CanSetExperimentsPriority(
 	ctx context.Context, curUser model.User, e *model.Experiment, priority int,
 ) error {
-	return nil
+	return a.CanEditExperiment(ctx, curUser, e)
 }
 
-// CanSetExperimentsCheckpointGCPolicy always returns a nil error.
+// CanSetExperimentsCheckpointGCPolicy follows the experiment owner rule.
 func (a *ExperimentAuthZBasic) CanSetExperimentsCheckpointGCPolicy(
 	ctx context.Context, curUser model.User, e *model.Experiment,
 ) error {
-	return nil
+	return a.CanEditExperiment(ctx, curUser, e)
 }
 
 func init() {

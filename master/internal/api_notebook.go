@@ -126,7 +126,11 @@ func (a *apiServer) validateToKillNotebook(ctx context.Context, notebookID strin
 	err = command.AuthZProvider.Get().CanTerminateNSC(
 		ctx, *curUser, model.AccessScopeID(targetNotebook.Notebook.WorkspaceId),
 	)
-	return apiutils.MapAndFilterErrors(err, nil, nil)
+	if err != nil {
+		return apiutils.MapAndFilterErrors(err, nil, nil)
+	}
+	return authorizeNSCControl(ctx, *curUser,
+		model.AccessScopeID(targetNotebook.Notebook.WorkspaceId), targetNotebook.Notebook.UserId)
 }
 
 func (a *apiServer) IdleNotebook(
@@ -175,6 +179,10 @@ func (a *apiServer) SetNotebookPriority(
 	)
 	if err != nil {
 		return nil, apiutils.MapAndFilterErrors(err, nil, nil)
+	}
+	if err = authorizeNSCControl(ctx, *curUser,
+		model.AccessScopeID(targetNotebook.Notebook.WorkspaceId), targetNotebook.Notebook.UserId); err != nil {
+		return nil, err
 	}
 
 	cmd, err := command.DefaultCmdService.SetNTSCPriority(req.NotebookId, int(req.Priority), model.TaskTypeNotebook)

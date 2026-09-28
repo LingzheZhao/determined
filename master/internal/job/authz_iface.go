@@ -20,6 +20,9 @@ type JobAuthZ interface {
 	CanControlJobQueue(
 		ctx context.Context, curUser *model.User,
 	) (permErr error, err error)
+
+	// CanControlJobQueueUpdate checks a specific target before any batch update is applied.
+	CanControlJobQueueUpdate(ctx context.Context, curUser model.User, jobID model.JobID) error
 }
 
 // AuthZProvider is the authz registry for Notebooks, Shells, and Commands.

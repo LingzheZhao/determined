@@ -6401,6 +6401,59 @@ class v1GetTaskContextDirectoryResponse(Printable):
         }
         return out
 
+class v1GetTaskResourcesCapabilityResponse(Printable):
+
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+    ):
+        self.enabled = enabled
+
+    @classmethod
+    def from_json(cls, obj: Json) -> "v1GetTaskResourcesCapabilityResponse":
+        kwargs: "typing.Dict[str, typing.Any]" = {
+            "enabled": obj["enabled"],
+        }
+        return cls(**kwargs)
+
+    def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
+        out: "typing.Dict[str, typing.Any]" = {
+            "enabled": self.enabled,
+        }
+        return out
+
+class v1GetTaskResourcesResponse(Printable):
+    """Task resource measurements with stable metric names and explicit units."""
+
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        series: "typing.Sequence[v1TaskResourceSeries]",
+        warnings: "typing.Sequence[v1TaskResourceWarning]",
+    ):
+        self.enabled = enabled
+        self.series = series
+        self.warnings = warnings
+
+    @classmethod
+    def from_json(cls, obj: Json) -> "v1GetTaskResourcesResponse":
+        kwargs: "typing.Dict[str, typing.Any]" = {
+            "enabled": obj["enabled"],
+            "series": [v1TaskResourceSeries.from_json(x) for x in obj["series"]],
+            "warnings": [v1TaskResourceWarning.from_json(x) for x in obj["warnings"]],
+        }
+        return cls(**kwargs)
+
+    def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
+        out: "typing.Dict[str, typing.Any]" = {
+            "enabled": self.enabled,
+            "series": [x.to_json(omit_unset) for x in self.series],
+            "warnings": [x.to_json(omit_unset) for x in self.warnings],
+        }
+        return out
+
 class v1GetTaskResponse(Printable):
     """Response to GetTaskRequest."""
 
@@ -15396,6 +15449,142 @@ class v1TaskLogsResponse(Printable):
             out["stdtype"] = self.stdtype
         return out
 
+class v1TaskResourceLabels(Printable):
+    """Allowlisted task resource labels; no Prometheus labels or query text are
+    exposed.
+    """
+    allocationId: "typing.Optional[str]" = None
+    gpuUuid: "typing.Optional[str]" = None
+    node: "typing.Optional[str]" = None
+
+    def __init__(
+        self,
+        *,
+        allocationId: "typing.Union[str, None, Unset]" = _unset,
+        gpuUuid: "typing.Union[str, None, Unset]" = _unset,
+        node: "typing.Union[str, None, Unset]" = _unset,
+    ):
+        if not isinstance(allocationId, Unset):
+            self.allocationId = allocationId
+        if not isinstance(gpuUuid, Unset):
+            self.gpuUuid = gpuUuid
+        if not isinstance(node, Unset):
+            self.node = node
+
+    @classmethod
+    def from_json(cls, obj: Json) -> "v1TaskResourceLabels":
+        kwargs: "typing.Dict[str, typing.Any]" = {
+        }
+        if "allocationId" in obj:
+            kwargs["allocationId"] = obj["allocationId"]
+        if "gpuUuid" in obj:
+            kwargs["gpuUuid"] = obj["gpuUuid"]
+        if "node" in obj:
+            kwargs["node"] = obj["node"]
+        return cls(**kwargs)
+
+    def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
+        out: "typing.Dict[str, typing.Any]" = {
+        }
+        if not omit_unset or "allocationId" in vars(self):
+            out["allocationId"] = self.allocationId
+        if not omit_unset or "gpuUuid" in vars(self):
+            out["gpuUuid"] = self.gpuUuid
+        if not omit_unset or "node" in vars(self):
+            out["node"] = self.node
+        return out
+
+class v1TaskResourceSample(Printable):
+    """One measurement at a Unix timestamp. A missing value denotes an unavailable
+    sample.
+    """
+    value: "typing.Optional[float]" = None
+
+    def __init__(
+        self,
+        *,
+        timestampSeconds: float,
+        value: "typing.Union[float, None, Unset]" = _unset,
+    ):
+        self.timestampSeconds = timestampSeconds
+        if not isinstance(value, Unset):
+            self.value = value
+
+    @classmethod
+    def from_json(cls, obj: Json) -> "v1TaskResourceSample":
+        kwargs: "typing.Dict[str, typing.Any]" = {
+            "timestampSeconds": float(obj["timestampSeconds"]),
+        }
+        if "value" in obj:
+            kwargs["value"] = float(obj["value"]) if obj["value"] is not None else None
+        return cls(**kwargs)
+
+    def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
+        out: "typing.Dict[str, typing.Any]" = {
+            "timestampSeconds": dump_float(self.timestampSeconds),
+        }
+        if not omit_unset or "value" in vars(self):
+            out["value"] = None if self.value is None else dump_float(self.value)
+        return out
+
+class v1TaskResourceSeries(Printable):
+    """One metric series for a task allocation and, where applicable, a GPU."""
+
+    def __init__(
+        self,
+        *,
+        labels: "v1TaskResourceLabels",
+        metric: str,
+        samples: "typing.Sequence[v1TaskResourceSample]",
+    ):
+        self.labels = labels
+        self.metric = metric
+        self.samples = samples
+
+    @classmethod
+    def from_json(cls, obj: Json) -> "v1TaskResourceSeries":
+        kwargs: "typing.Dict[str, typing.Any]" = {
+            "labels": v1TaskResourceLabels.from_json(obj["labels"]),
+            "metric": obj["metric"],
+            "samples": [v1TaskResourceSample.from_json(x) for x in obj["samples"]],
+        }
+        return cls(**kwargs)
+
+    def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
+        out: "typing.Dict[str, typing.Any]" = {
+            "labels": self.labels.to_json(omit_unset),
+            "metric": self.metric,
+            "samples": [x.to_json(omit_unset) for x in self.samples],
+        }
+        return out
+
+class v1TaskResourceWarning(Printable):
+    """Data-quality caveat for interpreting the returned measurements."""
+
+    def __init__(
+        self,
+        *,
+        code: str,
+        message: str,
+    ):
+        self.code = code
+        self.message = message
+
+    @classmethod
+    def from_json(cls, obj: Json) -> "v1TaskResourceWarning":
+        kwargs: "typing.Dict[str, typing.Any]" = {
+            "code": obj["code"],
+            "message": obj["message"],
+        }
+        return cls(**kwargs)
+
+    def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
+        out: "typing.Dict[str, typing.Any]" = {
+            "code": self.code,
+            "message": self.message,
+        }
+        return out
+
 class v1TaskType(DetEnum):
     """Type of the task
     - TASK_TYPE_UNSPECIFIED: The task type is unknown
@@ -20527,6 +20716,65 @@ def get_GetTaskContextDirectory(
     if _resp.status_code == 200:
         return v1GetTaskContextDirectoryResponse.from_json(_resp.json())
     raise APIHttpError("get_GetTaskContextDirectory", _resp)
+
+def get_GetTaskResources(
+    session: "api.BaseSession",
+    *,
+    end: str,
+    start: str,
+    step: str,
+    taskId: str,
+    allocationId: "typing.Optional[str]" = None,
+) -> "v1GetTaskResourcesResponse":
+    """Get bounded CPU, memory, and GPU resource measurements for a task.
+
+    - end: Inclusive end time, in Unix seconds. The range must be at most seven days.
+    - start: Inclusive start time, in Unix seconds.
+    - step: Sample interval, in seconds (minimum 15). At most 1440 points are returned
+per series.
+    - taskId: Task ID. Authorization is checked before validating the range.
+    - allocationId: Restrict results to one allocation of this task.
+    """
+    _params = {
+        "allocationId": allocationId,
+        "end": end,
+        "start": start,
+        "step": step,
+    }
+    if type(taskId) == str:
+        taskId = parse.quote(taskId)
+    _resp = session._do_request(
+        method="GET",
+        path=f"/api/v1/tasks/{taskId}/resources",
+        params=_params,
+        json=None,
+        data=None,
+        headers=None,
+        timeout=None,
+        stream=False,
+    )
+    if _resp.status_code == 200:
+        return v1GetTaskResourcesResponse.from_json(_resp.json())
+    raise APIHttpError("get_GetTaskResources", _resp)
+
+def get_GetTaskResourcesCapability(
+    session: "api.BaseSession",
+) -> "v1GetTaskResourcesCapabilityResponse":
+    """Check whether task resource measurements are available on this master."""
+    _params = None
+    _resp = session._do_request(
+        method="GET",
+        path="/api/v1/task-resources/capability",
+        params=_params,
+        json=None,
+        data=None,
+        headers=None,
+        timeout=None,
+        stream=False,
+    )
+    if _resp.status_code == 200:
+        return v1GetTaskResourcesCapabilityResponse.from_json(_resp.json())
+    raise APIHttpError("get_GetTaskResourcesCapability", _resp)
 
 def get_GetTasks(
     session: "api.BaseSession",

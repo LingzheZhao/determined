@@ -79,6 +79,7 @@ import { getStateColorThemeVar } from 'utils/color';
 import handleError, { ErrorLevel } from 'utils/error';
 import {
   canActionExperiment,
+  getActionsForExperiment,
   getActionsForExperimentsUnion,
   getProjectExperimentForExperimentItem,
 } from 'utils/experiment';
@@ -412,11 +413,14 @@ const ExperimentList: React.FC<Props> = ({ project }) => {
     [],
   );
 
-  const canEditExperiment =
-    !!project &&
-    permissions.canModifyExperimentMetadata({
-      workspace: { id: project.workspaceId },
-    });
+  const canEditExperiment = useCallback(
+    (experiment: BulkExperimentItem) =>
+      permissions.canModifyExperimentMetadata({
+        userId: experiment.userId,
+        workspace: { id: project.workspaceId },
+      }),
+    [permissions, project.workspaceId],
+  );
 
   const ContextMenu = useCallback(
     ({
@@ -451,7 +455,7 @@ const ExperimentList: React.FC<Props> = ({ project }) => {
           <div>
             <Tags
               compact
-              disabled={record.archived || project.archived || !canEditExperiment}
+              disabled={record.archived || project.archived || !canEditExperiment(record)}
               tags={record.labels}
               onAction={experimentTags.handleTagListChange(record.id, record.labels)}
             />
@@ -468,8 +472,10 @@ const ExperimentList: React.FC<Props> = ({ project }) => {
       <Input
         className={css.descriptionRenderer}
         defaultValue={value}
-        disabled={record.archived || !canEditExperiment}
-        placeholder={record.archived ? 'Archived' : canEditExperiment ? 'Add description...' : ''}
+        disabled={record.archived || !canEditExperiment(record)}
+        placeholder={
+          record.archived ? 'Archived' : canEditExperiment(record) ? 'Add description...' : ''
+        }
         title="Edit description"
         onBlur={(e) => {
           const newDesc = e.currentTarget.value;
@@ -748,9 +754,14 @@ const ExperimentList: React.FC<Props> = ({ project }) => {
   const sendBatchActions = useCallback(
     (action: Action): Promise<void[] | CommandTask | CommandResponse> | void => {
       if (!settings.row) return;
-      const validExperimentIds = [...settings.row].filter((id) =>
-        canActionExperiment(action, experimentMap[id]),
-      );
+      const validExperimentIds = [...settings.row].filter((id) => {
+        const experiment = experimentMap[id];
+        return (
+          experiment &&
+          canActionExperiment(action, experiment) &&
+          getActionsForExperiment(experiment, [action], permissions).includes(action)
+        );
+      });
       if (action === Action.OpenTensorBoard) {
         return openOrCreateTensorBoard({
           experimentIds: validExperimentIds,
@@ -771,6 +782,7 @@ const ExperimentList: React.FC<Props> = ({ project }) => {
         setBatchRetainLogsExperimentIds(
           validExperimentIds.filter((id) =>
             permissions.canModifyExperiment({
+              userId: experimentMap[id].userId,
               workspace: { id: experimentMap[id].workspaceId },
             }),
           ),

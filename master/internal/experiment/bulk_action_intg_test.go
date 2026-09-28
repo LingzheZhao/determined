@@ -9,13 +9,55 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/pkg/model"
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
 	"github.com/determined-ai/determined/proto/pkg/experimentv1"
+	"github.com/determined-ai/determined/proto/pkg/rbacv1"
 )
+
+func TestBasicBulkControlFiltersOtherOwners(t *testing.T) {
+	ctx := context.Background()
+	owner := db.RequireMockUser(t, db.SingleDB())
+	other := db.RequireMockUser(t, db.SingleDB())
+	workspaceID, _ := db.RequireMockWorkspaceID(t, db.SingleDB(),
+		"TestBasicBulkControlFiltersOtherOwners-"+uuid.NewString())
+	projectID, _ := db.RequireMockProjectID(t, db.SingleDB(), workspaceID, false)
+	ids := make([]int, 0, 2)
+	for _, user := range []model.User{owner, other} {
+		exp := db.RequireMockExperimentParams(t, db.SingleDB(), user,
+			db.MockExperimentParams{ProjectID: &projectID}, projectID)
+		ids = append(ids, exp.ID)
+	}
+	t.Cleanup(func() { _ = db.SingleDB().DeleteExperiments(ctx, ids) })
+	selectIDs := func(user model.User, permissions ...rbacv1.PermissionType) []int32 {
+		t.Helper()
+		var selected []int32
+		query := db.Bun().NewSelect().Model(&selected).
+			ModelTableExpr("experiments AS e").Column("e.id").
+			Where("e.id IN (?)", bun.In(ids))
+		query, err := (&ExperimentAuthZBasic{}).FilterExperimentsQuery(
+			ctx, user, nil, query, permissions)
+		require.NoError(t, err)
+		require.NoError(t, query.Scan(ctx))
+		return selected
+	}
+	for _, permission := range []rbacv1.PermissionType{
+		rbacv1.PermissionType_PERMISSION_TYPE_UPDATE_EXPERIMENT,
+		rbacv1.PermissionType_PERMISSION_TYPE_UPDATE_EXPERIMENT_METADATA,
+		rbacv1.PermissionType_PERMISSION_TYPE_DELETE_EXPERIMENT,
+	} {
+		require.ElementsMatch(t, []int32{int32(ids[0])}, selectIDs(owner, permission))
+		require.ElementsMatch(t, []int32{int32(ids[1])}, selectIDs(other, permission))
+		admin := model.User{ID: other.ID, Admin: true}
+		require.ElementsMatch(t, []int32{int32(ids[0]), int32(ids[1])},
+			selectIDs(admin, permission))
+	}
+	require.Len(t, selectIDs(other, rbacv1.PermissionType_PERMISSION_TYPE_VIEW_EXPERIMENT_METADATA), 2)
+}
 
 func TestGetExperimentsEditableByUser(t *testing.T) {
 	nameExt := uuid.New()

@@ -1216,6 +1216,7 @@ export interface PermissionWorkspace {
 
 export interface WorkspacePermissionsArgs {
   workspace?: PermissionWorkspace;
+  userId?: number;
 }
 
 export interface WorkspaceMembersResponse {

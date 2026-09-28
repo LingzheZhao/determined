@@ -157,6 +157,10 @@ func (a *apiServer) KillTensorboard(
 	if err != nil {
 		return nil, err
 	}
+	if err = authorizeNSCControl(ctx, *curUser,
+		model.AccessScopeID(getResponse.Tensorboard.WorkspaceId), getResponse.Tensorboard.UserId); err != nil {
+		return nil, err
+	}
 
 	cmd, err := command.DefaultCmdService.KillNTSC(req.TensorboardId, model.TaskTypeTensorboard)
 	if err != nil {
@@ -190,6 +194,10 @@ func (a *apiServer) SetTensorboardPriority(
 	err = command.AuthZProvider.Get().CanSetNSCsPriority(
 		ctx, *curUser, model.AccessScopeID(getResponse.Tensorboard.WorkspaceId), int(req.Priority))
 	if err != nil {
+		return nil, err
+	}
+	if err = authorizeNSCControl(ctx, *curUser,
+		model.AccessScopeID(getResponse.Tensorboard.WorkspaceId), getResponse.Tensorboard.UserId); err != nil {
 		return nil, err
 	}
 

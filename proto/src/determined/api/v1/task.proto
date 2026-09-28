@@ -4,6 +4,7 @@ package determined.api.v1;
 option go_package = "github.com/determined-ai/determined/proto/pkg/apiv1";
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
 import "determined/checkpoint/v1/checkpoint.proto";
 import "determined/api/v1/command.proto";
 import "determined/api/v1/pagination.proto";
@@ -62,6 +63,90 @@ message GetTaskResponse {
 
   // The requested task.
   determined.task.v1.Task task = 1;
+}
+
+// Request task resource measurements for a bounded Unix-time range.
+message GetTaskResourcesRequest {
+  option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = {
+    json_schema: { required: [ "task_id", "start", "end", "step" ] }
+  };
+  // Task ID. Authorization is checked before validating the range.
+  string task_id = 1;
+  // Inclusive start time, in Unix seconds.
+  optional int64 start = 2
+      [(grpc.gateway.protoc_gen_swagger.options.openapiv2_field) = {
+        required: [ "start" ]
+      }];
+  // Inclusive end time, in Unix seconds. The range must be at most seven days.
+  optional int64 end = 3
+      [(grpc.gateway.protoc_gen_swagger.options.openapiv2_field) = {
+        required: [ "end" ]
+      }];
+  // Sample interval, in seconds (minimum 15). At most 1440 points are returned
+  // per series.
+  optional int64 step = 4
+      [(grpc.gateway.protoc_gen_swagger.options.openapiv2_field) = {
+        required: [ "step" ]
+      }];
+  // Restrict results to one allocation of this task.
+  optional string allocation_id = 5;
+}
+
+// Allowlisted task resource labels; no Prometheus labels or query text are
+// exposed.
+message TaskResourceLabels {
+  string allocation_id = 1;
+  string node          = 2;
+  string gpu_uuid      = 3;
+}
+
+// One measurement at a Unix timestamp. A missing value denotes an unavailable
+// sample.
+message TaskResourceSample {
+  option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = {
+    json_schema: { required: [ "timestamp_seconds" ] }
+  };
+  double timestamp_seconds          = 1;
+  google.protobuf.DoubleValue value = 2;
+}
+
+// One metric series for a task allocation and, where applicable, a GPU.
+message TaskResourceSeries {
+  option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = {
+    json_schema: { required: [ "metric", "labels", "samples" ] }
+  };
+  // Examples: cpu_cores, memory_working_set_bytes, gpu_utilization_percent.
+  string metric                       = 1;
+  TaskResourceLabels labels           = 2;
+  repeated TaskResourceSample samples = 3;
+}
+
+// Data-quality caveat for interpreting the returned measurements.
+message TaskResourceWarning {
+  option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = {
+    json_schema: { required: [ "code", "message" ] }
+  };
+  string code    = 1;
+  string message = 2;
+}
+
+// Task resource measurements with stable metric names and explicit units.
+message GetTaskResourcesResponse {
+  option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = {
+    json_schema: { required: [ "enabled", "series", "warnings" ] }
+  };
+  bool enabled                          = 1;
+  repeated TaskResourceSeries series    = 2;
+  repeated TaskResourceWarning warnings = 3;
+}
+
+// Whether the task resource integration is configured on this master.
+message GetTaskResourcesCapabilityRequest {}
+message GetTaskResourcesCapabilityResponse {
+  option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = {
+    json_schema: { required: [ "enabled" ] }
+  };
+  bool enabled = 1;
 }
 
 // Request for an task's context directory.

@@ -1649,6 +1649,28 @@ service Determined {
     };
   }
 
+  // Get bounded CPU, memory, and GPU resource measurements for a task.
+  rpc GetTaskResources(GetTaskResourcesRequest)
+      returns (GetTaskResourcesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/tasks/{task_id}/resources"
+    };
+    option (grpc.gateway.protoc_gen_swagger.options.openapiv2_operation) = {
+      tags: "Tasks"
+    };
+  }
+
+  // Check whether task resource measurements are available on this master.
+  rpc GetTaskResourcesCapability(GetTaskResourcesCapabilityRequest)
+      returns (GetTaskResourcesCapabilityResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/task-resources/capability"
+    };
+    option (grpc.gateway.protoc_gen_swagger.options.openapiv2_operation) = {
+      tags: "Tasks"
+    };
+  }
+
   // Get all tasks.
   rpc GetTasks(GetTasksRequest) returns (GetTasksResponse) {
     option (google.api.http) = {

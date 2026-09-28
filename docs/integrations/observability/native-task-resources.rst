@@ -60,6 +60,42 @@ all-zero RSS response produces a warning because some cAdvisor environments do n
 working set is a separate memory signal. Retention and historical ownership availability depend
 on the existing Prometheus deployment; enabling the page does not reconstruct missing history.
 
+REST API
+========
+
+MCP servers and agents can query the same metrics after submitting a task. The endpoints use
+the existing Determined login token and task read permissions:
+
+-  ``GET /api/v1/task-resources/capability`` reports whether the integration is enabled.
+-  ``GET /api/v1/tasks/{task_id}/resources`` returns metrics for one task.
+
+Set ``DET_MASTER`` to the master origin, ``DET_TOKEN`` to a login token, and ``TASK_ID`` to the
+submitted task's ID. Query the last hour with:
+
+.. code:: bash
+
+   END=$(date +%s)
+   START=$((END - 3600))
+   curl --get "$DET_MASTER/api/v1/tasks/$TASK_ID/resources" \
+     -H "Authorization: Bearer $DET_TOKEN" \
+     --data-urlencode "start=$START" \
+     --data-urlencode "end=$END" \
+     --data-urlencode "step=30"
+
+``start`` and ``end`` are Unix seconds; ``step`` is seconds between samples. Add
+``allocationId`` to select one allocation belonging to the task. The query limits described
+above also apply to the API.
+
+The response contains ``enabled``, ``series``, and ``warnings``. Each series identifies its
+``metric`` and allocation, node, or GPU labels. Samples contain numeric ``timestampSeconds``
+and an optional numeric ``value``. Treat a missing or null value as unavailable, not zero.
+Automation should inspect warnings before making optimization decisions, especially for
+whole-device GPU measurements and unverified RSS values.
+
+The generated :ref:`REST API reference <rest-api>` documents the request and response types.
+Deployed masters serve the same specification at ``/api/v1/api.swagger.json`` and the interactive
+reference at ``/docs/rest-api/``. The existing WebUI endpoints remain available for compatibility.
+
 The :ref:`Grafana link <grafana-task-resources>` remains available when native monitoring is
 disabled and a Grafana dashboard is configured. When native monitoring is enabled, resource
 links stay within Determined. Grafana continues to manage its own access permissions separately.

@@ -139,6 +139,10 @@ func (a *apiServer) KillShell(
 	if err != nil {
 		return nil, err
 	}
+	if err = authorizeNSCControl(ctx, *curUser,
+		model.AccessScopeID(getResponse.Shell.WorkspaceId), getResponse.Shell.UserId); err != nil {
+		return nil, err
+	}
 
 	cmd, err := command.DefaultCmdService.KillNTSC(req.ShellId, model.TaskTypeShell)
 
@@ -168,6 +172,10 @@ func (a *apiServer) SetShellPriority(
 	err = command.AuthZProvider.Get().CanSetNSCsPriority(
 		ctx, *curUser, model.AccessScopeID(getResponse.Shell.WorkspaceId), int(req.Priority))
 	if err != nil {
+		return nil, err
+	}
+	if err = authorizeNSCControl(ctx, *curUser,
+		model.AccessScopeID(getResponse.Shell.WorkspaceId), getResponse.Shell.UserId); err != nil {
 		return nil, err
 	}
 

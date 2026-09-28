@@ -351,7 +351,7 @@ export interface ProtobufAny {
      */
     typeUrl?: string;
     /**
-     * Must be a valid serialized protocol buffer of the above specified type.
+     * Holds a Protobuf serialization of the type described by type_url.
      * @type {string}
      * @memberof ProtobufAny
      */
@@ -4840,6 +4840,44 @@ export interface V1GetTaskContextDirectoryResponse {
      * @memberof V1GetTaskContextDirectoryResponse
      */
     b64Tgz: string;
+}
+/**
+ * 
+ * @export
+ * @interface V1GetTaskResourcesCapabilityResponse
+ */
+export interface V1GetTaskResourcesCapabilityResponse {
+    /**
+     * 
+     * @type {boolean}
+     * @memberof V1GetTaskResourcesCapabilityResponse
+     */
+    enabled: boolean;
+}
+/**
+ * Task resource measurements with stable metric names and explicit units.
+ * @export
+ * @interface V1GetTaskResourcesResponse
+ */
+export interface V1GetTaskResourcesResponse {
+    /**
+     * 
+     * @type {boolean}
+     * @memberof V1GetTaskResourcesResponse
+     */
+    enabled: boolean;
+    /**
+     * 
+     * @type {Array<V1TaskResourceSeries>}
+     * @memberof V1GetTaskResourcesResponse
+     */
+    series: Array<V1TaskResourceSeries>;
+    /**
+     * 
+     * @type {Array<V1TaskResourceWarning>}
+     * @memberof V1GetTaskResourcesResponse
+     */
+    warnings: Array<V1TaskResourceWarning>;
 }
 /**
  * Response to GetTaskRequest.
@@ -11257,6 +11295,94 @@ export interface V1TaskLogsResponse {
      * @memberof V1TaskLogsResponse
      */
     stdtype?: string;
+}
+/**
+ * Allowlisted task resource labels; no Prometheus labels or query text are exposed.
+ * @export
+ * @interface V1TaskResourceLabels
+ */
+export interface V1TaskResourceLabels {
+    /**
+     * 
+     * @type {string}
+     * @memberof V1TaskResourceLabels
+     */
+    allocationId?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof V1TaskResourceLabels
+     */
+    node?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof V1TaskResourceLabels
+     */
+    gpuUuid?: string;
+}
+/**
+ * One measurement at a Unix timestamp. A missing value denotes an unavailable sample.
+ * @export
+ * @interface V1TaskResourceSample
+ */
+export interface V1TaskResourceSample {
+    /**
+     * 
+     * @type {number}
+     * @memberof V1TaskResourceSample
+     */
+    timestampSeconds: number;
+    /**
+     * 
+     * @type {number}
+     * @memberof V1TaskResourceSample
+     */
+    value?: number;
+}
+/**
+ * One metric series for a task allocation and, where applicable, a GPU.
+ * @export
+ * @interface V1TaskResourceSeries
+ */
+export interface V1TaskResourceSeries {
+    /**
+     * Examples: cpu_cores, memory_working_set_bytes, gpu_utilization_percent.
+     * @type {string}
+     * @memberof V1TaskResourceSeries
+     */
+    metric: string;
+    /**
+     * 
+     * @type {V1TaskResourceLabels}
+     * @memberof V1TaskResourceSeries
+     */
+    labels: V1TaskResourceLabels;
+    /**
+     * 
+     * @type {Array<V1TaskResourceSample>}
+     * @memberof V1TaskResourceSeries
+     */
+    samples: Array<V1TaskResourceSample>;
+}
+/**
+ * Data-quality caveat for interpreting the returned measurements.
+ * @export
+ * @interface V1TaskResourceWarning
+ */
+export interface V1TaskResourceWarning {
+    /**
+     * 
+     * @type {string}
+     * @memberof V1TaskResourceWarning
+     */
+    code: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof V1TaskResourceWarning
+     */
+    message: string;
 }
 /**
  * Type of the task - TASK_TYPE_UNSPECIFIED: The task type is unknown  - TASK_TYPE_TRIAL: "TRIAL" task type for the enum public.task_type in Postgres.  - TASK_TYPE_NOTEBOOK: "NOTEBOOK" task type for the enum public.task_type in Postgres.  - TASK_TYPE_SHELL: "SHELL" task type for the enum public.task_type in Postgres.  - TASK_TYPE_COMMAND: "COMMAND" task type for the enum public.task_type in Postgres.  - TASK_TYPE_TENSORBOARD: "TENSORBOARD" task type for the enum public.task_type in Postgres.  - TASK_TYPE_CHECKPOINT_GC: "CHECKPOINT_GC" task type for the enum public.task_type in Postgres.  - TASK_TYPE_GENERIC: "GENERIC" task type for the enum public.task_type in Postgres.
@@ -31395,6 +31521,104 @@ export const TasksApiFetchParamCreator = function (configuration?: Configuration
         },
         /**
          * 
+         * @summary Get bounded CPU, memory, and GPU resource measurements for a task.
+         * @param {string} taskId Task ID. Authorization is checked before validating the range.
+         * @param {string} start Inclusive start time, in Unix seconds.
+         * @param {string} end Inclusive end time, in Unix seconds. The range must be at most seven days.
+         * @param {string} step Sample interval, in seconds (minimum 15). At most 1440 points are returned per series.
+         * @param {string} [allocationId] Restrict results to one allocation of this task.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        getTaskResources(taskId: string, start: string, end: string, step: string, allocationId?: string, options: any = {}): FetchArgs {
+            // verify required parameter 'taskId' is not null or undefined
+            if (taskId === null || taskId === undefined) {
+                throw new RequiredError('taskId','Required parameter taskId was null or undefined when calling getTaskResources.');
+            }
+            // verify required parameter 'start' is not null or undefined
+            if (start === null || start === undefined) {
+                throw new RequiredError('start','Required parameter start was null or undefined when calling getTaskResources.');
+            }
+            // verify required parameter 'end' is not null or undefined
+            if (end === null || end === undefined) {
+                throw new RequiredError('end','Required parameter end was null or undefined when calling getTaskResources.');
+            }
+            // verify required parameter 'step' is not null or undefined
+            if (step === null || step === undefined) {
+                throw new RequiredError('step','Required parameter step was null or undefined when calling getTaskResources.');
+            }
+            const localVarPath = `/api/v1/tasks/{taskId}/resources`
+                .replace(`{${"taskId"}}`, encodeURIComponent(String(taskId)));
+            const localVarUrlObj = new URL(localVarPath, BASE_PATH);
+            const localVarRequestOptions = { method: 'GET', ...options };
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+            
+            // authentication BearerToken required
+            if (configuration && configuration.apiKey) {
+                const localVarApiKeyValue = typeof configuration.apiKey === 'function'
+                    ? configuration.apiKey("Authorization")
+                    : configuration.apiKey;
+                localVarHeaderParameter["Authorization"] = localVarApiKeyValue;
+            }
+            
+            if (start !== undefined) {
+                localVarQueryParameter['start'] = start
+            }
+            
+            if (end !== undefined) {
+                localVarQueryParameter['end'] = end
+            }
+            
+            if (step !== undefined) {
+                localVarQueryParameter['step'] = step
+            }
+            
+            if (allocationId !== undefined) {
+                localVarQueryParameter['allocationId'] = allocationId
+            }
+            
+            objToSearchParams(localVarQueryParameter, localVarUrlObj.searchParams);
+            objToSearchParams(options.query || {}, localVarUrlObj.searchParams);
+            localVarRequestOptions.headers = { ...localVarHeaderParameter, ...options.headers };
+            
+            return {
+                url: `${localVarUrlObj.pathname}${localVarUrlObj.search}`,
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         * 
+         * @summary Check whether task resource measurements are available on this master.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        getTaskResourcesCapability(options: any = {}): FetchArgs {
+            const localVarPath = `/api/v1/task-resources/capability`;
+            const localVarUrlObj = new URL(localVarPath, BASE_PATH);
+            const localVarRequestOptions = { method: 'GET', ...options };
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+            
+            // authentication BearerToken required
+            if (configuration && configuration.apiKey) {
+                const localVarApiKeyValue = typeof configuration.apiKey === 'function'
+                    ? configuration.apiKey("Authorization")
+                    : configuration.apiKey;
+                localVarHeaderParameter["Authorization"] = localVarApiKeyValue;
+            }
+            
+            objToSearchParams(localVarQueryParameter, localVarUrlObj.searchParams);
+            objToSearchParams(options.query || {}, localVarUrlObj.searchParams);
+            localVarRequestOptions.headers = { ...localVarHeaderParameter, ...options.headers };
+            
+            return {
+                url: `${localVarUrlObj.pathname}${localVarUrlObj.search}`,
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         * 
          * @summary Get all tasks.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
@@ -31637,6 +31861,47 @@ export const TasksApiFp = function (configuration?: Configuration) {
         },
         /**
          * 
+         * @summary Get bounded CPU, memory, and GPU resource measurements for a task.
+         * @param {string} taskId Task ID. Authorization is checked before validating the range.
+         * @param {string} start Inclusive start time, in Unix seconds.
+         * @param {string} end Inclusive end time, in Unix seconds. The range must be at most seven days.
+         * @param {string} step Sample interval, in seconds (minimum 15). At most 1440 points are returned per series.
+         * @param {string} [allocationId] Restrict results to one allocation of this task.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        getTaskResources(taskId: string, start: string, end: string, step: string, allocationId?: string, options?: any): (fetch?: FetchAPI, basePath?: string) => Promise<V1GetTaskResourcesResponse> {
+            const localVarFetchArgs = TasksApiFetchParamCreator(configuration).getTaskResources(taskId, start, end, step, allocationId, options);
+            return (fetch: FetchAPI = window.fetch, basePath: string = BASE_PATH) => {
+                return fetch(basePath + localVarFetchArgs.url, localVarFetchArgs.options).then((response) => {
+                    if (response.status >= 200 && response.status < 300) {
+                        return response.json();
+                    } else {
+                        throw response;
+                    }
+                });
+            };
+        },
+        /**
+         * 
+         * @summary Check whether task resource measurements are available on this master.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        getTaskResourcesCapability(options?: any): (fetch?: FetchAPI, basePath?: string) => Promise<V1GetTaskResourcesCapabilityResponse> {
+            const localVarFetchArgs = TasksApiFetchParamCreator(configuration).getTaskResourcesCapability(options);
+            return (fetch: FetchAPI = window.fetch, basePath: string = BASE_PATH) => {
+                return fetch(basePath + localVarFetchArgs.url, localVarFetchArgs.options).then((response) => {
+                    if (response.status >= 200 && response.status < 300) {
+                        return response.json();
+                    } else {
+                        throw response;
+                    }
+                });
+            };
+        },
+        /**
+         * 
          * @summary Get all tasks.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
@@ -31746,6 +32011,29 @@ export const TasksApiFactory = function (configuration?: Configuration, fetch?: 
         },
         /**
          * 
+         * @summary Get bounded CPU, memory, and GPU resource measurements for a task.
+         * @param {string} taskId Task ID. Authorization is checked before validating the range.
+         * @param {string} start Inclusive start time, in Unix seconds.
+         * @param {string} end Inclusive end time, in Unix seconds. The range must be at most seven days.
+         * @param {string} step Sample interval, in seconds (minimum 15). At most 1440 points are returned per series.
+         * @param {string} [allocationId] Restrict results to one allocation of this task.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        getTaskResources(taskId: string, start: string, end: string, step: string, allocationId?: string, options?: any) {
+            return TasksApiFp(configuration).getTaskResources(taskId, start, end, step, allocationId, options)(fetch, basePath);
+        },
+        /**
+         * 
+         * @summary Check whether task resource measurements are available on this master.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        getTaskResourcesCapability(options?: any) {
+            return TasksApiFp(configuration).getTaskResourcesCapability(options)(fetch, basePath);
+        },
+        /**
+         * 
          * @summary Get all tasks.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
@@ -31831,6 +32119,33 @@ export class TasksApi extends BaseAPI {
      */
     public getTaskContextDirectory(taskId: string, options?: any) {
         return TasksApiFp(this.configuration).getTaskContextDirectory(taskId, options)(this.fetch, this.basePath)
+    }
+    
+    /**
+     * 
+     * @summary Get bounded CPU, memory, and GPU resource measurements for a task.
+     * @param {string} taskId Task ID. Authorization is checked before validating the range.
+     * @param {string} start Inclusive start time, in Unix seconds.
+     * @param {string} end Inclusive end time, in Unix seconds. The range must be at most seven days.
+     * @param {string} step Sample interval, in seconds (minimum 15). At most 1440 points are returned per series.
+     * @param {string} [allocationId] Restrict results to one allocation of this task.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     * @memberof TasksApi
+     */
+    public getTaskResources(taskId: string, start: string, end: string, step: string, allocationId?: string, options?: any) {
+        return TasksApiFp(this.configuration).getTaskResources(taskId, start, end, step, allocationId, options)(this.fetch, this.basePath)
+    }
+    
+    /**
+     * 
+     * @summary Check whether task resource measurements are available on this master.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     * @memberof TasksApi
+     */
+    public getTaskResourcesCapability(options?: any) {
+        return TasksApiFp(this.configuration).getTaskResourcesCapability(options)(this.fetch, this.basePath)
     }
     
     /**

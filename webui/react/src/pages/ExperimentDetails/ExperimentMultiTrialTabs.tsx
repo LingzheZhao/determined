@@ -118,6 +118,7 @@ const ExperimentMultiTrialTabs: React.FC<Props> = ({
     workspace: { id: experiment.workspaceId },
   });
   const editableNotes = canModifyExperimentMetadata({
+    userId: experiment.userId,
     workspace: { id: experiment.workspaceId },
   });
 

@@ -248,19 +248,23 @@ export const getActionsForExperiment = (
 
         case ExperimentAction.Edit:
           return permissions.canModifyExperimentMetadata({
+            userId: experiment.userId,
             workspace: { id: experiment?.workspaceId },
           });
 
         case ExperimentAction.RetainLogs:
         case ExperimentAction.Archive:
         case ExperimentAction.Unarchive:
-          return permissions.canModifyExperiment({ workspace });
+          return permissions.canModifyExperiment({ userId: experiment.userId, workspace });
 
         case ExperimentAction.Activate:
         case ExperimentAction.Cancel:
         case ExperimentAction.Kill:
         case ExperimentAction.Pause:
-          return permissions.canModifyExperiment({ workspace }) && !experiment.unmanaged;
+          return (
+            permissions.canModifyExperiment({ userId: experiment.userId, workspace }) &&
+            !experiment.unmanaged
+          );
 
         default:
           return true;

@@ -152,7 +152,12 @@ const TaskList: React.FC<Props> = ({ workspace }: Props) => {
 
   const hasKillable = useMemo(() => {
     for (const task of selectedTasks) {
-      if (isTaskKillable(task, canModifyWorkspaceNSC({ workspace: { id: task.workspaceId } })))
+      if (
+        isTaskKillable(
+          task,
+          canModifyWorkspaceNSC({ userId: task.userId, workspace: { id: task.workspaceId } }),
+        )
+      )
         return true;
     }
     return false;
@@ -527,7 +532,10 @@ const TaskList: React.FC<Props> = ({ workspace }: Props) => {
     try {
       const promises = selectedTasks
         .filter((task) =>
-          isTaskKillable(task, canModifyWorkspaceNSC({ workspace: { id: task.workspaceId } })),
+          isTaskKillable(
+            task,
+            canModifyWorkspaceNSC({ userId: task.userId, workspace: { id: task.workspaceId } }),
+          ),
         )
         .map((task) => killTask(task));
       await Promise.all(promises);
