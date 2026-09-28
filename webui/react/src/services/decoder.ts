@@ -263,6 +263,8 @@ export const mapV1Task = (task: Sdk.V1Task): types.TaskItem => {
           taskId: a.taskId,
         };
       }) || [],
+    endTime: task.endTime as string | undefined,
+    startTime: task.startTime as string,
     taskId: task.taskId || '',
   };
 };
