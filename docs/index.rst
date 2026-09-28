@@ -9,6 +9,7 @@
    Reference <reference/_index>
    Tools <tools/_index>
    Integrations <integrations/_index>
+   Cluster Operations <maintenance/index>
 
    attributions
 

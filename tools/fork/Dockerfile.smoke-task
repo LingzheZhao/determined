@@ -1,0 +1,13 @@
+FROM python:3.10-slim
+
+ARG FORK_COMMIT
+ARG FORK_VERSION
+LABEL org.opencontainers.image.description="Disposable CPU task image for fork distribution smoke" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.revision="${FORK_COMMIT}" \
+      org.opencontainers.image.title="determined-fork-smoke-task" \
+      org.opencontainers.image.version="${FORK_VERSION}"
+
+COPY .fork-build/master/wheels/*.whl /tmp/determined-wheel/
+RUN python -m pip install --no-cache-dir /tmp/determined-wheel/*.whl \
+    && rm -rf /tmp/determined-wheel

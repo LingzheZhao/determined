@@ -23,7 +23,12 @@ https://hub.docker.com/r/determinedai/pytorch-ngc/tags
 After installing docker and pulling an image, users can launch a container via
 `docker run --gpus=all -v ~path/to/repo:/src/proj -it <container name>`
 
-Install necessary dependencies via `pip install determined mpi4py`
+Install this fork's SDK and the separate MPI dependency:
+
+```sh
+python -m pip install 'git+https://github.com/WU-CVGL/determined.git@main#subdirectory=harness'
+python -m pip install mpi4py
+```
 
 Then, run the following command if running on a single node and GPU:
 ```

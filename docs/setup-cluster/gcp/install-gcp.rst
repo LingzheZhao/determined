@@ -76,7 +76,7 @@ relatively low; you may wish to request a quota increase.
 
    .. code::
 
-      pip install determined
+      python -m pip install 'git+https://github.com/WU-CVGL/determined.git@main#subdirectory=harness'
 
 .. include:: ../../_shared/note-pip-install-determined.txt
 

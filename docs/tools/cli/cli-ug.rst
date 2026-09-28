@@ -37,12 +37,19 @@ and upgrade.
 
 The command-line interface (CLI) is distributed in the form of a Python wheel package and requires
 Python version 3.8 or later. We recommend setting up a `virtualenv
-<https://virtualenv.pypa.io/en/latest/>`__ and using the ``pip`` utility to install ``determined``
-into the environment:
+<https://virtualenv.pypa.io/en/latest/>`__ and installing this fork's ``harness`` package from
+its repository:
 
 .. code::
 
-   pip install determined
+   python -m pip install 'git+https://github.com/WU-CVGL/determined.git@main#subdirectory=harness'
+
+The moving ``main`` branch produces a commit-specific development version. After the 0.40.0
+release tag is published, pin the source revision and package version together:
+
+.. code:: bash
+
+   VERSION=0.40.0 python -m pip install 'git+https://github.com/WU-CVGL/determined.git@0.40.0#subdirectory=harness'
 
 .. include:: ../../_shared/note-pip-install-determined.txt
 
@@ -92,14 +99,15 @@ This command uninstalls the ``determined`` library, including the Determined CLI
 Upgrading
 =========
 
-To upgrade the Determined CLI to the latest version, use the following command:
+To upgrade this fork's CLI and SDK from the repository's current ``main`` branch, use:
 
 .. code:: bash
 
-   pip install --upgrade determined
+   python -m pip install --upgrade 'git+https://github.com/WU-CVGL/determined.git@main#subdirectory=harness'
 
-This command upgrades ``determined`` (along with the Determined CLI) to the latest available
-version.
+This command builds ``determined`` and the CLI from this fork's current revision. For a
+reproducible 0.40.0 installation after publication, use the pinned command above. Installing
+the Python package does not replace the master or agent images.
 
 **************
  Getting Help
