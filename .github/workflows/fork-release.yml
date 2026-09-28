@@ -166,6 +166,7 @@ jobs:
       - uses: arduino/setup-protoc@v3
         with:
           version: '25.3'
+          repo-token: ${{ github.token }}
 
       - name: Build SDK wheel
         run: |
