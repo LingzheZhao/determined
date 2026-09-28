@@ -67,7 +67,7 @@ jobs:
           REQUESTED_BASE_IMAGE: ${{ inputs.base_image }}
         run: |
           short_sha=${GITHUB_SHA::12}
-          fork_version=${REQUESTED_VERSION:-0.38.1+fork.${short_sha}}
+          fork_version=${REQUESTED_VERSION:-0.40.0+fork.${short_sha}}
           image_repository=${REQUESTED_REPOSITORY:-local/determined-fork}
           base_image=${REQUESTED_BASE_IMAGE:-ubuntu:22.04}
           image_tag=${fork_version//+/-}

@@ -7,6 +7,73 @@
 ###############
 
 **************
+ Version 0.40
+**************
+
+Version 0.40.0 (research-cluster fork)
+======================================
+
+**Release Date:** Pending publication
+
+This is a research-cluster fork release based on upstream Determined 0.38.1. The 0.40.0 version
+identifies this fork's master, agent, Python SDK, and WebUI distribution; it does not imply that
+upstream Determined 0.39 or 0.40 changes are included. Build and deploy the master, agent, SDK,
+and WebUI from the same source revision.
+
+**New Features**
+
+-  Cluster: Administrators can add durable, append-only static agent resource pools without a
+   master restart. The authenticated API and CLI expose creation with an idempotency key, operation
+   status, and explicit retry of failed initialization. Pending operations are reconciled while
+   the master is running and after restart, before agents are restored; only Ready pools accept
+   agents and tasks. Agents still need to be started and configured separately to join the new
+   pool. See `Dynamic resource pools
+   <maintenance/dynamic-pools.html>`_ for the supported scope and rollback behavior.
+
+-  Task continuity: Agent reconnection and master recovery handling preserve running allocations
+   and generic task identity across the tested master restart scenarios. Generic task pause and
+   resume preserve the task ID, honor ``no_pause`` descendants, and reconcile unfinished resume
+   operations after master restart. Core API progress reports no longer block training while the
+   master is temporarily unavailable. The default agent retry window is 30 attempts at five-second
+   intervals, with a 150-second master reconnect wait; an explicit deployment setting or a
+   previously stored pool setting takes precedence. See `Task
+   continuity <maintenance/task-continuity.html>`_ for the precise tests and limits.
+
+-  Observability: An optional task-resource link opens a configured external Grafana dashboard
+   with task, cluster, allocation, and time-range selectors. An optional native **Resources** view
+   instead queries fixed Prometheus metrics through the master and displays task CPU, memory,
+   assigned GPU, and allocation history within the WebUI. **View Resources** actions are available
+   from task, experiment, and supported Cluster Active Tasks menus when native monitoring is
+   enabled. An experiment with multiple trials opens a trial selector. See :ref:`native-task-resources`
+   and :ref:`grafana-task-resources`.
+
+**Security Fixes**
+
+-  Generic task kill, pause, and unpause enforce task-control authorization, including affected
+   descendants. Task-context and proxied checkpoint archive extraction reject path escapes,
+   unsafe links, and special files. See `Fork maintenance <maintenance/README.html>`_ for the
+   scope of these protections.
+
+**Compatibility and Operational Limits**
+
+-  The validated distribution target is Linux amd64 with static Docker agents and CPU task smoke
+   tests. GPU workloads, provider-backed or Kubernetes resource pools, and other schedulers are
+   outside the dynamic-pool acceptance scope. Native resource charts require an existing reachable
+   Prometheus server, the documented ownership recording rules and exporter labels, and a matching
+   cluster label; the release does not deploy or backfill monitoring data.
+
+-  Master replacement interrupts control-plane access while the new master starts and agents
+   reconnect. Passing recovery tests do not establish zero-downtime or lossless hot upgrades for
+   every workload or outage duration. Plan a maintenance window, preserve a compatible PostgreSQL
+   backup, and verify running tasks and checkpoints after the upgrade. Database rollback requires
+   restoring that backup; merely restarting an older image does not reverse migrations. Rolling
+   back the dynamic-pool migration removes saved dynamic-pool definitions.
+
+-  The nonblocking progress behavior is in the new Python SDK. A task already running with an
+   older 0.38.1 SDK does not acquire that fix when only the master or agent is replaced. Rebuild
+   or restart such workloads with the matching 0.40.0 SDK before relying on the behavior.
+
+**************
  Version 0.38
 **************
 

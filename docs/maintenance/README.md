@@ -112,13 +112,16 @@ claim that it remains a supported security toolchain. Upgrade dependencies in
 separate measured changes. Likewise, exercising Python 3.8 is a compatibility
 check for this tree, not an endorsement of deploying an obsolete interpreter.
 
-Before the first fork release, select and record the fork version scheme, package
-and container destinations, supported production runtime versions, and rollback
-procedure. Produce checksums and a manifest identifying the source revision and
+The first fork release line is 0.40.0, based on upstream 0.38.1. Manual development
+candidates default to `0.40.0+fork.<12-character commit>`; an exact 0.40.0 build
+must set the version explicitly and use one immutable source revision for the
+master, agent, Python wheel, and WebUI. Record package and container destinations,
+supported production runtime versions, and the rollback procedure before
+publication. Produce checksums and a manifest identifying the source revision and
 dependencies. Include master and agent binaries/images, the Python wheel, front-end
-static assets, and necessary deployment documentation. CI artifacts are candidates,
-not a published release. The old publishing workflows and defaults require separate
-review before use in this fork.
+static assets, and necessary deployment documentation. CI artifacts remain
+candidates until validation and an explicit publication step. The old publishing
+workflows and defaults require separate review before use in this fork.
 
 For M2, classify traffic by meaning: lossy observations may have bounded discard
 policies; searcher decisions, checkpoint commits, and task transitions require
