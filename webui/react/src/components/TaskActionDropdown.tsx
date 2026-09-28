@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom';
 import css from 'components/ActionDropdown/ActionDropdown.module.scss';
 import TaskConnectModalComponent, { TaskConnectField } from 'components/TaskConnectModal';
 import usePermissions from 'hooks/usePermissions';
+import useTaskResourcesEnabled from 'hooks/useTaskResourcesEnabled';
 import { paths, serverAddress } from 'routes/utils';
 import { killTask } from 'services/api';
 import { TaskAction as Action, CommandState, CommandTask, CommandType, DetailedUser } from 'types';
@@ -28,6 +29,7 @@ interface Props {
 
 const TaskActionDropdown: React.FC<Props> = ({ task, onComplete, children }: Props) => {
   const { canModifyWorkspaceNSC } = usePermissions();
+  const resourcesEnabled = useTaskResourcesEnabled();
   const { openToast } = useToast();
   const TaskConnectModal = useModal(TaskConnectModalComponent);
 
@@ -70,6 +72,7 @@ const TaskActionDropdown: React.FC<Props> = ({ task, onComplete, children }: Pro
         label: 'Copy Task ID',
       },
     ];
+    if (resourcesEnabled) items.unshift({ key: Action.ViewResources, label: 'View Resources' });
     if (isTaskKillable(task, canModifyWorkspaceNSC({ workspace: { id: task.workspaceId } }))) {
       items.push({ key: Action.Kill, label: 'Kill' });
     }
@@ -77,7 +80,7 @@ const TaskActionDropdown: React.FC<Props> = ({ task, onComplete, children }: Pro
       items.push({ key: Action.Connect, label: 'Connect' });
     }
     return items;
-  }, [task, canModifyWorkspaceNSC]);
+  }, [task, canModifyWorkspaceNSC, resourcesEnabled]);
 
   const navigate = useNavigate();
 
@@ -99,6 +102,9 @@ const TaskActionDropdown: React.FC<Props> = ({ task, onComplete, children }: Pro
             onError: handleError,
             title: 'Confirm Task Kill',
           });
+          break;
+        case Action.ViewResources:
+          navigate(paths.taskResources(task.id));
           break;
         case Action.ViewLogs:
           onComplete?.(key);

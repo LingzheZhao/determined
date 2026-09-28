@@ -7,6 +7,7 @@ const Dashboard = React.lazy(() => import('pages/Dashboard'));
 const DefaultRoute = React.lazy(() => import('pages/DefaultRoute'));
 const Deprecated = React.lazy(() => import('pages/Deprecated'));
 const ExperimentDetails = React.lazy(() => import('pages/ExperimentDetails'));
+const ExperimentResources = React.lazy(() => import('pages/ExperimentResources'));
 const InteractiveTask = React.lazy(() => import('pages/InteractiveTask'));
 const ModelDetails = React.lazy(() => import('pages/ModelDetails'));
 const ModelRegistryPage = React.lazy(() => import('pages/ModelRegistryPage'));
@@ -18,6 +19,7 @@ const SearchDetails = React.lazy(() => import('pages/SearchDetails'));
 import SignIn from 'pages/SignIn'; // no React.lazy to avoid e2e ci error
 import SignOut from 'pages/SignOut';
 const TaskListPage = React.lazy(() => import('pages/TaskListPage'));
+const TaskResources = React.lazy(() => import('pages/TaskResources'));
 const TaskLogsWrapper = React.lazy(() =>
   import('pages/TaskLogs').then((module) => ({ default: module.TaskLogsWrapper })),
 );
@@ -42,6 +44,7 @@ const routeComponentMap: Record<string, React.ReactNode> = {
   dashboard: <Dashboard />,
   default: <DefaultRoute />,
   experimentDetails: <ExperimentDetails />,
+  experimentResources: <ExperimentResources />,
   interactive: <InteractiveTask />,
   jobs: <Deprecated />,
   modelDetails: <ModelDetails />,
@@ -55,6 +58,7 @@ const routeComponentMap: Record<string, React.ReactNode> = {
   signOut: <SignOut />,
   taskList: <TaskListPage />,
   taskLogs: <TaskLogsWrapper />,
+  taskResources: <TaskResources />,
   templates: <TemplatesPage />,
   trialDetails: <TrialDetails />,
   uncategorized: <ProjectDetails key="uncategorized" />,

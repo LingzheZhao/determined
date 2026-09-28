@@ -5,14 +5,16 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 
 import Page from 'components/Page';
+import TaskResourcesLink from 'components/TaskResourcesLink';
 import { commandTypeToLabel } from 'constants/states';
 import { useSettings } from 'hooks/useSettings';
 import { DateString, decode, optional } from 'ioTypes';
 import { paths, serverAddress } from 'routes/utils';
+import { getTask } from 'services/api';
 import { detApi } from 'services/apiConfig';
 import { mapV1LogsResponse } from 'services/decoder';
 import { readStream } from 'services/utils';
-import { CommandTask, CommandType } from 'types';
+import { CommandTask, CommandType, TaskItem } from 'types';
 import handleError from 'utils/error';
 
 import css from './TaskLogs.module.scss';
@@ -36,13 +38,17 @@ export const TaskLogsWrapper: React.FC = () => {
 };
 const TaskLogs: React.FC<Props> = ({ taskId, taskType, onCloseLogs, headerComponent }: Props) => {
   const [filterOptions, setFilterOptions] = useState<Filters>({});
+  const [task, setTask] = useState<TaskItem>();
   const [searchParams] = useSearchParams();
 
-  const taskTypeLabel = commandTypeToLabel[taskType as CommandType];
+  const taskTypeLabel =
+    taskType === 'generic' ? 'Generic Task' : commandTypeToLabel[taskType as CommandType];
   const title = `${searchParams.has('id') ? `${searchParams.get('id')} ` : ''}Logs`;
 
   const taskSettingsConfig = useMemo(() => settingsConfigForTask(taskId), [taskId]);
   const { resetSettings, settings, updateSettings } = useSettings<Settings>(taskSettingsConfig);
+  const selectedAllocation =
+    settings.allocationId?.length === 1 ? settings.allocationId[0] : undefined;
 
   const filterValues: Filters = useMemo(
     () => ({
@@ -120,6 +126,21 @@ const TaskLogs: React.FC<Props> = ({ taskId, taskType, onCloseLogs, headerCompon
   );
 
   useEffect(() => {
+    let active = true;
+    setTask(undefined);
+    getTask({ taskId })
+      .then((value) => {
+        if (active) setTask(value);
+      })
+      .catch(() => {
+        // Logs remain available even if the task metadata request fails.
+      });
+    return () => {
+      active = false;
+    };
+  }, [taskId]);
+
+  useEffect(() => {
     const canceler = new AbortController();
 
     readStream(
@@ -157,6 +178,19 @@ const TaskLogs: React.FC<Props> = ({ taskId, taskType, onCloseLogs, headerCompon
       ]}
       headerComponent={headerComponent}
       id="task-logs"
+      options={
+        task && (
+          <TaskResourcesLink
+            nativeUrl={paths.taskResources(task.taskId, selectedAllocation)}
+            target={{
+              allocationId: selectedAllocation,
+              endTime: task.endTime,
+              startTime: task.startTime,
+              taskId: task.taskId,
+            }}
+          />
+        )
+      }
       title={title}>
       <LogViewer
         decoder={mapV1LogsResponse}

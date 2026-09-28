@@ -1,0 +1,20 @@
+.chart {
+  min-width: 0;
+
+  // The shared chart fixes its container to the canvas height. Native uPlot
+  // legends flow below that canvas and must also contribute to the card height.
+
+  > div {
+    height: auto !important;
+  }
+  :global(.u-legend) {
+    display: block;
+    max-height: 120px;
+    overflow: auto;
+  }
+  :global(.u-label) {
+    max-width: 300px;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+}

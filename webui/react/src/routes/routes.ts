@@ -79,6 +79,12 @@ const routes: RouteConfig[] = [
     title: 'Trial',
   },
   {
+    id: 'experimentResources',
+    needAuth: true,
+    path: '/experiments/:experimentId/resources',
+    title: 'Experiment Resources',
+  },
+  {
     id: 'experimentDetails',
     needAuth: true,
     path: '/experiments/:experimentId/:tab/:viz',
@@ -114,6 +120,13 @@ const routes: RouteConfig[] = [
     needAuth: true,
     path: '/:taskType/:taskId/logs',
     title: 'Task Logs',
+  },
+  {
+    icon: 'tasks',
+    id: 'taskResources',
+    needAuth: true,
+    path: '/tasks/:taskId/resources',
+    title: 'Task Resources',
   },
   {
     icon: 'tasks',

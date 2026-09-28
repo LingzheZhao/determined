@@ -20,6 +20,7 @@ import { V1SchedulerTypeToLabel } from 'constants/states';
 import useFeature from 'hooks/useFeature';
 import usePolling from 'hooks/usePolling';
 import { useSettings } from 'hooks/useSettings';
+import useTaskResourcesEnabled from 'hooks/useTaskResourcesEnabled';
 import { columns as columnsFunc, SCHEDULING_VAL_KEY } from 'pages/JobQueue/JobQueue.table';
 import { paths } from 'routes/utils';
 import { cancelExperiment, getJobQ, killExperiment, killTask } from 'services/api';
@@ -44,6 +45,7 @@ interface Props {
 }
 
 const JobQueue: React.FC<Props> = ({ rpStats, selectedRp, jobState }) => {
+  const resourcesEnabled = useTaskResourcesEnabled();
   const users = Loadable.getOrElse([], useObservable(userStore.getUsers()));
   const [managingJob, setManagingJob] = useState<Job>();
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -119,7 +121,7 @@ const JobQueue: React.FC<Props> = ({ rpStats, selectedRp, jobState }) => {
 
   const dropDownOnTrigger = useCallback(
     (job: Job) => {
-      if (!('entityId' in job)) return {};
+      if (!('entityId' in job) || !job.entityId) return {};
       const triggers: Triggers<JobAction> = {};
       const commandType = jobTypeToCommandType(job.type);
 
@@ -142,6 +144,16 @@ const JobQueue: React.FC<Props> = ({ rpStats, selectedRp, jobState }) => {
         };
       }
 
+      if (resourcesEnabled) {
+        if (job.type === JobType.EXPERIMENT) {
+          triggers[JobAction.ViewResources] = () =>
+            routeToReactUrl(paths.experimentResources(job.entityId));
+        } else if (commandType || job.type === JobType.GENERIC) {
+          triggers[JobAction.ViewResources] = () =>
+            routeToReactUrl(paths.taskResources(job.entityId));
+        }
+      }
+
       if (canManageJob(job, selectedRp)) {
         triggers[JobAction.ManageJob] = () => setManagingJob(job);
       }
@@ -157,7 +169,7 @@ const JobQueue: React.FC<Props> = ({ rpStats, selectedRp, jobState }) => {
       });
       return triggers;
     },
-    [selectedRp, fetchJobsTable],
+    [selectedRp, fetchJobsTable, resourcesEnabled],
   );
 
   const onModalClose = useCallback(() => {
@@ -203,6 +215,7 @@ const JobQueue: React.FC<Props> = ({ rpStats, selectedRp, jobState }) => {
                       actionOrder={[
                         JobAction.ManageJob,
                         JobAction.ViewLog,
+                        JobAction.ViewResources,
                         JobAction.Cancel,
                         JobAction.Kill,
                       ]}

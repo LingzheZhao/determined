@@ -102,7 +102,9 @@ type WebhooksConfig struct {
 
 // IntegrationsConfig stores configs related to integrations like pachyderm.
 type IntegrationsConfig struct {
-	Pachyderm PachydermConfig `json:"pachyderm"`
+	Pachyderm            PachydermConfig            `json:"pachyderm"`
+	GrafanaTaskResources GrafanaTaskResourcesConfig `json:"grafana_task_resources"`
+	TaskResources        TaskResourcesConfig        `json:"task_resources"`
 }
 
 // PachydermConfig stores fields needed to integrate Pachyderm with determined.

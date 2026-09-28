@@ -5,6 +5,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 
 import ExperimentIcons from 'components/ExperimentIcons';
+import TaskResourcesLink from 'components/TaskResourcesLink';
 import useFeature from 'hooks/useFeature';
 import { paths } from 'routes/utils';
 import { ExperimentBase, TrialDetails } from 'types';
@@ -46,6 +47,13 @@ const TrialHeaderLeft: React.FC<Props> = ({ experiment, trial }: Props) => {
             </Tooltip>
           ))}
       </div>
+      {trial.taskId && (
+        <TaskResourcesLink
+          className={css.resources}
+          nativeUrl={`${paths.trialDetails(trial.id, trial.experimentId)}/resources`}
+          target={{ endTime: trial.endTime, startTime: trial.startTime, taskId: trial.taskId }}
+        />
+      )}
     </div>
   );
 };

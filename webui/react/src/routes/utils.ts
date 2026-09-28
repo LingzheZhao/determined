@@ -112,6 +112,9 @@ export const paths = {
   experimentModelDef: (experimentId: number | string): string => {
     return `/experiments/${experimentId}/model_def`;
   },
+  experimentResources: (experimentId: number | string): string => {
+    return `/experiments/${encodeURIComponent(experimentId)}/resources`;
+  },
   interactive: (command: CommandTask, maxSlotsExceeded = false): string => {
     const path = [
       'interactive',
@@ -168,6 +171,10 @@ export const paths = {
   },
   taskLogs: (task: Pick<CommandTask, 'id' | 'name' | 'type'>): string => {
     return `/${task.type}/${task.id}/logs?id=${task.name}`;
+  },
+  taskResources: (taskId: string, allocationId?: string): string => {
+    const path = `/tasks/${encodeURIComponent(taskId)}/resources`;
+    return allocationId ? `${path}?${new URLSearchParams({ allocation_id: allocationId })}` : path;
   },
   templates: (): string => {
     return '/templates';
