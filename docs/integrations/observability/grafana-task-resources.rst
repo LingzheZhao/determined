@@ -1,8 +1,8 @@
 .. _grafana-task-resources:
 
-######################
+########################
  Grafana Task Resources
-######################
+########################
 
 Determined can show an optional **Task Resources** link on a trial's details page and on the
 shared task logs page. The latter accepts a task ID for Generic Tasks at
