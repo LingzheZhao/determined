@@ -241,7 +241,7 @@ jobs:
           [[ $(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$MASTER_IMAGE") == "$SOURCE_SHA" ]]
           [[ $(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$AGENT_IMAGE") == "$SOURCE_SHA" ]]
 
-      - name: Push Harbor images
+      - name: Push GHCR images
         run: |
           set -euo pipefail
           if [[ "$PUSH_MASTER" == true ]]; then docker push "$MASTER_IMAGE"; fi

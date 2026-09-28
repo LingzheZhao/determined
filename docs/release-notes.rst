@@ -13,7 +13,7 @@
 Version 0.40.0 (research-cluster fork)
 ======================================
 
-**Release Date:** Pending publication
+**Release Date:** September 29, 2026
 
 This release builds on Determined 0.38.1 and continues development and maintenance of the
 open-source project.
