@@ -112,6 +112,9 @@ export const paths = {
   experimentModelDef: (experimentId: number | string): string => {
     return `/experiments/${experimentId}/model_def`;
   },
+  experimentResources: (experimentId: number | string): string => {
+    return `/experiments/${encodeURIComponent(experimentId)}/resources`;
+  },
   interactive: (command: CommandTask, maxSlotsExceeded = false): string => {
     const path = [
       'interactive',

@@ -7,6 +7,7 @@ const Dashboard = React.lazy(() => import('pages/Dashboard'));
 const DefaultRoute = React.lazy(() => import('pages/DefaultRoute'));
 const Deprecated = React.lazy(() => import('pages/Deprecated'));
 const ExperimentDetails = React.lazy(() => import('pages/ExperimentDetails'));
+const ExperimentResources = React.lazy(() => import('pages/ExperimentResources'));
 const InteractiveTask = React.lazy(() => import('pages/InteractiveTask'));
 const ModelDetails = React.lazy(() => import('pages/ModelDetails'));
 const ModelRegistryPage = React.lazy(() => import('pages/ModelRegistryPage'));
@@ -43,6 +44,7 @@ const routeComponentMap: Record<string, React.ReactNode> = {
   dashboard: <Dashboard />,
   default: <DefaultRoute />,
   experimentDetails: <ExperimentDetails />,
+  experimentResources: <ExperimentResources />,
   interactive: <InteractiveTask />,
   jobs: <Deprecated />,
   modelDetails: <ModelDetails />,
