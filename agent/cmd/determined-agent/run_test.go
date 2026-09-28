@@ -31,7 +31,7 @@ tls: false
 api_enabled: false
 bind_ip: 0.0.0.0
 bind_port: 9090
-agent_reconnect_attempts: 5
+agent_reconnect_attempts: 30
 agent_reconnect_backoff: 5
 container_runtime: docker
 `
@@ -112,7 +112,7 @@ tls: false
 api_enabled: false
 bind_ip: 0.0.0.0
 bind_port: 9090
-agent_reconnect_attempts: 5
+agent_reconnect_attempts: 30
 agent_reconnect_backoff: 5
 container_runtime: docker
 `,

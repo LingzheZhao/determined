@@ -6,7 +6,7 @@ import (
 
 const (
 	// AgentReconnectAttempts is the max attempts an agent has to reconnect.
-	AgentReconnectAttempts = 5
+	AgentReconnectAttempts = 30
 	// AgentReconnectBackoffValue in seconds.
 	AgentReconnectBackoffValue = 5
 	// AgentReconnectBackoff is the time between attempts, with the exception of the first.

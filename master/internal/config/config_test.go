@@ -671,7 +671,7 @@ additional_resource_managers:
 					ResourcePools: []ResourcePoolConfig{
 						{
 							Provider:                 provConfig,
-							AgentReconnectWait:       25000000000,
+							AgentReconnectWait:       150000000000,
 							MaxAuxContainersPerAgent: 100,
 						},
 					},
@@ -680,7 +680,7 @@ additional_resource_managers:
 			RootPoolsInternal: []ResourcePoolConfig{
 				{
 					Provider:                 provConfig,
-					AgentReconnectWait:       25000000000,
+					AgentReconnectWait:       150000000000,
 					MaxAuxContainersPerAgent: 100,
 				},
 			},

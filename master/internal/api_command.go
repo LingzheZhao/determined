@@ -22,11 +22,11 @@ import (
 	"github.com/determined-ai/determined/master/internal/api/apiutils"
 	"github.com/determined-ai/determined/master/internal/authz"
 	"github.com/determined-ai/determined/master/internal/command"
-	masterConfig "github.com/determined-ai/determined/master/internal/config"
 	"github.com/determined-ai/determined/master/internal/configpolicy"
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/grpcutil"
 	"github.com/determined-ai/determined/master/internal/rbac/audit"
+	"github.com/determined-ai/determined/master/internal/rm"
 	"github.com/determined-ai/determined/master/internal/templates"
 	"github.com/determined-ai/determined/master/internal/user"
 	"github.com/determined-ai/determined/master/pkg/archive"
@@ -147,7 +147,7 @@ func (a *apiServer) getCommandLaunchParams(ctx context.Context, req *protoComman
 
 	// Apply the scheduler's default priority.
 	if config.Resources.Priority == nil {
-		prio := masterConfig.DefaultPriorityForPool(poolName.String())
+		prio := rm.DefaultPriorityForPool(a.m.rm, poolName.String())
 		config.Resources.Priority = &prio
 	}
 	// TODO (CM-493) NTSC invariant config overrides

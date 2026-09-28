@@ -72,6 +72,7 @@ class Context:
             self._session._persist_http_session()
         self.preempt.start()
         self._metrics.start()
+        self.train.start()
         if self._tensorboard_manager is not None:
             self._tensorboard_manager.start()
         if self._heartbeat is not None:
@@ -122,6 +123,7 @@ class Context:
     ) -> None:
         self.preempt.close()
         self.distributed.close()
+        self.train.close()
         self._metrics.close()
         self.profiler._close()
         if self._tensorboard_manager is not None:

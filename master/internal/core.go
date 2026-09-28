@@ -915,7 +915,7 @@ func (m *Master) restoreGenericTasks(ctx context.Context) error {
 			return err
 		}
 
-		onAllocationExit := getGenericTaskOnAllocationExit(ctx, taskID, *jobID, logCtx)
+		onAllocationExit := getGenericTaskOnAllocationExit(ctx, taskID, snapshots[i].AllocationID, *jobID, logCtx)
 
 		isSingleNode := snapshots[i].GenericTaskSpec.GenericTaskConfig.Resources.IsSingleNode() != nil &&
 			*snapshots[i].GenericTaskSpec.GenericTaskConfig.Resources.IsSingleNode()
@@ -1065,6 +1065,7 @@ func (m *Master) postTaskLogs(c echo.Context) (interface{}, error) {
 }
 
 func (m *Master) buildRM(
+	ctx context.Context,
 	db *db.PgDB,
 	echo *echo.Echo,
 	rmConfigs []*config.ResourceManagerWithPoolsConfig,
@@ -1078,7 +1079,7 @@ func (m *Master) buildRM(
 		clusterName := config.ResourceManager.ClusterName()
 		switch {
 		case config.ResourceManager.AgentRM != nil:
-			agentRM, err := agentrm.New(db, echo, config, opts, cert)
+			agentRM, err := agentrm.New(ctx, db, echo, config, opts, cert)
 			if err != nil {
 				return nil, err
 			}
@@ -1123,7 +1124,7 @@ func (m *Master) buildRM(
 			}
 			clusterNames[rmClusterName] = 0
 
-			agentRM, err := agentrm.New(db, echo, cfg, opts, cert)
+			agentRM, err := agentrm.New(ctx, db, echo, cfg, opts, cert)
 			if err != nil {
 				return nil, fmt.Errorf("resource manager %s: %w", c.ClusterName(), err)
 			}
@@ -1191,6 +1192,8 @@ func (m *Master) Run(ctx context.Context, gRPCLogInitDone chan struct{}) error {
 		return err
 	}
 	defer closeWithErrCheck("db", m.db)
+	poolWorkerCtx, cancelPoolWorkers := context.WithCancel(ctx)
+	defer cancelPoolWorkers()
 
 	if !isOldCluster {
 		// This has to happen after setup, since creating the built-in users without a
@@ -1364,6 +1367,14 @@ func (m *Master) Run(ctx context.Context, gRPCLogInitDone chan struct{}) error {
 	m.echo.HideBanner = true
 	m.echo.HTTPErrorHandler = api.JSONErrorHandler
 
+	// Validate durable desired pools before mutating persisted agent statistics or beginning agent
+	// restoration. Corrupt, unsupported, or colliding configs fail startup closed.
+	if err = agentrm.ValidatePersistedDynamicPoolConfigs(
+		ctx, m.db, m.config.ResourceManagers(),
+	); err != nil {
+		return fmt.Errorf("validating persisted dynamic resource pools: %w", err)
+	}
+
 	// Before RM start, end stats for dangling agents/instances in case of master crash.
 	if err = m.db.EndAllAgentStats(); err != nil {
 		return errors.Wrap(err, "could not update end stats for agents")
@@ -1373,7 +1384,7 @@ func (m *Master) Run(ctx context.Context, gRPCLogInitDone chan struct{}) error {
 	}
 
 	// Resource Manager.
-	if m.rm, err = m.buildRM(m.db, m.echo, m.config.ResourceManagers(),
+	if m.rm, err = m.buildRM(poolWorkerCtx, m.db, m.echo, m.config.ResourceManagers(),
 		&m.config.TaskContainerDefaults,
 		&aproto.MasterSetAgentOptions{
 			MasterInfo:     m.Info(),
@@ -1383,6 +1394,15 @@ func (m *Master) Run(ctx context.Context, gRPCLogInitDone chan struct{}) error {
 	); err != nil {
 		return fmt.Errorf("could not initialize resource manager(s): %w", err)
 	}
+	defer func() {
+		cancelPoolWorkers()
+		for _, resourceManager := range m.allRms {
+			if agentRM, ok := resourceManager.(*agentrm.ResourceManager); ok {
+				agentRM.StopDynamicPoolWorker()
+			}
+		}
+	}()
+	m.registerDynamicResourcePoolRoutes()
 
 	jobservice.SetDefaultService(m.rm)
 
@@ -1415,6 +1435,9 @@ func (m *Master) Run(ctx context.Context, gRPCLogInitDone chan struct{}) error {
 
 	// Restore generic tasks
 	if err = m.restoreGenericTasks(ctx); err != nil {
+		return err
+	}
+	if err = m.recoverGenericTaskResumes(ctx); err != nil {
 		return err
 	}
 
