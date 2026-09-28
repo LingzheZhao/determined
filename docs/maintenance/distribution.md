@@ -11,10 +11,14 @@ as a supported production release.
 
 The workflow uses Linux amd64, Go 1.22.12, Node 20.19.5 with the committed npm
 lockfile, Python 3.10, Helm 3.15.2, and protoc 25.3. The default candidate version
-is `0.38.1+fork.<12-character commit>`. A manual run can provide another
-PEP 440-compatible fork version, a local image repository, and a base image. The
-image tag replaces `+` with `-`. These versions reproduce the source tree's build
-contract; they are not a promise of security support beyond this candidate.
+is `0.40.0+fork.<12-character commit>`. The fork remains based on upstream 0.38.1;
+the 0.40.0 number identifies the fork release line, not imported upstream 0.39 or
+0.40 features. For an exact 0.40.0 release candidate, manually pass `0.40.0` as
+`fork_version`; this sets the master, agent, Python wheel, and front-end version
+through the shared `VERSION`/`FORK_VERSION` build inputs. A manual run can also
+provide a local image repository and a base image. The image tag replaces `+`
+with `-`. These versions reproduce the source tree's build contract; they are
+not a promise of security support beyond this candidate.
 
 The artifact contains executable master, agent, and `determined-gotmpl` binaries;
 the Python wheel; front-end assets; generated HTML documentation; and gzip-compressed
