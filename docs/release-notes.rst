@@ -37,15 +37,12 @@ open-source project.
    previously stored pool setting takes precedence. See `Task
    continuity <https://github.com/LingzheZhao/determined/blob/main/docs/maintenance/task-continuity.md>`_ for the precise tests and limits.
 
--  Observability: An optional task-resource link opens a configured external Grafana dashboard
-   with task, cluster, allocation, and time-range selectors. An optional native **Resources** view
-   instead queries fixed Prometheus metrics through the master and displays task CPU, memory,
-   assigned GPU, and allocation history within the WebUI. **View Resources** actions are available
-   from task, experiment, and supported Cluster Active Tasks menus when native monitoring is
-   enabled. An experiment with multiple trials opens a trial selector. See `Native Task Resources
-   <https://github.com/LingzheZhao/determined/blob/main/docs/integrations/observability/native-task-resources.rst>`_
-   and `Grafana Task Resources
-   <https://github.com/LingzheZhao/determined/blob/main/docs/integrations/observability/grafana-task-resources.rst>`_.
+-  Observability: Native **Resources** pages integrate task resource monitoring directly into the
+   Determined WebUI. CPU, memory, assigned GPU, and allocation metrics are queried through the
+   master's authorized Prometheus integration. **View Resources** is available from Tasks,
+   Experiments/Searches, and supported Cluster Active Tasks menus. Multi-trial experiments open
+   a trial selector. See `Native Task Resources
+   <https://github.com/LingzheZhao/determined/blob/main/docs/integrations/observability/native-task-resources.rst>`_.
 
 **Community Edition Improvements**
 
