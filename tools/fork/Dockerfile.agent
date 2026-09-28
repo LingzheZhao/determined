@@ -3,9 +3,11 @@ FROM ${BASE_IMAGE}
 
 ARG FORK_COMMIT
 ARG FORK_VERSION
+ARG SOURCE_REPOSITORY=https://github.com/WU-CVGL/determined
 LABEL org.opencontainers.image.description="Determined research-cluster fork agent" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.revision="${FORK_COMMIT}" \
+      org.opencontainers.image.source="${SOURCE_REPOSITORY}" \
       org.opencontainers.image.title="determined-fork-agent" \
       org.opencontainers.image.version="${FORK_VERSION}"
 

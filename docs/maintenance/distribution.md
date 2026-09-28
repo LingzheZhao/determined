@@ -2,8 +2,8 @@
 
 Use the [0.40.0 GitHub release](https://github.com/WU-CVGL/determined/releases/tag/0.40.0)
 and its tag as the version reference. The matching master and agent images are
-published to Harbor under `determinedai/determined-fork-master:0.40.0` and
-`determinedai/determined-fork-agent:0.40.0`. Pin the images to the release's
+published to GHCR under `ghcr.io/wu-cvgl/determined-master:0.40.0` and
+`ghcr.io/wu-cvgl/determined-agent:0.40.0`. Pin the images to the release's
 published digests when preparing a deployment; do not mix versions of master
 and agent without testing that combination.
 
@@ -29,8 +29,8 @@ does not replace the SDK inside running tasks.
 ## Pull and deploy the images
 
 ```sh
-docker pull harbor.cvgl.lab/determinedai/determined-fork-master:0.40.0
-docker pull harbor.cvgl.lab/determinedai/determined-fork-agent:0.40.0
+docker pull ghcr.io/wu-cvgl/determined-master:0.40.0
+docker pull ghcr.io/wu-cvgl/determined-agent:0.40.0
 ```
 
 Update the master and agent image references in your deployment to those
@@ -63,8 +63,10 @@ visibility in a disposable environment first.
 
 The release tag identifies the source used for the images. The
 [`Fork release` workflow](https://github.com/WU-CVGL/determined/blob/main/.github/workflows/fork-release.yml)
-defines the Linux amd64 build. Its runner and Harbor credentials must be
-configured before using Actions to publish a future release. For a manual
+defines the Linux amd64 build on a GitHub-hosted runner. It publishes
+PR candidates under separate `0.40.0-rc.<run-id>` tags and publishes the final
+version from the corresponding Git tag. Confirm the GHCR packages are public
+before using the unauthenticated pull commands above. For a manual
 source build, check out the release tag and set both `VERSION` and
 `FORK_VERSION` to `0.40.0` so binaries, wheel, and WebUI agree; a local build
 is not published automatically. Run the

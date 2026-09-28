@@ -4,99 +4,126 @@ on:  # yamllint disable-line rule:truthy
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing release tag (for a retry)
+        description: Numeric version (the existing Git tag for a final release)
         required: true
+        default: '0.40.0'
         type: string
-      replace_existing:
-        description: Replace the known pre-automation 0.40.0 Harbor images
+      candidate:
+        description: Publish the current open PR head as an isolated candidate
         required: false
-        default: false
+        default: true
         type: boolean
 
 permissions:
   contents: write
+  packages: write
+  pull-requests: read
 
 concurrency:
-  group: fork-release-${{ inputs.release_tag }}
+  group: fork-release-${{ inputs.candidate && github.run_id || inputs.release_tag }}
   cancel-in-progress: false
 
 jobs:
   release:
     if: github.repository == 'WU-CVGL/determined'
-    runs-on: [self-hosted, Linux, X64, determined-release]
+    runs-on: ubuntu-22.04
     timeout-minutes: 120
     defaults:
       run:
         shell: bash
     env:
-      REGISTRY: harbor.cvgl.lab
-      IMAGE_NAMESPACE: harbor.cvgl.lab/determinedai
+      REGISTRY: ghcr.io
       BASE_IMAGE: ubuntu:22.04
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ inputs.candidate && github.sha || inputs.release_tag }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Validate release source and existing GitHub release
+      - name: Validate PR candidate or final tag and GitHub release
         env:
-          REQUESTED_TAG: ${{ inputs.release_tag }}
+          REQUESTED_VERSION: ${{ inputs.release_tag }}
+          IS_CANDIDATE: ${{ inputs.candidate }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          tag=${REQUESTED_TAG}
-          [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Expected a numeric release tag' >&2; exit 1; }
+          version=${REQUESTED_VERSION}
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Expected a numeric version' >&2; exit 1; }
           [[ "${GITHUB_EVENT_NAME}" == workflow_dispatch ]] || exit 1
-          git fetch --no-tags origin main:refs/remotes/origin/main
           source_sha=$(git rev-parse HEAD)
-          [[ "$source_sha" == "$(git rev-parse "refs/tags/${tag}^{commit}")" ]] || { echo 'Checkout does not match release tag' >&2; exit 1; }
-          git merge-base --is-ancestor "$source_sha" origin/main || { echo 'Release tag is not on main' >&2; exit 1; }
-          for tool in gh jq docker uv; do command -v "$tool" >/dev/null || { echo "Missing runner tool: $tool" >&2; exit 1; }; done
-          docker info >/dev/null
-
-          # A published release is immutable for this workflow. Inspect it before any Harbor mutation.
-          release_error=$(mktemp)
-          if gh release view "$tag" --json isDraft,assets >"${RUNNER_TEMP}/fork-release-state.json" 2>"$release_error"; then
-            jq -e --arg tag "$tag" '.isDraft == true and (.assets | length) <= 1 and all(.assets[]; .name | startswith("determined-" + $tag + "-") and endswith(".whl"))' "${RUNNER_TEMP}/fork-release-state.json" >/dev/null || {
-              echo 'Existing release is published or its draft has unexpected assets' >&2
+          if [[ "$IS_CANDIDATE" == true ]]; then
+            [[ "$GITHUB_REF_TYPE" == branch && "$source_sha" == "$GITHUB_SHA" ]] || { echo 'Candidate must check out the selected branch HEAD' >&2; exit 1; }
+            gh api --method GET "repos/${GITHUB_REPOSITORY}/pulls" -f state=open -f head="${GITHUB_REPOSITORY_OWNER}:${GITHUB_REF_NAME}" >"${RUNNER_TEMP}/open-prs.json"
+            jq -e --arg sha "$source_sha" --arg repo "$GITHUB_REPOSITORY" 'any(.[]; .head.sha == $sha and .head.repo.full_name == $repo)' "${RUNNER_TEMP}/open-prs.json" >/dev/null || {
+              echo 'Candidate source is not the current head of an open PR from this repository' >&2
               exit 1
             }
+            tag="${version}-rc.${GITHUB_RUN_ID}"
+          else
+            tag=$version
+            git fetch --no-tags origin main:refs/remotes/origin/main
+            [[ "$source_sha" == "$(git rev-parse "refs/tags/${tag}^{commit}")" ]] || { echo 'Checkout does not match release tag' >&2; exit 1; }
+            git merge-base --is-ancestor "$source_sha" origin/main || { echo 'Release tag is not on main' >&2; exit 1; }
+          fi
+          for tool in gh jq docker; do command -v "$tool" >/dev/null || { echo "Missing hosted-runner tool: $tool" >&2; exit 1; }; done
+          docker info >/dev/null
+
+          # A published final release is immutable. Candidate retries must use the same source.
+          release_error=$(mktemp)
+          if gh release view "$tag" --json isDraft,assets >"${RUNNER_TEMP}/fork-release-state.json" 2>"$release_error"; then
+            jq -e --arg version "$version" '(.assets | length) <= 1 and all(.assets[]; .name | startswith("determined-" + $version + "-") and endswith(".whl"))' "${RUNNER_TEMP}/fork-release-state.json" >/dev/null || {
+              echo 'Existing release has unexpected assets' >&2
+              exit 1
+            }
+            if [[ "$IS_CANDIDATE" != true ]] && ! jq -e '.isDraft == true' "${RUNNER_TEMP}/fork-release-state.json" >/dev/null; then
+              echo 'Final release is already published' >&2
+              exit 1
+            fi
+            if [[ "$IS_CANDIDATE" == true ]] && jq -e '.isDraft == false' "${RUNNER_TEMP}/fork-release-state.json" >/dev/null; then
+              jq -e '(.assets | length) == 1' "${RUNNER_TEMP}/fork-release-state.json" >/dev/null || { echo 'Published candidate is missing its SDK wheel' >&2; exit 1; }
+            fi
+            git fetch --no-tags origin "refs/tags/${tag}:refs/tags/${tag}"
+            [[ "$source_sha" == "$(git rev-parse "refs/tags/${tag}^{commit}")" ]] || { echo 'Existing candidate tag points to another commit' >&2; exit 1; }
             echo 'EXISTING_DRAFT=true' >>"$GITHUB_ENV"
+            if jq -e '.isDraft == false' "${RUNNER_TEMP}/fork-release-state.json" >/dev/null; then
+              echo 'ALREADY_PUBLISHED=true' >>"$GITHUB_ENV"
+            fi
           elif grep -Eqi 'release not found|HTTP 404' "$release_error"; then
             echo 'EXISTING_DRAFT=false' >>"$GITHUB_ENV"
+            if [[ "$IS_CANDIDATE" == true ]] && git ls-remote --exit-code origin "refs/tags/${tag}" >/dev/null; then
+              git fetch --no-tags origin "refs/tags/${tag}:refs/tags/${tag}"
+              [[ "$source_sha" == "$(git rev-parse "refs/tags/${tag}^{commit}")" ]] || { echo 'Existing candidate tag points to another commit' >&2; exit 1; }
+            fi
           else
             cat "$release_error" >&2
             exit 1
           fi
+          owner=${GITHUB_REPOSITORY%%/*}
+          repo=${GITHUB_REPOSITORY##*/}
+          image_namespace="ghcr.io/${owner,,}"
           {
             echo "RELEASE_TAG=$tag"
-            echo "VERSION=$tag"
-            echo "FORK_VERSION=$tag"
+            echo "VERSION=$version"
+            echo "FORK_VERSION=$version"
+            echo "IS_CANDIDATE=$IS_CANDIDATE"
             echo "SOURCE_SHA=$source_sha"
             echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$source_sha")"
-            echo "MASTER_IMAGE=${IMAGE_NAMESPACE}/determined-fork-master:${tag}"
-            echo "AGENT_IMAGE=${IMAGE_NAMESPACE}/determined-fork-agent:${tag}"
+            echo "MASTER_IMAGE=${image_namespace}/${repo,,}-master:${tag}"
+            echo "AGENT_IMAGE=${image_namespace}/${repo,,}-agent:${tag}"
           } >>"$GITHUB_ENV"
 
-      - name: Check Harbor login and image tags
+      - name: Check GHCR login and image tags
         env:
-          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
-          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
-          ALLOW_REPLACE: ${{ inputs.replace_existing || false }}
+          GHCR_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [[ -n "$HARBOR_USERNAME" && -n "$HARBOR_PASSWORD" ]]; then
-            config=$(mktemp -d "${RUNNER_TEMP}/docker-release-XXXXXXXX")
-            echo "DOCKER_CONFIG=$config" >>"$GITHUB_ENV"
-            echo "RELEASE_DOCKER_CONFIG=$config" >>"$GITHUB_ENV"
-            export DOCKER_CONFIG="$config"
-            printf '%s' "$HARBOR_PASSWORD" | docker login "$REGISTRY" --username "$HARBOR_USERNAME" --password-stdin >/dev/null
-          elif [[ -n "$HARBOR_USERNAME" || -n "$HARBOR_PASSWORD" ]]; then
-            echo 'Both Harbor secrets must be set, or use the runner Docker login' >&2
-            exit 1
-          fi
+          config=$(mktemp -d "${RUNNER_TEMP}/docker-release-XXXXXXXX")
+          echo "DOCKER_CONFIG=$config" >>"$GITHUB_ENV"
+          echo "RELEASE_DOCKER_CONFIG=$config" >>"$GITHUB_ENV"
+          export DOCKER_CONFIG="$config"
+          printf '%s' "$GHCR_TOKEN" | docker login "$REGISTRY" --username "$GITHUB_ACTOR" --password-stdin >/dev/null
           for role in master agent; do
             if [[ "$role" == master ]]; then image=$MASTER_IMAGE; else image=$AGENT_IMAGE; fi
             pull_error=$(mktemp)
@@ -104,8 +131,6 @@ jobs:
               revision=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
               if [[ "$revision" == "$SOURCE_SHA" ]]; then
                 push=false
-              elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$ALLOW_REPLACE" == true && "$RELEASE_TAG" == 0.40.0 && "$revision" == c2df01fc59715e8824337bbf938a525dd8a718f6 ]]; then
-                push=true
               else
                 echo "Refusing to overwrite existing $role tag from revision $revision" >&2
                 exit 1
@@ -128,11 +153,13 @@ jobs:
           node-version: '20.19.5'
           cache: npm
           cache-dependency-path: webui/react/package-lock.json
-      - name: Prepare managed Python 3.10
-        run: |
-          uv python install 3.10.20
-          uv venv --seed --no-python-downloads --python 3.10.20 "${RUNNER_TEMP}/fork-release-venv"
-          echo "${RUNNER_TEMP}/fork-release-venv/bin" >>"$GITHUB_PATH"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: pip
+          cache-dependency-path: |
+            docs/requirements.txt
+            harness/pyproject.toml
       - uses: azure/setup-helm@v4
         with:
           version: v3.15.2
@@ -164,6 +191,7 @@ jobs:
 
       - name: Build documentation and generated inputs
         run: |
+          python -m pip install --no-cache-dir torch==2.3.0+cpu torchvision==0.18.0+cpu --index-url https://download.pytorch.org/whl/cpu
           python -m pip install -r docs/requirements.txt
           make -C proto get-deps
           make -C proto build
@@ -208,8 +236,8 @@ jobs:
           cp -a agent/packaging "$context/agent/"
           cp -a .fork-build "$context/"
           cp tools/fork/Dockerfile.master tools/fork/Dockerfile.agent "$context/tools/fork/"
-          docker build --build-arg "BASE_IMAGE=${BASE_IMAGE}" --build-arg "FORK_COMMIT=${SOURCE_SHA}" --build-arg "FORK_VERSION=${VERSION}" -f "$context/tools/fork/Dockerfile.master" -t "$MASTER_IMAGE" "$context"
-          docker build --build-arg "BASE_IMAGE=${BASE_IMAGE}" --build-arg "FORK_COMMIT=${SOURCE_SHA}" --build-arg "FORK_VERSION=${VERSION}" -f "$context/tools/fork/Dockerfile.agent" -t "$AGENT_IMAGE" "$context"
+          docker build --build-arg "BASE_IMAGE=${BASE_IMAGE}" --build-arg "FORK_COMMIT=${SOURCE_SHA}" --build-arg "FORK_VERSION=${VERSION}" --build-arg "SOURCE_REPOSITORY=https://github.com/${GITHUB_REPOSITORY}" -f "$context/tools/fork/Dockerfile.master" -t "$MASTER_IMAGE" "$context"
+          docker build --build-arg "BASE_IMAGE=${BASE_IMAGE}" --build-arg "FORK_COMMIT=${SOURCE_SHA}" --build-arg "FORK_VERSION=${VERSION}" --build-arg "SOURCE_REPOSITORY=https://github.com/${GITHUB_REPOSITORY}" -f "$context/tools/fork/Dockerfile.agent" -t "$AGENT_IMAGE" "$context"
           [[ $(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$MASTER_IMAGE") == "$SOURCE_SHA" ]]
           [[ $(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$AGENT_IMAGE") == "$SOURCE_SHA" ]]
 
@@ -227,6 +255,7 @@ jobs:
           done
 
       - name: Publish GitHub prerelease with SDK wheel
+        if: env.ALREADY_PUBLISHED != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -259,7 +288,7 @@ jobs:
           repo = os.environ['GITHUB_REPOSITORY']
           sha = os.environ['SOURCE_SHA']
           output = [
-              f'Research-cluster fork release {os.environ["VERSION"]} from [source commit {sha[:12]}](https://github.com/{repo}/commit/{sha}).',
+              f'Research-cluster fork {"PR candidate" if os.environ["IS_CANDIDATE"] == "true" else "release"} {os.environ["RELEASE_TAG"]} from [source commit {sha[:12]}](https://github.com/{repo}/commit/{sha}).',
               '',
           ]
           previous = None
@@ -271,19 +300,27 @@ jobs:
           output += [
               f'[Full release notes](https://github.com/{repo}/blob/{sha}/docs/release-notes.rst)',
               '',
-              f'Harbor images: `{os.environ["MASTER_IMAGE"]}` and `{os.environ["AGENT_IMAGE"]}`.',
+              f'GHCR images: `{os.environ["MASTER_IMAGE"]}` and `{os.environ["AGENT_IMAGE"]}`.',
           ]
           pathlib.Path(sys.argv[1]).write_text('\n'.join(output) + '\n')
           PY
           if [[ "$EXISTING_DRAFT" == true ]]; then
-            gh release edit "$RELEASE_TAG" --target "$SOURCE_SHA" --title "Determined $VERSION" --notes-file "$notes" --prerelease --verify-tag
+            if [[ "$IS_CANDIDATE" == true ]]; then title="Determined $RELEASE_TAG (PR candidate)"; else title="Determined $VERSION"; fi
+            gh release edit "$RELEASE_TAG" --target "$SOURCE_SHA" --title "$title" --notes-file "$notes" --prerelease --verify-tag
           else
-            gh release create "$RELEASE_TAG" --target "$SOURCE_SHA" --title "Determined $VERSION" --notes-file "$notes" --prerelease --draft --verify-tag
+            if [[ "$IS_CANDIDATE" == true ]]; then
+              gh release create "$RELEASE_TAG" --target "$SOURCE_SHA" --title "Determined $RELEASE_TAG (PR candidate)" --notes-file "$notes" --prerelease --draft
+            else
+              gh release create "$RELEASE_TAG" --target "$SOURCE_SHA" --title "Determined $VERSION" --notes-file "$notes" --prerelease --draft --verify-tag
+            fi
           fi
           gh release upload "$RELEASE_TAG" harness/dist/*.whl --clobber
           gh release edit "$RELEASE_TAG" --draft=false --prerelease
+          downloaded=$(mktemp -d "${RUNNER_TEMP}/release-download-XXXXXXXX")
+          gh release download "$RELEASE_TAG" --pattern '*.whl' --dir "$downloaded"
+          for wheel in harness/dist/*.whl; do cmp "$wheel" "$downloaded/$(basename "$wheel")"; done
 
-      - name: Remove temporary Docker login
+      - name: Remove temporary GHCR login
         if: always()
         run: |
           if [[ -n "${RELEASE_DOCKER_CONFIG:-}" ]]; then
