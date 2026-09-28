@@ -4,6 +4,11 @@
  Kubernetes Observability
 ##########################
 
+.. toctree::
+   :hidden:
+
+   grafana-task-resources
+
 This guide provides recommendations and assists in setting up monitoring for a Determined
 installation on Kubernetes.
 
