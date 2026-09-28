@@ -28,7 +28,7 @@ and WebUI from the same source revision.
    the master is running and after restart, before agents are restored; only Ready pools accept
    agents and tasks. Agents still need to be started and configured separately to join the new
    pool. See `Dynamic resource pools
-   <maintenance/dynamic-pools.html>`_ for the supported scope and rollback behavior.
+   <https://github.com/LingzheZhao/determined/blob/main/docs/maintenance/dynamic-pools.md>`_ for the supported scope and rollback behavior.
 
 -  Task continuity: Agent reconnection and master recovery handling preserve running allocations
    and generic task identity across the tested master restart scenarios. Generic task pause and
@@ -37,41 +37,28 @@ and WebUI from the same source revision.
    master is temporarily unavailable. The default agent retry window is 30 attempts at five-second
    intervals, with a 150-second master reconnect wait; an explicit deployment setting or a
    previously stored pool setting takes precedence. See `Task
-   continuity <maintenance/task-continuity.html>`_ for the precise tests and limits.
+   continuity <https://github.com/LingzheZhao/determined/blob/main/docs/maintenance/task-continuity.md>`_ for the precise tests and limits.
 
 -  Observability: An optional task-resource link opens a configured external Grafana dashboard
    with task, cluster, allocation, and time-range selectors. An optional native **Resources** view
    instead queries fixed Prometheus metrics through the master and displays task CPU, memory,
    assigned GPU, and allocation history within the WebUI. **View Resources** actions are available
    from task, experiment, and supported Cluster Active Tasks menus when native monitoring is
-   enabled. An experiment with multiple trials opens a trial selector. See :ref:`native-task-resources`
-   and :ref:`grafana-task-resources`.
+   enabled. An experiment with multiple trials opens a trial selector. See `Native Task Resources
+   <https://github.com/LingzheZhao/determined/blob/main/docs/integrations/observability/native-task-resources.rst>`_
+   and `Grafana Task Resources
+   <https://github.com/LingzheZhao/determined/blob/main/docs/integrations/observability/grafana-task-resources.rst>`_.
 
-**Security Fixes**
+**Community Edition Improvements**
 
--  Generic task kill, pause, and unpause enforce task-control authorization, including affected
-   descendants. Task-context and proxied checkpoint archive extraction reject path escapes,
-   unsafe links, and special files. See `Fork maintenance <maintenance/README.html>`_ for the
-   scope of these protections.
+-  Task control: Generic task kill, pause, and unpause support owner and administrator controls,
+   including checks for affected descendants. These controls are available with basic
+   authorization and do not require enterprise RBAC.
 
-**Compatibility and Operational Limits**
-
--  The validated distribution target is Linux amd64 with static Docker agents and CPU task smoke
-   tests. GPU workloads, provider-backed or Kubernetes resource pools, and other schedulers are
-   outside the dynamic-pool acceptance scope. Native resource charts require an existing reachable
-   Prometheus server, the documented ownership recording rules and exporter labels, and a matching
-   cluster label; the release does not deploy or backfill monitoring data.
-
--  Master replacement interrupts control-plane access while the new master starts and agents
-   reconnect. Passing recovery tests do not establish zero-downtime or lossless hot upgrades for
-   every workload or outage duration. Plan a maintenance window, preserve a compatible PostgreSQL
-   backup, and verify running tasks and checkpoints after the upgrade. Database rollback requires
-   restoring that backup; merely restarting an older image does not reverse migrations. Rolling
-   back the dynamic-pool migration removes saved dynamic-pool definitions.
-
--  The nonblocking progress behavior is in the new Python SDK. A task already running with an
-   older 0.38.1 SDK does not acquire that fix when only the master or agent is replaced. Rebuild
-   or restart such workloads with the matching 0.40.0 SDK before relying on the behavior.
+-  Archive handling: Task-context and proxied checkpoint extraction validate paths, links, and
+   file types before writing files. See `Fork maintenance
+   <https://github.com/LingzheZhao/determined/blob/main/docs/maintenance/README.md>`_
+   for implementation details.
 
 **************
  Version 0.38
