@@ -1,0 +1,292 @@
+name: Fork release
+
+on:  # yamllint disable-line rule:truthy
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag (for a retry)
+        required: true
+        type: string
+      replace_existing:
+        description: Replace the known pre-automation 0.40.0 Harbor images
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'WU-CVGL/determined'
+    runs-on: [self-hosted, Linux, X64, determined-release]
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      REGISTRY: harbor.cvgl.lab
+      IMAGE_NAMESPACE: harbor.cvgl.lab/determinedai
+      BASE_IMAGE: ubuntu:22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release source and existing GitHub release
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag=${REQUESTED_TAG}
+          [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Expected a numeric release tag' >&2; exit 1; }
+          [[ "${GITHUB_EVENT_NAME}" == workflow_dispatch ]] || exit 1
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          source_sha=$(git rev-parse HEAD)
+          [[ "$source_sha" == "$(git rev-parse "refs/tags/${tag}^{commit}")" ]] || { echo 'Checkout does not match release tag' >&2; exit 1; }
+          git merge-base --is-ancestor "$source_sha" origin/main || { echo 'Release tag is not on main' >&2; exit 1; }
+          for tool in gh jq docker uv; do command -v "$tool" >/dev/null || { echo "Missing runner tool: $tool" >&2; exit 1; }; done
+          docker info >/dev/null
+
+          # A published release is immutable for this workflow. Inspect it before any Harbor mutation.
+          release_error=$(mktemp)
+          if gh release view "$tag" --json isDraft,assets >"${RUNNER_TEMP}/fork-release-state.json" 2>"$release_error"; then
+            jq -e --arg tag "$tag" '.isDraft == true and (.assets | length) <= 1 and all(.assets[]; .name | startswith("determined-" + $tag + "-") and endswith(".whl"))' "${RUNNER_TEMP}/fork-release-state.json" >/dev/null || {
+              echo 'Existing release is published or its draft has unexpected assets' >&2
+              exit 1
+            }
+            echo 'EXISTING_DRAFT=true' >>"$GITHUB_ENV"
+          elif grep -Eqi 'release not found|HTTP 404' "$release_error"; then
+            echo 'EXISTING_DRAFT=false' >>"$GITHUB_ENV"
+          else
+            cat "$release_error" >&2
+            exit 1
+          fi
+          {
+            echo "RELEASE_TAG=$tag"
+            echo "VERSION=$tag"
+            echo "FORK_VERSION=$tag"
+            echo "SOURCE_SHA=$source_sha"
+            echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$source_sha")"
+            echo "MASTER_IMAGE=${IMAGE_NAMESPACE}/determined-fork-master:${tag}"
+            echo "AGENT_IMAGE=${IMAGE_NAMESPACE}/determined-fork-agent:${tag}"
+          } >>"$GITHUB_ENV"
+
+      - name: Check Harbor login and image tags
+        env:
+          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+          ALLOW_REPLACE: ${{ inputs.replace_existing || false }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$HARBOR_USERNAME" && -n "$HARBOR_PASSWORD" ]]; then
+            config=$(mktemp -d "${RUNNER_TEMP}/docker-release-XXXXXXXX")
+            echo "DOCKER_CONFIG=$config" >>"$GITHUB_ENV"
+            echo "RELEASE_DOCKER_CONFIG=$config" >>"$GITHUB_ENV"
+            export DOCKER_CONFIG="$config"
+            printf '%s' "$HARBOR_PASSWORD" | docker login "$REGISTRY" --username "$HARBOR_USERNAME" --password-stdin >/dev/null
+          elif [[ -n "$HARBOR_USERNAME" || -n "$HARBOR_PASSWORD" ]]; then
+            echo 'Both Harbor secrets must be set, or use the runner Docker login' >&2
+            exit 1
+          fi
+          for role in master agent; do
+            if [[ "$role" == master ]]; then image=$MASTER_IMAGE; else image=$AGENT_IMAGE; fi
+            pull_error=$(mktemp)
+            if docker pull --quiet "$image" >/dev/null 2>"$pull_error"; then
+              revision=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
+              if [[ "$revision" == "$SOURCE_SHA" ]]; then
+                push=false
+              elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$ALLOW_REPLACE" == true && "$RELEASE_TAG" == 0.40.0 && "$revision" == c2df01fc59715e8824337bbf938a525dd8a718f6 ]]; then
+                push=true
+              else
+                echo "Refusing to overwrite existing $role tag from revision $revision" >&2
+                exit 1
+              fi
+            elif grep -Eqi 'manifest unknown|not found|no such manifest' "$pull_error"; then
+              push=true
+            else
+              cat "$pull_error" >&2
+              exit 1
+            fi
+            echo "PUSH_${role^^}=$push" >>"$GITHUB_ENV"
+          done
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.12'
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.5'
+          cache: npm
+          cache-dependency-path: webui/react/package-lock.json
+      - name: Prepare managed Python 3.10
+        run: |
+          uv python install 3.10.20
+          uv venv --seed --no-python-downloads --python 3.10.20 "${RUNNER_TEMP}/fork-release-venv"
+          echo "${RUNNER_TEMP}/fork-release-venv/bin" >>"$GITHUB_PATH"
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.15.2
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: '25.3'
+
+      - name: Build SDK wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel harness
+          python -m pip install harness/dist/*.whl
+          python - <<'PY'
+          import pathlib, zipfile
+          wheels = list(pathlib.Path('harness/dist').glob('*.whl'))
+          assert len(wheels) == 1, wheels
+          with zipfile.ZipFile(wheels[0]) as wheel:
+              metadata = next(n for n in wheel.namelist() if n.endswith('.dist-info/METADATA'))
+              assert f'Version: {__import__("os").environ["VERSION"]}' in wheel.read(metadata).decode().splitlines()
+          PY
+
+      - name: Build WebUI
+        working-directory: webui/react
+        env:
+          PUBLIC_URL: /det
+        run: |
+          npm ci --no-audit
+          npm run build
+
+      - name: Build documentation and generated inputs
+        run: |
+          python -m pip install -r docs/requirements.txt
+          make -C proto get-deps
+          make -C proto build
+          make -C examples build
+          make -C helm build
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('docs/conf.py')
+          source = path.read_text()
+          remote = 'https://docs.determined.ai/latest/_static/version-switcher/versions.json'
+          local = '_static/version-switcher/versions.json'
+          if source.count(remote) != 1:
+              raise SystemExit('expected one documentation version-switcher URL')
+          path.write_text(source.replace(remote, local))
+          PY
+          make -C docs build SPHINXOPTS='-W --keep-going'
+
+      - name: Build Linux binaries
+        env:
+          CGO_ENABLED: '0'
+          GOARCH: amd64
+          GOOS: linux
+        run: |
+          mkdir -p .fork-build/bin
+          go build -trimpath -ldflags "-X github.com/determined-ai/determined/master/version.Version=${VERSION}" -o .fork-build/bin/determined-master ./master/cmd/determined-master
+          go build -trimpath -ldflags "-X main.version=${VERSION}" -o .fork-build/bin/determined-agent ./agent/cmd/determined-agent
+          go build -trimpath -o .fork-build/bin/determined-gotmpl ./master/cmd/determined-gotmpl
+
+      - name: Build official images with a minimal context
+        run: |
+          set -euo pipefail
+          mkdir -p .fork-build/master/{swagger,webui/docs,webui/react,wheels}
+          cp -a proto/build/swagger/. .fork-build/master/swagger/
+          cp -a docs/site/html/. .fork-build/master/webui/docs/
+          cp -a webui/react/build/. .fork-build/master/webui/react/
+          cp harness/dist/*.whl .fork-build/master/wheels/
+          context=$(mktemp -d "${RUNNER_TEMP}/fork-context-XXXXXXXX")
+          mkdir -p "$context/master/packaging" "$context/agent" "$context/tools/fork"
+          cp LICENSE "$context/"
+          cp master/packaging/master.yaml "$context/master/packaging/"
+          cp -a master/static "$context/master/"
+          cp -a agent/packaging "$context/agent/"
+          cp -a .fork-build "$context/"
+          cp tools/fork/Dockerfile.master tools/fork/Dockerfile.agent "$context/tools/fork/"
+          docker build --build-arg "BASE_IMAGE=${BASE_IMAGE}" --build-arg "FORK_COMMIT=${SOURCE_SHA}" --build-arg "FORK_VERSION=${VERSION}" -f "$context/tools/fork/Dockerfile.master" -t "$MASTER_IMAGE" "$context"
+          docker build --build-arg "BASE_IMAGE=${BASE_IMAGE}" --build-arg "FORK_COMMIT=${SOURCE_SHA}" --build-arg "FORK_VERSION=${VERSION}" -f "$context/tools/fork/Dockerfile.agent" -t "$AGENT_IMAGE" "$context"
+          [[ $(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$MASTER_IMAGE") == "$SOURCE_SHA" ]]
+          [[ $(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$AGENT_IMAGE") == "$SOURCE_SHA" ]]
+
+      - name: Push Harbor images
+        run: |
+          set -euo pipefail
+          if [[ "$PUSH_MASTER" == true ]]; then docker push "$MASTER_IMAGE"; fi
+          if [[ "$PUSH_AGENT" == true ]]; then docker push "$AGENT_IMAGE"; fi
+          for image in "$MASTER_IMAGE" "$AGENT_IMAGE"; do
+            docker pull --quiet "$image" >/dev/null
+            [[ $(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image") == "$SOURCE_SHA" ]] || {
+              echo "Remote image revision mismatch: $image" >&2
+              exit 1
+            }
+          done
+
+      - name: Publish GitHub prerelease with SDK wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          notes="${RUNNER_TEMP}/fork-release-notes.md"
+          python - "$notes" <<'PY'
+          import os
+          import pathlib
+          import sys
+
+          source = pathlib.Path('docs/release-notes.rst').read_text().splitlines()
+          title = f'Version {os.environ["VERSION"]} (research-cluster fork)'
+          start = source.index(title) + 1
+          # The next version heading ends this tag's release notes.
+          end = next(i for i in range(start, len(source)) if source[i].startswith(' Version ') and source[i].strip() != f'Version {os.environ["VERSION"]}')
+          sections = []
+          heading = None
+          for line in source[start:end]:
+              stripped = line.strip()
+              if stripped.startswith('**') and stripped.endswith('**'):
+                  heading = stripped.strip('*')
+                  continue
+              if line.startswith('-  ') and heading:
+                  sections.append([heading, line[3:].strip()])
+              elif line.startswith('   ') and sections:
+                  sections[-1][1] += ' ' + stripped
+          if not sections:
+              raise SystemExit('No release-note bullets found for this tag')
+          repo = os.environ['GITHUB_REPOSITORY']
+          sha = os.environ['SOURCE_SHA']
+          output = [
+              f'Research-cluster fork release {os.environ["VERSION"]} from [source commit {sha[:12]}](https://github.com/{repo}/commit/{sha}).',
+              '',
+          ]
+          previous = None
+          for section, bullet in sections:
+              if section != previous:
+                  output += [f'### {section}', '']
+                  previous = section
+              output += [f'- {bullet.replace("``", "`")}', '']
+          output += [
+              f'[Full release notes](https://github.com/{repo}/blob/{sha}/docs/release-notes.rst)',
+              '',
+              f'Harbor images: `{os.environ["MASTER_IMAGE"]}` and `{os.environ["AGENT_IMAGE"]}`.',
+          ]
+          pathlib.Path(sys.argv[1]).write_text('\n'.join(output) + '\n')
+          PY
+          if [[ "$EXISTING_DRAFT" == true ]]; then
+            gh release edit "$RELEASE_TAG" --target "$SOURCE_SHA" --title "Determined $VERSION" --notes-file "$notes" --prerelease --verify-tag
+          else
+            gh release create "$RELEASE_TAG" --target "$SOURCE_SHA" --title "Determined $VERSION" --notes-file "$notes" --prerelease --draft --verify-tag
+          fi
+          gh release upload "$RELEASE_TAG" harness/dist/*.whl --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease
+
+      - name: Remove temporary Docker login
+        if: always()
+        run: |
+          if [[ -n "${RELEASE_DOCKER_CONFIG:-}" ]]; then
+            docker logout "$REGISTRY" >/dev/null 2>&1 || true
+            rm -rf "$RELEASE_DOCKER_CONFIG"
+          fi

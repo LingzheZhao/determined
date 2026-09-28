@@ -132,7 +132,9 @@ Configuration settings for :ref:`TLS <tls>`.
 ******************************
 
 Maximum number of times the agent will attempt to reconnect to master on connection failure.
-Defaults to 5.
+Defaults to 30. With the default five-second backoff, attempts start immediately and continue for
+approximately 145 seconds. Increasing this value keeps running containers available for recovery
+through longer master outages, but delays the agent's connection-lost hook when recovery fails.
 
 *****************************
  ``agent_reconnect_backoff``

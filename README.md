@@ -1,5 +1,10 @@
 <p align="center"><img width="400" src="determined-logo.svg" alt="Determined AI Logo"></p>
 
+> **Community fork:** This repository continues open-source Determined development
+> and maintenance. See the [installation instructions](#installation),
+> [deployment guide](docs/maintenance/distribution.md), and
+> [release notes](docs/release-notes.rst).
+
 Determined is an all-in-one deep learning platform, compatible with PyTorch and TensorFlow.
 
 It takes care of:
@@ -89,21 +94,22 @@ Use the Web UI to view loss curves, hyperparameter plots, code and configuration
 
 # Installation
 
-To install the CLI:
+To install this fork's CLI and Python SDK from the repository:
 
 ```bash
-pip install determined
+python -m pip install 'git+https://github.com/WU-CVGL/determined.git@main#subdirectory=harness'
 ```
 
-Then use `det deploy` to start the Determined cluster locally, or on cloud services like AWS and GCP.
+After the 0.40.0 tag is published, pin the release and its package version:
 
-For installation details, visit the the cluster deployment guide for your environment:
+```bash
+VERSION=0.40.0 python -m pip install 'git+https://github.com/WU-CVGL/determined.git@0.40.0#subdirectory=harness'
+```
 
-- [Local (on-prem)](https://docs.determined.ai/latest/setup-cluster/deploy-cluster/on-prem/overview.html)
-- [AWS](https://docs.determined.ai/latest/setup-cluster/deploy-cluster/aws/overview.html)
-- [GCP](https://docs.determined.ai/latest/setup-cluster/deploy-cluster/gcp/overview.html)
-- [Kubernetes](https://docs.determined.ai/latest/setup-cluster/deploy-cluster/k8s/overview.html)
-- [Slurm/PBS](https://docs.determined.ai/latest/setup-cluster/deploy-cluster/slurm/overview.html)
+This installs the CLI and SDK only. To run this fork's master and agent, use matching
+images and the [fork distribution guide](docs/maintenance/distribution.md).
+Historical `det deploy` examples may use upstream image defaults; installing the fork CLI
+alone does not upgrade a cluster.
 
 # Examples
 Get familiar with Determined by exploring the 30+ examples in the [examples folder](https://github.com/determined-ai/determined/tree/main/examples) and the [determined-examples repo](https://github.com/determined-ai/determined-examples).

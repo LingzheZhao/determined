@@ -161,14 +161,14 @@ schedules to run.
 
    .. code:: bash
 
-      pip install determined
+      python -m pip install 'git+https://github.com/WU-CVGL/determined.git@main#subdirectory=harness'
       det deploy local cluster-up
 
    If your local machine does not have a supported NVIDIA GPU, include the ``no-gpu`` option:
 
    .. code:: bash
 
-      pip install determined
+      python -m pip install 'git+https://github.com/WU-CVGL/determined.git@main#subdirectory=harness'
       det deploy local cluster-up --no-gpu
 
 #. In the ``mnist_pytorch`` directory, create an experiment specifying the ``const.yaml``

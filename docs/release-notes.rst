@@ -7,6 +7,53 @@
 ###############
 
 **************
+ Version 0.40
+**************
+
+Version 0.40.0 (research-cluster fork)
+======================================
+
+**Release Date:** Pending publication
+
+This release builds on Determined 0.38.1 and continues development and maintenance of the
+open-source project.
+
+**Breaking Changes**
+
+-  Task Control: Generic task kill, pause, and resume now check permissions for every affected task.
+   Under basic authorization, non-admin users can only control tasks they own.
+
+**New Features**
+
+-  Cluster: Add persistent static-agent resource pools through the API or CLI without restarting
+   the master.
+
+-  WebUI: View task CPU, memory, GPU, and allocation metrics in native Resources pages.
+
+-  WebUI: Open Resources from Tasks, Experiments/Searches, and Cluster Active Tasks. Multi-trial
+   experiments include a trial selector.
+
+**Improvements**
+
+-  Task Recovery: Preserve task IDs across pause/resume, honor ``no_pause`` descendants, and
+   recover interrupted resume operations.
+
+-  Training: Make optional training-progress reports nonblocking during master outages.
+
+-  Agents: Increase reconnect defaults to 30 attempts at five-second intervals, with a 150-second
+   master reconnect wait.
+
+-  Archives: Validate paths, links, and file types when extracting task contexts and checkpoints.
+
+See `resource pools
+<https://github.com/WU-CVGL/determined/blob/main/docs/maintenance/dynamic-pools.md>`_,
+`task recovery
+<https://github.com/WU-CVGL/determined/blob/main/docs/maintenance/task-continuity.md>`_, and
+`native resource monitoring
+<https://github.com/WU-CVGL/determined/blob/main/docs/integrations/observability/native-task-resources.rst>`_
+for setup and usage.
+
+**************
  Version 0.38
 **************
 

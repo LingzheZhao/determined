@@ -1,0 +1,32 @@
+ARG BASE_IMAGE=ubuntu:22.04
+FROM ${BASE_IMAGE}
+
+ARG FORK_COMMIT
+ARG FORK_VERSION
+LABEL org.opencontainers.image.description="Determined research-cluster fork master" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.revision="${FORK_COMMIT}" \
+      org.opencontainers.image.title="determined-fork-master" \
+      org.opencontainers.image.version="${FORK_VERSION}"
+
+RUN apt-get update -yq \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates \
+      xmlsec1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY LICENSE /usr/share/doc/determined-master/copyright
+COPY master/packaging/master.yaml /etc/determined/master.yaml
+COPY master/static /usr/share/determined/master/static
+COPY .fork-build/master/swagger /usr/share/determined/master/swagger
+COPY .fork-build/master/webui /usr/share/determined/master/webui
+COPY .fork-build/master/wheels /usr/share/determined/master/wheels
+COPY .fork-build/bin/determined-gotmpl /usr/bin/determined-gotmpl
+COPY .fork-build/bin/determined-master /usr/bin/determined-master
+
+RUN chmod 0755 /usr/bin/determined-gotmpl /usr/bin/determined-master \
+    && chmod 0775 /var/cache
+
+EXPOSE 8080
+ENTRYPOINT ["/usr/bin/determined-master"]
+CMD ["--config-file", "/etc/determined/master.yaml"]
