@@ -155,17 +155,30 @@ func AddAllocationResources(summary sproto.ResourcesSummary,
 }
 
 // RemoveAllocationResources disassociates allocation and container and container and its GPUs.
-func RemoveAllocationResources(summary sproto.ResourcesSummary) {
+func RemoveAllocationResources(summary sproto.ResourcesSummary,
+	started *sproto.ResourcesStarted,
+) {
 	if summary.ContainerID == nil {
 		return
 	}
 
 	DisassociateAllocationContainer(summary.AllocationID, *summary.ContainerID)
+	if started != nil {
+		DisassociateContainerRuntimeID(*summary.ContainerID, started.NativeResourcesID)
+	}
 	for _, ds := range summary.AgentDevices {
 		for _, d := range ds {
 			DisassociateContainerGPU(*summary.ContainerID, d)
 		}
 	}
+}
+
+// DisassociateContainerRuntimeID removes the runtime identity when its
+// corresponding container stops. Otherwise a terminated container remains a
+// positive mapping after its allocation has ended.
+func DisassociateContainerRuntimeID(cID cproto.ID, dcID string) {
+	containerIDToRuntimeID.WithLabelValues(dcID, cID.String()).Dec()
+	containerIDToRuntimeID.DeleteLabelValues(dcID, cID.String())
 }
 
 // DisassociateAllocationContainer disassociates allocation ID with its container ID.

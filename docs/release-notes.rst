@@ -28,6 +28,8 @@ Version 0.40.1
 
 -  WebUI: Hide task and experiment controls that the current user cannot use.
 
+-  Resources: Restore live metrics for running tasks after a master restart.
+
 Version 0.40.0 (research-cluster fork)
 ======================================
 
