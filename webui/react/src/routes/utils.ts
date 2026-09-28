@@ -169,6 +169,10 @@ export const paths = {
   taskLogs: (task: Pick<CommandTask, 'id' | 'name' | 'type'>): string => {
     return `/${task.type}/${task.id}/logs?id=${task.name}`;
   },
+  taskResources: (taskId: string, allocationId?: string): string => {
+    const path = `/tasks/${encodeURIComponent(taskId)}/resources`;
+    return allocationId ? `${path}?${new URLSearchParams({ allocation_id: allocationId })}` : path;
+  },
   templates: (): string => {
     return '/templates';
   },

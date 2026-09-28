@@ -1,0 +1,29 @@
+.base {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+}
+.filters {
+  align-items: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.status {
+  font-size: 12px;
+  padding-bottom: 8px;
+}
+.explanation {
+  margin: 0;
+}
+.grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+
+  @media (width <= 1000px) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

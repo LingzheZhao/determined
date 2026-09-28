@@ -9,12 +9,14 @@ import { useNavigate, useParams } from 'react-router-dom';
 import Page from 'components/Page';
 import RemainingRetentionDaysLabel from 'components/RemainingRetentionDaysLabelComponent';
 import RoutePagination from 'components/RoutePagination';
+import TaskResourcesPanel from 'components/TaskResourcesPanel';
 import TrialLogPreview from 'components/TrialLogPreview';
 import { terminalRunStates } from 'constants/states';
 import useFeature from 'hooks/useFeature';
 import usePermissions from 'hooks/usePermissions';
 import usePolling from 'hooks/usePolling';
 import { SettingsConfig, useSettings } from 'hooks/useSettings';
+import useTaskResourcesEnabled from 'hooks/useTaskResourcesEnabled';
 import TrialDetailsHeader from 'pages/TrialDetails/TrialDetailsHeader';
 import TrialDetailsHyperparameters from 'pages/TrialDetails/TrialDetailsHyperparameters';
 import TrialDetailsLogs from 'pages/TrialDetails/TrialDetailsLogs';
@@ -47,6 +49,7 @@ const TabType = {
   Metrics: 'metrics',
   Overview: 'overview',
   Profiler: 'profiler',
+  Resources: 'resources',
   Workloads: 'workloads',
 } as const;
 
@@ -90,6 +93,7 @@ const TrialDetailsComp: React.FC = () => {
   const trial = trialDetails.data;
   const [remainingLogDays, setRemainingLogDays] = useState<Loadable<number | undefined>>(NotLoaded);
   const f_flat_runs = useFeature().isOn('flat_runs');
+  const resourcesEnabled = useTaskResourcesEnabled();
 
   const copyMap = f_flat_runs ? RunCopyMap : ExperimentCopyMap;
 
@@ -253,6 +257,20 @@ const TrialDetailsComp: React.FC = () => {
       });
     }
 
+    if (trial.taskId && (resourcesEnabled || tabKey === TabType.Resources)) {
+      tabs.splice(-1, 0, {
+        children: (
+          <TaskResourcesPanel
+            endTime={trial.endTime}
+            key={trial.taskId}
+            startTime={trial.startTime}
+            taskId={trial.taskId}
+          />
+        ),
+        key: TabType.Resources,
+        label: 'Resources',
+      });
+    }
     return tabs;
   }, [
     experiment,
@@ -262,6 +280,8 @@ const TrialDetailsComp: React.FC = () => {
     f_flat_runs,
     settings.filePath,
     handleSelectFile,
+    resourcesEnabled,
+    tabKey,
   ]);
 
   const { stopPolling } = usePolling(fetchTrialData);

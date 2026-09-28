@@ -18,6 +18,7 @@ const SearchDetails = React.lazy(() => import('pages/SearchDetails'));
 import SignIn from 'pages/SignIn'; // no React.lazy to avoid e2e ci error
 import SignOut from 'pages/SignOut';
 const TaskListPage = React.lazy(() => import('pages/TaskListPage'));
+const TaskResources = React.lazy(() => import('pages/TaskResources'));
 const TaskLogsWrapper = React.lazy(() =>
   import('pages/TaskLogs').then((module) => ({ default: module.TaskLogsWrapper })),
 );
@@ -55,6 +56,7 @@ const routeComponentMap: Record<string, React.ReactNode> = {
   signOut: <SignOut />,
   taskList: <TaskListPage />,
   taskLogs: <TaskLogsWrapper />,
+  taskResources: <TaskResources />,
   templates: <TemplatesPage />,
   trialDetails: <TrialDetails />,
   uncategorized: <ProjectDetails key="uncategorized" />,

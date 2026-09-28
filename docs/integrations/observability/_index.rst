@@ -8,12 +8,16 @@
    :hidden:
 
    grafana-task-resources
+   native-task-resources
 
 This guide provides recommendations and assists in setting up monitoring for a Determined
 installation on Kubernetes.
 
 For an optional link from task views to an externally managed Grafana task dashboard, see
 :ref:`grafana-task-resources`.
+
+For resource charts inside the Determined WebUI backed by an existing agent-cluster monitoring
+deployment, see :ref:`native-task-resources`.
 
 ***************
  Prerequisites

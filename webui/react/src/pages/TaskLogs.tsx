@@ -4,10 +4,9 @@ import { Settings, settingsConfigForTask } from 'hew/LogViewer/LogViewerSelect.s
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 
-import GrafanaTaskResourcesLink from 'components/GrafanaTaskResourcesLink';
 import Page from 'components/Page';
+import TaskResourcesLink from 'components/TaskResourcesLink';
 import { commandTypeToLabel } from 'constants/states';
-import useGrafanaTaskResources from 'hooks/useGrafanaTaskResources';
 import { useSettings } from 'hooks/useSettings';
 import { DateString, decode, optional } from 'ioTypes';
 import { paths, serverAddress } from 'routes/utils';
@@ -17,7 +16,6 @@ import { mapV1LogsResponse } from 'services/decoder';
 import { readStream } from 'services/utils';
 import { CommandTask, CommandType, TaskItem } from 'types';
 import handleError from 'utils/error';
-import { buildGrafanaTaskResourcesUrl } from 'utils/grafanaTaskResources';
 
 import css from './TaskLogs.module.scss';
 
@@ -49,15 +47,8 @@ const TaskLogs: React.FC<Props> = ({ taskId, taskType, onCloseLogs, headerCompon
 
   const taskSettingsConfig = useMemo(() => settingsConfigForTask(taskId), [taskId]);
   const { resetSettings, settings, updateSettings } = useSettings<Settings>(taskSettingsConfig);
-  const grafanaConfig = useGrafanaTaskResources();
-  const grafanaUrl = task
-    ? buildGrafanaTaskResourcesUrl(grafanaConfig, {
-        allocationId: settings.allocationId?.length === 1 ? settings.allocationId[0] : undefined,
-        endTime: task.endTime,
-        startTime: task.startTime,
-        taskId: task.taskId,
-      })
-    : undefined;
+  const selectedAllocation =
+    settings.allocationId?.length === 1 ? settings.allocationId[0] : undefined;
 
   const filterValues: Filters = useMemo(
     () => ({
@@ -187,7 +178,19 @@ const TaskLogs: React.FC<Props> = ({ taskId, taskType, onCloseLogs, headerCompon
       ]}
       headerComponent={headerComponent}
       id="task-logs"
-      options={grafanaUrl && <GrafanaTaskResourcesLink url={grafanaUrl} />}
+      options={
+        task && (
+          <TaskResourcesLink
+            nativeUrl={paths.taskResources(task.taskId, selectedAllocation)}
+            target={{
+              allocationId: selectedAllocation,
+              endTime: task.endTime,
+              startTime: task.startTime,
+              taskId: task.taskId,
+            }}
+          />
+        )
+      }
       title={title}>
       <LogViewer
         decoder={mapV1LogsResponse}
