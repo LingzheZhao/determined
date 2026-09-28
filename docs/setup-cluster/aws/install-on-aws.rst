@@ -54,7 +54,7 @@ Installation
 
 .. code::
 
-   pip install determined
+   python -m pip install 'git+https://github.com/LingzheZhao/determined.git@main#subdirectory=harness'
 
 .. include:: ../../_shared/note-pip-install-determined.txt
 

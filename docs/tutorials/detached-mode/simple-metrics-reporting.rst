@@ -40,7 +40,7 @@ Determined library and start a cluster locally.
 
    .. code::
 
-      pip install determined
+      python -m pip install 'git+https://github.com/LingzheZhao/determined.git@main#subdirectory=harness'
 
       # If your machine has GPUs:
       det deploy local cluster-up

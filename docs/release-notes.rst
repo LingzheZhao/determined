@@ -15,10 +15,8 @@ Version 0.40.0 (research-cluster fork)
 
 **Release Date:** Pending publication
 
-This is a research-cluster fork release based on upstream Determined 0.38.1. The 0.40.0 version
-identifies this fork's master, agent, Python SDK, and WebUI distribution; it does not imply that
-upstream Determined 0.39 or 0.40 changes are included. Build and deploy the master, agent, SDK,
-and WebUI from the same source revision.
+This release builds on Determined 0.38.1 and continues development and maintenance of the
+open-source project.
 
 **New Features**
 
