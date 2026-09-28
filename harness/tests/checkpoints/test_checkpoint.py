@@ -2,6 +2,7 @@ import io
 import pathlib
 import tarfile
 
+import pytest
 import responses
 from responses import matchers
 
@@ -61,6 +62,16 @@ def get_response_raw_tgz(checkpoint_path: pathlib.Path) -> bytes:
     return buf.getbuffer()
 
 
+def get_unsafe_response_raw_tgz() -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w|gz") as tf:
+        member = tarfile.TarInfo("../outside-checkpoint")
+        member.size = len(b"escaped")
+        tf.addfile(member, io.BytesIO(b"escaped"))
+
+    return buf.getvalue()
+
+
 @responses.activate
 def test_checkpoint_download_via_master(tmp_path: pathlib.Path) -> None:
     uuid_tgz = "dummy-uuid-123-tgz"
@@ -84,3 +95,24 @@ def test_checkpoint_download_via_master(tmp_path: pathlib.Path) -> None:
         checkpoint_path,
     )
     verify_test_checkpoint(checkpoint_path)
+
+
+@responses.activate
+def test_checkpoint_download_via_master_rejects_unsafe_archive(tmp_path: pathlib.Path) -> None:
+    uuid_tgz = "unsafe-checkpoint"
+    responses.get(
+        f"https://dummy-master.none:443/checkpoints/{uuid_tgz}",
+        body=get_unsafe_response_raw_tgz(),
+        stream=True,
+        status=200,
+        match=[matchers.header_matcher({"Accept": "application/gzip"})],
+    )
+
+    with pytest.raises(ValueError, match="outside extraction directory"):
+        client.Checkpoint._download_via_master(
+            api.Session("https://dummy-master.none:443", "username", "token", cert=None),
+            uuid_tgz,
+            tmp_path / uuid_tgz,
+        )
+
+    assert not (tmp_path / "outside-checkpoint").exists()

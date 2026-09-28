@@ -230,6 +230,14 @@ func (a *NSCAuthZRBAC) CanCreateGenericTask(
 		rbacv1.PermissionType_PERMISSION_TYPE_CREATE_NSC)
 }
 
+// CanControlGenericTask checks if the user is authorized to update NSCs in the workspace.
+func (a *NSCAuthZRBAC) CanControlGenericTask(
+	ctx context.Context, curUser model.User, workspaceID model.AccessScopeID,
+	ownerID *model.UserID,
+) error {
+	return a.CanTerminateNSC(ctx, curUser, workspaceID)
+}
+
 func tensorboardWorkspaces(
 	ctx context.Context, experimentIDs []int32, trialIDs []int32,
 ) ([]model.AccessScopeID, error) {

@@ -5,6 +5,7 @@ import (
 
 	"github.com/determined-ai/determined/proto/pkg/tensorboardv1"
 
+	"github.com/determined-ai/determined/master/internal/authz"
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/pkg/model"
 )
@@ -97,6 +98,19 @@ func (a *NSCAuthZBasic) CanCreateGenericTask(
 	ctx context.Context, curUser model.User, workspaceID model.AccessScopeID,
 ) error {
 	return nil
+}
+
+// CanControlGenericTask allows admins and the task owner to control a generic task.
+func (a *NSCAuthZBasic) CanControlGenericTask(
+	ctx context.Context, curUser model.User, workspaceID model.AccessScopeID,
+	ownerID *model.UserID,
+) error {
+	if curUser.Admin || ownerID != nil && curUser.ID == *ownerID {
+		return nil
+	}
+	return authz.PermissionDeniedError{}.WithPrefix(
+		"non-admin users may not control other users' generic tasks",
+	)
 }
 
 func init() {

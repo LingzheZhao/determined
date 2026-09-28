@@ -92,6 +92,15 @@ func (a *NSCAuthZPermissive) CanCreateGenericTask(
 	return (&NSCAuthZBasic{}).CanCreateGenericTask(ctx, curUser, workspaceID)
 }
 
+// CanControlGenericTask audits RBAC authorization but enforces basic authorization.
+func (a *NSCAuthZPermissive) CanControlGenericTask(
+	ctx context.Context, curUser model.User, workspaceID model.AccessScopeID,
+	ownerID *model.UserID,
+) error {
+	_ = (&NSCAuthZRBAC{}).CanControlGenericTask(ctx, curUser, workspaceID, ownerID)
+	return (&NSCAuthZBasic{}).CanControlGenericTask(ctx, curUser, workspaceID, ownerID)
+}
+
 func init() {
 	AuthZProvider.Register("permissive", &NSCAuthZPermissive{})
 }
