@@ -97,6 +97,8 @@ type TaskSpec struct {
 
 	// The parent task of an allocation.
 	TaskID string
+	// The job of the task, which may be empty.
+	JobID string
 
 	// Fields that are set on per-resources basis.
 	AllocationID           string
@@ -205,6 +207,9 @@ func (t TaskSpec) EnvVars() map[string]string {
 		"DET_WORKDIR":       t.WorkDir,
 		"DET_RUN_DIR":       RunDir,
 	}
+	if t.JobID != "" {
+		e["DET_JOB_ID"] = t.JobID
+	}
 	if t.Owner != nil {
 		e["DET_USER"] = t.Owner.Username
 	}
@@ -259,8 +264,14 @@ func (t *TaskSpec) LogShipperWrappedEntrypoint() []string {
 
 // ToDockerSpec converts a task spec to a docker container spec.
 func (t *TaskSpec) ToDockerSpec() cproto.Spec {
+	e := t.EnvVars()
+	// The agent resource manager is the only one that builds docker specs; the others set the
+	// cluster ID themselves.
+	if t.ClusterID != "" {
+		e["DET_CLUSTER_ID"] = t.ClusterID
+	}
 	var envVars []string
-	for k, v := range t.EnvVars() {
+	for k, v := range e {
 		envVars = append(envVars, fmt.Sprintf("%s=%s", k, v))
 	}
 

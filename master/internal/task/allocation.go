@@ -718,6 +718,7 @@ func (a *allocation) resourcesAllocated(msg *sproto.ResourcesAllocated) error {
 		}
 	} else {
 		spec := a.specifier.ToTaskSpec()
+		spec.JobID = a.req.JobID.String()
 
 		token, err := db.StartAllocationSession(context.TODO(), a.model.AllocationID, spec.Owner)
 		if err != nil {
