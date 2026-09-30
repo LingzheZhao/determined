@@ -91,6 +91,10 @@
 -  Experiments: An experiment that fails to restore after a master restart no longer leaves its
    user session behind.
 
+-  API: ``CreateExperiment`` reports an experiment config that cannot be parsed, is incomplete,
+   sets ``resources.slots``, names a searcher that was removed, or has no entrypoint as
+   ``InvalidArgument`` (HTTP 400) instead of an internal error (HTTP 500).
+
 -  Tasks: With the agent resource manager, the master records a container's launch before it
    asks the agent to start it, and does not start a container whose launch it cannot record, so
    a restarted master knows every container that may be running. A container that the master

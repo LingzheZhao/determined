@@ -13,6 +13,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/pkg/errors"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/determined-ai/determined/master/internal/api"
 	"github.com/determined-ai/determined/master/internal/authz"
@@ -265,6 +267,13 @@ func getCreateExperimentsProject(
 	return p, nil
 }
 
+// invalidExperimentConfig reports a problem in the experiment config that the caller sent, as
+// InvalidArgument rather than the Internal a plain error becomes, so clients can tell a config to
+// fix from a master failure.
+func invalidExperimentConfig(err error) error {
+	return status.Errorf(codes.InvalidArgument, "invalid experiment configuration: %s", err)
+}
+
 // parseCreateExperiment parses and resolves an experiment create. template, when set, is the
 // template named by req.Template as a submission's digest read it, which is applied instead of
 // reading the template again.
@@ -275,11 +284,12 @@ func (m *Master) parseCreateExperiment(ctx context.Context, req *apiv1.CreateExp
 	// Read the config as the user provided it.
 	config, err := expconf.ParseAnyExperimentConfigYAML([]byte(req.Config))
 	if err != nil {
-		return nil, nil, config, nil, nil, errors.Wrap(err, "invalid experiment configuration")
+		return nil, nil, config, nil, nil, invalidExperimentConfig(err)
 	}
 
 	if config.RawResources != nil && config.RawResources.Slots() != nil {
-		return nil, nil, config, nil, nil, fmt.Errorf("<config>.resources: additionalProperties \"slots\" not allowed")
+		return nil, nil, config, nil, nil, status.Error(codes.InvalidArgument,
+			"<config>.resources: additionalProperties \"slots\" not allowed")
 	}
 
 	// Apply the template that the user specified.
@@ -320,7 +330,8 @@ func (m *Master) parseCreateExperiment(ctx context.Context, req *apiv1.CreateExp
 		}
 
 		if defaulted.RawEntrypoint == nil {
-			return nil, nil, config, nil, nil, fmt.Errorf("managed experiments require entrypoint")
+			return nil, nil, config, nil, nil, status.Error(codes.InvalidArgument,
+				"managed experiments require entrypoint")
 		}
 	}
 
@@ -377,12 +388,12 @@ func (m *Master) parseCreateExperiment(ctx context.Context, req *apiv1.CreateExp
 	config = *configWithInvariantOverrides
 	// Make sure the experiment config has all eventuallyRequired fields.
 	if err = schemas.IsComplete(config); err != nil {
-		return nil, nil, config, nil, nil, errors.Wrap(err, "invalid experiment configuration")
+		return nil, nil, config, nil, nil, invalidExperimentConfig(err)
 	}
 
 	// Disallow EOL searchers.
 	if err = config.Searcher().AssertCurrent(); err != nil {
-		return nil, nil, config, nil, nil, errors.Wrap(err, "invalid experiment configuration")
+		return nil, nil, config, nil, nil, invalidExperimentConfig(err)
 	}
 
 	modelBytes := []byte{}

@@ -395,12 +395,17 @@ func TestCreateExperimentValidateOnly(t *testing.T) {
 	require.Nil(t, resp.Submission)
 	requireSameRows(ctx, t, curUser.ID, rows) // validate_only mints no session
 
-	_, err = api.CreateExperiment(ctx, &apiv1.CreateExperimentRequest{
-		Config:       "entrypoint: test\n",
-		ProjectId:    1,
-		ValidateOnly: true,
-	})
-	require.Error(t, err)
+	// A config to fix is InvalidArgument, never Internal, so clients can tell it from a master
+	// failure.
+	for _, config := range []string{"entrypoint: test\n", "searcher: [\n"} {
+		_, err = api.CreateExperiment(ctx, &apiv1.CreateExperimentRequest{
+			Config:       config,
+			ProjectId:    1,
+			ValidateOnly: true,
+		})
+		require.Equal(t, codes.InvalidArgument, status.Code(err), "%q: %v", config, err)
+		require.ErrorContains(t, err, "invalid experiment configuration")
+	}
 	requireSameRows(ctx, t, curUser.ID, rows)
 }
 
