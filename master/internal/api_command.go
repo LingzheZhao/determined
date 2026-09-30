@@ -12,6 +12,7 @@ import (
 	petname "github.com/dustinkirkland/golang-petname"
 	pstruct "github.com/golang/protobuf/ptypes/struct"
 	"github.com/pkg/errors"
+	"github.com/uptrace/bun"
 
 	"golang.org/x/exp/maps"
 	"google.golang.org/grpc/codes"
@@ -27,6 +28,7 @@ import (
 	"github.com/determined-ai/determined/master/internal/grpcutil"
 	"github.com/determined-ai/determined/master/internal/rbac/audit"
 	"github.com/determined-ai/determined/master/internal/rm"
+	"github.com/determined-ai/determined/master/internal/submission"
 	"github.com/determined-ai/determined/master/internal/templates"
 	"github.com/determined-ai/determined/master/internal/user"
 	"github.com/determined-ai/determined/master/pkg/archive"
@@ -38,6 +40,7 @@ import (
 	"github.com/determined-ai/determined/master/pkg/schemas/expconf"
 	"github.com/determined-ai/determined/master/pkg/tasks"
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
+	"github.com/determined-ai/determined/proto/pkg/commandv1"
 	"github.com/determined-ai/determined/proto/pkg/utilv1"
 )
 
@@ -59,6 +62,25 @@ type protoCommandParams struct {
 }
 
 func (a *apiServer) getCommandLaunchParams(ctx context.Context, req *protoCommandParams,
+	aUser *model.User) (
+	*command.CreateGeneric, []pkgCommand.LaunchWarning, error,
+) {
+	launchReq, launchWarnings, err := a.prepareCommandLaunchParams(ctx, req, aUser)
+	if err != nil {
+		return nil, launchWarnings, err
+	}
+
+	token, err := getTaskSessionToken(ctx, launchReq.Spec.Base.Owner)
+	if err != nil {
+		return nil, nil, err
+	}
+	launchReq.Spec.Base.UserSessionToken = token
+	return launchReq, launchWarnings, nil
+}
+
+// prepareCommandLaunchParams is getCommandLaunchParams without minting the task's user session,
+// for the managed creates, which mint it in their commit transaction.
+func (a *apiServer) prepareCommandLaunchParams(ctx context.Context, req *protoCommandParams,
 	aUser *model.User) (
 	*command.CreateGeneric, []pkgCommand.LaunchWarning, error,
 ) {
@@ -163,12 +185,6 @@ func (a *apiServer) getCommandLaunchParams(ctx context.Context, req *protoComman
 	if err != nil {
 		return nil, nil, status.Errorf(codes.InvalidArgument, "failed constraint check: %v", err)
 	}
-
-	token, err := getTaskSessionToken(ctx, userModel)
-	if err != nil {
-		return nil, nil, err
-	}
-	taskSpec.UserSessionToken = token
 
 	cmdSpec.Base = taskSpec
 	cmdSpec.Config = config
@@ -346,20 +362,69 @@ func (a *apiServer) LaunchCommand(
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get the user: %s", err)
 	}
+	s, err := submission.NewCommand(user.ID, req)
+	if err != nil {
+		return nil, err
+	}
 
-	launchReq, launchWarnings, err := a.getCommandLaunchParams(ctx, &protoCommandParams{
+	var launchReq *command.CreateGeneric
+	var launchWarnings []pkgCommand.LaunchWarning
+	var cmd *command.Command
+	return submission.Run(ctx, s, submission.Handler[*apiv1.LaunchCommandResponse]{
+		AuthorizeReplay: func(ctx context.Context, job *model.Job) error {
+			return authorizeTaskReplay(ctx, *user, job)
+		},
+		Replayed: func(result *apiv1.SubmitResult) *apiv1.LaunchCommandResponse {
+			return &apiv1.LaunchCommandResponse{Submission: result}
+		},
+		Prepare: func(ctx context.Context) error {
+			launchReq, launchWarnings, err = a.prepareLaunchCommand(ctx, req, user, session)
+			return err
+		},
+		DryRun: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.LaunchCommandResponse, error) {
+			return &apiv1.LaunchCommandResponse{
+				Command:    &commandv1.Command{},
+				Config:     protoutils.ToStruct(launchReq.Spec.Config),
+				Warnings:   pkgCommand.LaunchWarningToProto(launchWarnings),
+				Submission: result,
+			}, nil
+		},
+		Commit: func(ctx context.Context, tx bun.Tx) error {
+			cmd = command.DefaultCmdService.NewGenericCommand(
+				model.TaskTypeCommand, model.JobTypeCommand, launchReq)
+			return commitCommandTx(ctx, tx, s, cmd, user)
+		},
+		Start: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.LaunchCommandResponse, error) {
+			if err := command.DefaultCmdService.StartCommand(cmd); err != nil {
+				return nil, err
+			}
+			return &apiv1.LaunchCommandResponse{
+				Command:    cmd.ToV1Command(),
+				Config:     protoutils.ToStruct(launchReq.Spec.Config),
+				Warnings:   pkgCommand.LaunchWarningToProto(launchWarnings),
+				Submission: result,
+			}, nil
+		},
+	})
+}
+
+// prepareLaunchCommand parses, authorizes, and checks a LaunchCommandRequest without side effects.
+func (a *apiServer) prepareLaunchCommand(
+	ctx context.Context, req *apiv1.LaunchCommandRequest, user *model.User, session *model.UserSession,
+) (*command.CreateGeneric, []pkgCommand.LaunchWarning, error) {
+	launchReq, launchWarnings, err := a.prepareCommandLaunchParams(ctx, &protoCommandParams{
 		TemplateName: req.TemplateName,
 		WorkspaceID:  req.WorkspaceId,
 		Config:       req.Config,
 		Files:        req.Files,
 	}, user)
 	if err != nil {
-		return nil, api.WrapWithFallbackCode(err, codes.InvalidArgument,
+		return nil, nil, api.WrapWithFallbackCode(err, codes.InvalidArgument,
 			"failed to prepare launch params")
 	}
 
 	if err = a.isNTSCPermittedToLaunch(ctx, launchReq.Spec, user); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Postprocess the launchReq.Spec.
@@ -383,7 +448,7 @@ func (a *apiServer) LaunchCommand(
 	}
 
 	if err = check.Validate(launchReq.Spec.Config); err != nil {
-		return nil, status.Errorf(
+		return nil, nil, status.Errorf(
 			codes.InvalidArgument,
 			"invalid command config: %s",
 			err.Error(),
@@ -396,22 +461,26 @@ func (a *apiServer) LaunchCommand(
 
 	oidcPachydermEnvVars, err := a.getOIDCPachydermEnvVars(session)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	maps.Copy(launchReq.Spec.Base.ExtraEnvVars, oidcPachydermEnvVars)
 
-	// Launch a command.
-	cmd, err := command.DefaultCmdService.LaunchGenericCommand(
-		model.TaskTypeCommand,
-		model.JobTypeCommand,
-		launchReq)
-	if err != nil {
-		return nil, err
-	}
+	return launchReq, launchWarnings, nil
+}
 
-	return &apiv1.LaunchCommandResponse{
-		Command:  cmd.ToV1Command(),
-		Config:   protoutils.ToStruct(launchReq.Spec.Config),
-		Warnings: pkgCommand.LaunchWarningToProto(launchWarnings),
-	}, nil
+// commitCommandTx is the commit transaction of LaunchCommand and LaunchShell. The task's user
+// session is minted in it, so a rollback, such as losing a race for the idempotency key, leaves
+// no session behind.
+func commitCommandTx(
+	ctx context.Context, tx bun.Tx, s *submission.Submission, cmd *command.Command, user *model.User,
+) error {
+	if err := s.InsertJobTx(ctx, tx, cmd.Job()); err != nil {
+		return err
+	}
+	token, err := getTaskSessionTokenTx(ctx, tx, user)
+	if err != nil {
+		return err
+	}
+	cmd.Base.UserSessionToken = token
+	return cmd.PersistTx(ctx, tx)
 }

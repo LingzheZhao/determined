@@ -183,6 +183,40 @@ func SetErrorState(taskID model.TaskID, endTime time.Time) error {
 	return nil
 }
 
+// FailTaskStart ends a task whose committed first allocation failed to start in-process, so that
+// the task reads as ended rather than open. In one transaction, it closes the allocation as
+// INFRASTRUCTURE_FAILED and sets the task's end time, and its state when taskState is set.
+func FailTaskStart(
+	ctx context.Context, taskID model.TaskID, allocationID model.AllocationID,
+	taskState *model.TaskState, cause error,
+) error {
+	now := time.Now().UTC()
+	return Bun().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewUpdate().Table("allocations").
+			Set("state = ?", model.AllocationStateTerminated).
+			Set("start_time = COALESCE(start_time, ?)", now).
+			Set("end_time = ?", now).
+			Set("exit_reason = ?", "the allocation failed to start").
+			Set("exit_error = ?", cause.Error()).
+			Set("exit_class = ?", model.ExitClassInfrastructureFailed).
+			Set("exit_detail = ?", model.NewExitDetail("", nil, cause.Error())).
+			Where("allocation_id = ?", allocationID).
+			Where("end_time IS NULL").
+			Exec(ctx); err != nil {
+			return fmt.Errorf("closing allocation %s: %w", allocationID, err)
+		}
+
+		q := tx.NewUpdate().Table("tasks").Set("end_time = ?", now)
+		if taskState != nil {
+			q = q.Set("task_state = ?", *taskState)
+		}
+		if _, err := q.Where("task_id = ?", taskID).Where("end_time IS NULL").Exec(ctx); err != nil {
+			return fmt.Errorf("ending task %s: %w", taskID, err)
+		}
+		return nil
+	})
+}
+
 // AddAllocation upserts the existence of an allocation. Allocation IDs may conflict in the event
 // the master restarts and the trial run ID increment is not persisted, but it is the same
 // allocation so this is OK.

@@ -8,6 +8,7 @@ import (
 
 	petname "github.com/dustinkirkland/golang-petname"
 	"github.com/pkg/errors"
+	"github.com/uptrace/bun"
 
 	"golang.org/x/exp/maps"
 	"google.golang.org/grpc/codes"
@@ -20,6 +21,7 @@ import (
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/grpcutil"
 	"github.com/determined-ai/determined/master/internal/rbac/audit"
+	"github.com/determined-ai/determined/master/internal/submission"
 	"github.com/determined-ai/determined/master/pkg/archive"
 	"github.com/determined-ai/determined/master/pkg/check"
 	pkgCommand "github.com/determined-ai/determined/master/pkg/command"
@@ -30,6 +32,7 @@ import (
 	"github.com/determined-ai/determined/master/pkg/schemas/expconf"
 	"github.com/determined-ai/determined/master/pkg/ssh"
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
+	"github.com/determined-ai/determined/proto/pkg/shellv1"
 )
 
 const (
@@ -194,20 +197,78 @@ func (a *apiServer) LaunchShell(
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get the user: %s", err)
 	}
+	s, err := submission.NewShell(user.ID, req)
+	if err != nil {
+		return nil, err
+	}
 
-	launchReq, launchWarnings, err := a.getCommandLaunchParams(ctx, &protoCommandParams{
+	var launchReq *command.CreateGeneric
+	var launchWarnings []pkgCommand.LaunchWarning
+	var cmd *command.Command
+	return submission.Run(ctx, s, submission.Handler[*apiv1.LaunchShellResponse]{
+		AuthorizeReplay: func(ctx context.Context, job *model.Job) error {
+			return authorizeTaskReplay(ctx, *user, job)
+		},
+		Replayed: func(result *apiv1.SubmitResult) *apiv1.LaunchShellResponse {
+			return &apiv1.LaunchShellResponse{Submission: result}
+		},
+		Prepare: func(ctx context.Context) error {
+			launchReq, launchWarnings, err = a.prepareLaunchShell(ctx, req, user, session)
+			return err
+		},
+		DryRun: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.LaunchShellResponse, error) {
+			return &apiv1.LaunchShellResponse{
+				Shell:      &shellv1.Shell{},
+				Config:     protoutils.ToStruct(launchReq.Spec.Config),
+				Warnings:   pkgCommand.LaunchWarningToProto(launchWarnings),
+				Submission: result,
+			}, nil
+		},
+		Commit: func(ctx context.Context, tx bun.Tx) error {
+			keys, err := ssh.GenerateKey(launchReq.Spec.Base.SSHConfig)
+			if err != nil {
+				return status.Error(codes.Internal, err.Error())
+			}
+			launchReq.Spec.Metadata.PrivateKey = ptrs.Ptr(string(keys.PrivateKey))
+			launchReq.Spec.Metadata.PublicKey = ptrs.Ptr(string(keys.PublicKey))
+			launchReq.Spec.Keys = &keys
+
+			cmd = command.DefaultCmdService.NewGenericCommand(
+				model.TaskTypeShell, model.JobTypeShell, launchReq)
+			return commitCommandTx(ctx, tx, s, cmd, user)
+		},
+		Start: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.LaunchShellResponse, error) {
+			if err := command.DefaultCmdService.StartCommand(cmd); err != nil {
+				return nil, err
+			}
+			return &apiv1.LaunchShellResponse{
+				Shell:      cmd.ToV1Shell(),
+				Config:     protoutils.ToStruct(launchReq.Spec.Config),
+				Warnings:   pkgCommand.LaunchWarningToProto(launchWarnings),
+				Submission: result,
+			}, nil
+		},
+	})
+}
+
+// prepareLaunchShell parses, authorizes, and checks a LaunchShellRequest without side effects.
+// The shell's SSH keys are generated only for a commit.
+func (a *apiServer) prepareLaunchShell(
+	ctx context.Context, req *apiv1.LaunchShellRequest, user *model.User, session *model.UserSession,
+) (*command.CreateGeneric, []pkgCommand.LaunchWarning, error) {
+	launchReq, launchWarnings, err := a.prepareCommandLaunchParams(ctx, &protoCommandParams{
 		TemplateName: req.TemplateName,
 		WorkspaceID:  req.WorkspaceId,
 		Config:       req.Config,
 		Files:        req.Files,
 	}, user)
 	if err != nil {
-		return nil, api.WrapWithFallbackCode(err, codes.InvalidArgument,
+		return nil, nil, api.WrapWithFallbackCode(err, codes.InvalidArgument,
 			"failed to prepare launch params")
 	}
 
 	if err = a.isNTSCPermittedToLaunch(ctx, launchReq.Spec, user); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Postprocess the launchReq.Spec.
@@ -234,7 +295,7 @@ func (a *apiServer) LaunchShell(
 	}
 
 	if err = check.Validate(launchReq.Spec.Config); err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return nil, nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	launchReq.Spec.AdditionalFiles = archive.Archive{
@@ -256,30 +317,9 @@ func (a *apiServer) LaunchShell(
 
 	oidcPachydermEnvVars, err := a.getOIDCPachydermEnvVars(session)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	maps.Copy(launchReq.Spec.Base.ExtraEnvVars, oidcPachydermEnvVars)
 
-	keys, err := ssh.GenerateKey(launchReq.Spec.Base.SSHConfig)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	launchReq.Spec.Metadata.PrivateKey = ptrs.Ptr(string(keys.PrivateKey))
-	launchReq.Spec.Metadata.PublicKey = ptrs.Ptr(string(keys.PublicKey))
-	launchReq.Spec.Keys = &keys
-
-	// Launch a Shell.
-	cmd, err := command.DefaultCmdService.LaunchGenericCommand(
-		model.TaskTypeShell,
-		model.JobTypeShell,
-		launchReq)
-	if err != nil {
-		return nil, err
-	}
-
-	return &apiv1.LaunchShellResponse{
-		Shell:    cmd.ToV1Shell(),
-		Config:   protoutils.ToStruct(launchReq.Spec.Config),
-		Warnings: pkgCommand.LaunchWarningToProto(launchWarnings),
-	}, nil
+	return launchReq, launchWarnings, nil
 }

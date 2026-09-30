@@ -100,17 +100,51 @@ func newExperiment(
 		return nil, nil, fmt.Errorf("experiments restoring should not provide a model def")
 	}
 
+	plan, err := planExperiment(m, expModel, activeConfig)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if expModel.ID == 0 {
+		if err = m.db.AddExperiment(expModel, modelDef, plan.activeConfig); err != nil {
+			return nil, plan.launchWarnings, err
+		}
+		telemetry.ReportExperimentCreated(expModel.ID, plan.activeConfig)
+	}
+
+	e, err := plan.build(m, expModel, taskSpec)
+	if err != nil {
+		return nil, nil, err
+	}
+	return e, plan.launchWarnings, nil
+}
+
+// experimentPlan is what an experiment is checked and resolved to before it is written.
+type experimentPlan struct {
+	activeConfig   expconf.ExperimentConfig
+	searcher       *searcher.Searcher
+	checkpoint     *model.Checkpoint
+	agentUserGroup *model.AgentUserGroup
+	launchWarnings []command.LaunchWarning
+}
+
+// planExperiment checks an experiment and resolves its resource pool, searcher, warm start
+// checkpoint, and agent user group. It writes nothing, so a create can run it before a dry run
+// returns.
+func planExperiment(
+	m *Master, expModel *model.Experiment, activeConfig expconf.ExperimentConfig,
+) (*experimentPlan, error) {
 	resources := activeConfig.Resources()
 	workspaceModel, err := workspace.WorkspaceByProjectID(context.TODO(), expModel.ProjectID)
 	if err != nil && errors.Cause(err) != sql.ErrNoRows {
-		return nil, nil, err
+		return nil, err
 	}
 	workspaceID := resolveWorkspaceID(workspaceModel)
 	poolName, err := m.rm.ResolveResourcePool(
 		rm.ResourcePoolName(resources.ResourcePool()), workspaceID, resources.SlotsPerTrial(),
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot create an experiment: %w", err)
+		return nil, fmt.Errorf("cannot create an experiment: %w", err)
 	}
 
 	var launchWarnings []command.LaunchWarning
@@ -120,10 +154,10 @@ func newExperiment(
 			Slots:        resources.SlotsPerTrial(),
 			IsSingleNode: resources.IsSingleNode() != nil && *resources.IsSingleNode(),
 		}); err != nil {
-			return nil, nil, fmt.Errorf("validating resources: %v", err)
+			return nil, fmt.Errorf("validating resources: %v", err)
 		}
 		if m.config.LaunchError && len(launchWarnings) > 0 {
-			return nil, nil, errors.New("slots requested exceeds cluster capacity")
+			return nil, errors.New("slots requested exceeds cluster capacity")
 		}
 	}
 	resources.SetResourcePool(poolName.String())
@@ -139,31 +173,37 @@ func newExperiment(
 	checkpoint, err := checkpointFromTrialIDOrUUID(
 		m.db, activeConfig.Searcher().SourceTrialID(), activeConfig.Searcher().SourceCheckpointUUID())
 	if err != nil {
-		return nil, launchWarnings, err
-	}
-
-	if expModel.ID == 0 {
-		if err = m.db.AddExperiment(expModel, modelDef, activeConfig); err != nil {
-			return nil, launchWarnings, err
-		}
-		telemetry.ReportExperimentCreated(expModel.ID, activeConfig)
+		return nil, err
 	}
 
 	agentUserGroup, err := user.GetAgentUserGroup(context.TODO(), *expModel.OwnerID, workspaceID)
 	if err != nil {
-		return nil, launchWarnings, err
+		return nil, err
 	}
 
-	taskSpec.AgentUserGroup = agentUserGroup
+	return &experimentPlan{
+		activeConfig:   activeConfig,
+		searcher:       search,
+		checkpoint:     checkpoint,
+		agentUserGroup: agentUserGroup,
+		launchWarnings: launchWarnings,
+	}, nil
+}
+
+// build returns the experiment object of a planned experiment, which must already be written.
+func (p *experimentPlan) build(
+	m *Master, expModel *model.Experiment, taskSpec *tasks.TaskSpec,
+) (*internalExperiment, error) {
+	taskSpec.AgentUserGroup = p.agentUserGroup
 
 	generatedKeys, err := ssh.GenerateKey(taskSpec.SSHConfig)
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "generating ssh keys for trials")
+		return nil, errors.Wrap(err, "generating ssh keys for trials")
 	}
 
 	return &internalExperiment{
 		Experiment:   expModel,
-		activeConfig: activeConfig,
+		activeConfig: p.activeConfig,
 		db:           m.db,
 		rm:           m.rm,
 		syslog: log.WithFields(log.Fields{
@@ -172,8 +212,8 @@ func newExperiment(
 			"experiment-id": expModel.ID,
 		},
 		),
-		searcher:            search,
-		warmStartCheckpoint: checkpoint,
+		searcher:            p.searcher,
+		warmStartCheckpoint: p.checkpoint,
 
 		trials: map[model.RequestID]*trial{},
 
@@ -190,7 +230,7 @@ func newExperiment(
 			"job-id":        expModel.JobID,
 			"experiment-id": expModel.ID,
 		},
-	}, launchWarnings, nil
+	}, nil
 }
 
 func newUnmanagedExperiment(

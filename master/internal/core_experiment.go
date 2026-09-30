@@ -398,12 +398,7 @@ func (m *Master) parseCreateExperiment(ctx context.Context, req *apiv1.CreateExp
 		}
 	}
 
-	token, createSessionErr := getTaskSessionToken(ctx, owner)
-	if createSessionErr != nil {
-		return nil, nil, config, nil, nil, errors.Wrapf(
-			createSessionErr, "unable to create user session inside task")
-	}
-	taskSpec.UserSessionToken = token
+	// The caller mints the user session, which a dry run must not.
 	taskSpec.Owner = owner
 
 	dbExp, err := model.NewExperiment(

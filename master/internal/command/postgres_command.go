@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	"github.com/pkg/errors"
 	"github.com/uptrace/bun"
@@ -61,4 +62,58 @@ func IdentifyTask(ctx context.Context, taskID model.TaskID) (TaskMetadata, error
 		return metadata, err
 	}
 	return metadata, nil
+}
+
+// NewTaskRecords are the rows that the commit transaction of a new command, shell, notebook,
+// TensorBoard, or generic task writes besides its job row. Committing command_state and the first
+// allocation with the task leaves nothing for a crash before the start to lose.
+type NewTaskRecords struct {
+	Task             *model.Task
+	ContextDirectory []byte
+	WorkspaceID      int
+	WorkspaceName    string
+	// Allocation is the first allocation, which is written as PENDING.
+	Allocation *model.Allocation
+	Snapshot   *CommandSnapshot
+}
+
+// InsertNewTaskTx writes the records of a new task in a transaction.
+func InsertNewTaskTx(ctx context.Context, tx bun.IDB, r NewTaskRecords) error {
+	if err := db.AddTaskTx(ctx, tx, r.Task); err != nil {
+		return fmt.Errorf("persisting task %v: %w", r.Task.TaskID, err)
+	}
+
+	contextDirectory := r.ContextDirectory
+	if contextDirectory == nil {
+		contextDirectory = []byte{}
+	}
+	if _, err := tx.NewInsert().Model(&model.TaskContextDirectory{
+		TaskID:           r.Task.TaskID,
+		ContextDirectory: contextDirectory,
+	}).Exec(ctx); err != nil {
+		return fmt.Errorf("persisting context directory files for task %s: %w", r.Task.TaskID, err)
+	}
+
+	if _, err := tx.NewInsert().Model(&model.AllocationWorkspaceRecord{
+		AllocationID:  r.Allocation.AllocationID,
+		WorkspaceID:   r.WorkspaceID,
+		WorkspaceName: r.WorkspaceName,
+	}).Exec(ctx); err != nil {
+		return fmt.Errorf("persisting workspace information for allocation %s: %w",
+			r.Allocation.AllocationID, err)
+	}
+
+	pending := model.AllocationStatePending
+	r.Allocation.State = &pending
+	if r.Allocation.Ports == nil {
+		r.Allocation.Ports = map[string]int{}
+	}
+	if _, err := tx.NewInsert().Model(r.Allocation).Exec(ctx); err != nil {
+		return fmt.Errorf("persisting allocation %s: %w", r.Allocation.AllocationID, err)
+	}
+
+	if _, err := tx.NewInsert().Model(r.Snapshot).Exec(ctx); err != nil {
+		return fmt.Errorf("persisting command state of task %s: %w", r.Task.TaskID, err)
+	}
+	return nil
 }

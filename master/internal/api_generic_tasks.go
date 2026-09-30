@@ -10,6 +10,7 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/determined-ai/determined/master/internal/rm"
 	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/sproto"
+	"github.com/determined-ai/determined/master/internal/submission"
 	"github.com/determined-ai/determined/master/internal/task"
 	"github.com/determined-ai/determined/master/internal/user"
 	"github.com/determined-ai/determined/master/pkg/check"
@@ -68,13 +70,16 @@ func getConfigBytes(config []byte, forkedConfig []byte) ([]byte, error) {
 	return out, nil
 }
 
+// getGenericTaskLaunchParameters parses a generic task's config and builds its spec. It also
+// returns the name of the task's workspace. It mints no user session: the create mints it in its
+// commit transaction.
 func (a *apiServer) getGenericTaskLaunchParameters(
 	ctx context.Context,
 	contextDirectory []*utilv1.File,
 	projectID int,
 	configBytes []byte,
 ) (
-	*tasks.GenericTaskSpec, []pkgCommand.LaunchWarning, []byte, error,
+	*tasks.GenericTaskSpec, []pkgCommand.LaunchWarning, []byte, string, error,
 ) {
 	genericTaskSpec := &tasks.GenericTaskSpec{
 		ProjectID: projectID,
@@ -86,16 +91,17 @@ func (a *apiServer) getGenericTaskLaunchParameters(
 		return nil,
 			nil,
 			nil,
+			"",
 			status.Errorf(codes.Unauthenticated, "failed to get the user: %s", err)
 	}
 
 	proj, err := a.GetProjectByID(ctx, int32(genericTaskSpec.ProjectID), *userModel)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 	agentUserGroup, err := user.GetAgentUserGroup(ctx, userModel.ID, int(proj.WorkspaceId))
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 
 	genericTaskSpec.WorkspaceID = int(proj.WorkspaceId)
@@ -104,7 +110,7 @@ func (a *apiServer) getGenericTaskLaunchParameters(
 	resources := model.ParseJustResources(configBytes)
 
 	if resources.Slots < 0 {
-		return nil, nil, nil, fmt.Errorf("resource slots must be >= 0")
+		return nil, nil, nil, "", fmt.Errorf("resource slots must be >= 0")
 	}
 	isSingleNode := resources.IsSingleNode != nil && *resources.IsSingleNode
 	poolName, launchWarnings, err := a.m.ResolveResources(resources.ResourcePool,
@@ -112,18 +118,18 @@ func (a *apiServer) getGenericTaskLaunchParameters(
 		int(proj.WorkspaceId),
 		isSingleNode)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 	// Get the base TaskSpec.
 	taskSpec, err := a.m.fillTaskSpec(poolName, agentUserGroup, userModel)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 
 	// Get the full configuration.
 	taskConfig := model.DefaultConfigGenericTaskConfig(&taskSpec.TaskContainerDefaults)
 	if err := yaml.UnmarshalStrict(configBytes, &taskConfig, yaml.DisallowUnknownFields); err != nil {
-		return nil, nil, nil, fmt.Errorf("yaml unmarshaling generic task config: %w", err)
+		return nil, nil, nil, "", fmt.Errorf("yaml unmarshaling generic task config: %w", err)
 	}
 	workDirInDefaults := taskConfig.WorkDir
 
@@ -147,16 +153,8 @@ func (a *apiServer) getGenericTaskLaunchParameters(
 		contextDirectory,
 	)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
-
-	var token string
-	token, err = getTaskSessionToken(ctx, userModel)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	taskSpec.UserSessionToken = token
 
 	genericTaskSpec.Base = taskSpec
 	genericTaskSpec.GenericTaskConfig = taskConfig
@@ -165,7 +163,7 @@ func (a *apiServer) getGenericTaskLaunchParameters(
 		"DET_TASK_TYPE": string(model.TaskTypeGeneric),
 	}
 
-	return genericTaskSpec, launchWarnings, contextDirectoryBytes, nil
+	return genericTaskSpec, launchWarnings, contextDirectoryBytes, proj.WorkspaceName, nil
 }
 
 func (a *apiServer) canCreateGenericTask(ctx context.Context, projectID int) error {
@@ -217,6 +215,68 @@ func (a *apiServer) canCreateGenericTask(ctx context.Context, projectID int) err
 func (a *apiServer) CreateGenericTask(
 	ctx context.Context, req *apiv1.CreateGenericTaskRequest,
 ) (*apiv1.CreateGenericTaskResponse, error) {
+	userModel, _, err := grpcutil.GetUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s, err := submission.NewGenericTask(userModel.ID, req)
+	if err != nil {
+		return nil, err
+	}
+
+	var t *preparedGenericTask
+	return submission.Run(ctx, s, submission.Handler[*apiv1.CreateGenericTaskResponse]{
+		AuthorizeReplay: func(ctx context.Context, job *model.Job) error {
+			return authorizeTaskReplay(ctx, *userModel, job)
+		},
+		Replayed: func(result *apiv1.SubmitResult) *apiv1.CreateGenericTaskResponse {
+			return &apiv1.CreateGenericTaskResponse{Submission: result}
+		},
+		Prepare: func(ctx context.Context) error {
+			t, err = a.prepareGenericTask(ctx, req)
+			return err
+		},
+		DryRun: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.CreateGenericTaskResponse, error) {
+			return &apiv1.CreateGenericTaskResponse{
+				Warnings:   pkgCommand.LaunchWarningToProto(t.warnings),
+				Submission: result,
+			}, nil
+		},
+		Commit: func(ctx context.Context, tx bun.Tx) error {
+			return t.commitTx(ctx, tx, s, req, userModel)
+		},
+		Start: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.CreateGenericTaskResponse, error) {
+			if err := t.start(ctx, a.m); err != nil {
+				return nil, err
+			}
+			return &apiv1.CreateGenericTaskResponse{
+				TaskId:     string(t.taskID),
+				Warnings:   pkgCommand.LaunchWarningToProto(t.warnings),
+				Submission: result,
+			}, nil
+		},
+	})
+}
+
+// preparedGenericTask is a generic task that CreateGenericTask has parsed and checked.
+type preparedGenericTask struct {
+	spec             *tasks.GenericTaskSpec
+	warnings         []pkgCommand.LaunchWarning
+	contextDirectory []byte
+	configJSON       []byte
+	workspaceName    string
+
+	taskID       model.TaskID
+	jobID        model.JobID
+	allocationID model.AllocationID
+	startTime    time.Time
+}
+
+// prepareGenericTask parses, authorizes, and checks a CreateGenericTaskRequest without side
+// effects.
+func (a *apiServer) prepareGenericTask(
+	ctx context.Context, req *apiv1.CreateGenericTaskRequest,
+) (*preparedGenericTask, error) {
 	var projectID int
 	if req.ProjectId != nil {
 		projectID = int(*req.ProjectId)
@@ -260,7 +320,7 @@ func (a *apiServer) CreateGenericTask(
 	if err != nil {
 		return nil, err
 	}
-	genericTaskSpec, warnings, contextDirectoryBytes, err := a.getGenericTaskLaunchParameters(
+	genericTaskSpec, warnings, contextDirectoryBytes, workspaceName, err := a.getGenericTaskLaunchParameters(
 		ctx, req.ContextDirectory, projectID, configBytes,
 	)
 	if err != nil {
@@ -287,105 +347,141 @@ func (a *apiServer) CreateGenericTask(
 		)
 	}
 
-	// Persist the task.
-	taskID := model.NewTaskID()
-	jobID := model.NewJobID()
-	startTime := time.Now()
-	err = db.Bun().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := db.AddJobTx(ctx, tx, &model.Job{
-			JobID:   jobID,
-			JobType: model.JobTypeGeneric,
-			OwnerID: &genericTaskSpec.Base.Owner.ID,
-		}); err != nil {
-			return fmt.Errorf("persisting job %v: %w", taskID, err)
-		}
+	configJSON, err := yaml.YAMLToJSON(configBytes)
+	if err != nil {
+		return nil, err
+	}
 
-		genericTaskSpec.RegisteredTime = startTime
-		genericTaskSpec.JobID = jobID
+	return &preparedGenericTask{
+		spec:             genericTaskSpec,
+		warnings:         warnings,
+		contextDirectory: contextDirectoryBytes,
+		configJSON:       configJSON,
+		workspaceName:    workspaceName,
+	}, nil
+}
 
-		configBytesJSON, err := yaml.YAMLToJSON(configBytes)
-		if err != nil {
-			return err
-		}
-		if err := db.AddTaskTx(ctx, tx, &model.Task{
-			TaskID:     taskID,
+// commitTx is the commit transaction of CreateGenericTask. The task's user session is minted in
+// it, so a rollback, such as losing a race for the idempotency key, leaves no session behind.
+func (t *preparedGenericTask) commitTx(
+	ctx context.Context, tx bun.Tx, s *submission.Submission, req *apiv1.CreateGenericTaskRequest,
+	owner *model.User,
+) error {
+	t.taskID = model.NewTaskID()
+	t.jobID = model.NewJobID()
+	t.allocationID = model.AllocationID(fmt.Sprintf("%s.%d", t.taskID, 1))
+	t.startTime = time.Now()
+
+	if err := s.InsertJobTx(ctx, tx, &model.Job{
+		JobID:   t.jobID,
+		JobType: model.JobTypeGeneric,
+		OwnerID: &t.spec.Base.Owner.ID,
+	}); err != nil {
+		return err
+	}
+
+	token, err := getTaskSessionTokenTx(ctx, tx, owner)
+	if err != nil {
+		return err
+	}
+	t.spec.Base.UserSessionToken = token
+	t.spec.RegisteredTime = t.startTime
+	t.spec.JobID = t.jobID
+
+	return command.InsertNewTaskTx(ctx, tx, command.NewTaskRecords{
+		Task: &model.Task{
+			TaskID:     t.taskID,
 			TaskType:   model.TaskTypeGeneric,
-			StartTime:  startTime,
-			JobID:      &jobID,
+			StartTime:  t.startTime,
+			JobID:      &t.jobID,
 			LogVersion: model.CurrentTaskLogVersion,
 			ForkedFrom: req.ForkedFrom,
-			Config:     ptrs.Ptr(string(configBytesJSON)),
+			Config:     ptrs.Ptr(string(t.configJSON)),
 			ParentID:   (*model.TaskID)(req.ParentId),
 			State:      ptrs.Ptr(model.TaskStateActive),
 			NoPause:    req.NoPause,
-		}); err != nil {
-			return fmt.Errorf("persisting task %v: %w", taskID, err)
-		}
-
-		// Persist context directory
-		if contextDirectoryBytes == nil {
-			contextDirectoryBytes = []byte{}
-		}
-		if _, err := tx.NewInsert().Model(&model.TaskContextDirectory{
-			TaskID:           taskID,
-			ContextDirectory: contextDirectoryBytes,
-		}).Exec(ctx); err != nil {
-			return fmt.Errorf("persisting context directory files: %w", err)
-		}
-
-		return nil
+		},
+		ContextDirectory: t.contextDirectory,
+		WorkspaceID:      t.spec.WorkspaceID,
+		WorkspaceName:    t.workspaceName,
+		Allocation: &model.Allocation{
+			AllocationID: t.allocationID,
+			TaskID:       t.taskID,
+			Slots:        *t.spec.GenericTaskConfig.Resources.Slots(),
+			ResourcePool: t.spec.GenericTaskConfig.Resources.ResourcePool(),
+		},
+		Snapshot: &command.CommandSnapshot{
+			TaskID:             t.taskID,
+			RegisteredTime:     t.startTime,
+			AllocationID:       t.allocationID,
+			GenericCommandSpec: tasks.GenericCommandSpec{},
+			GenericTaskSpec:    t.spec,
+		},
 	})
-	if err != nil {
-		return nil, fmt.Errorf("persisting task information: %w", err)
-	}
+}
 
+// start starts a committed generic task. If the start fails, the task is ended so that it does not
+// stay open.
+func (t *preparedGenericTask) start(ctx context.Context, m *Master) error {
 	logCtx := logger.Context{
-		"job-id":    jobID,
-		"task-id":   taskID,
+		"job-id":    t.jobID,
+		"task-id":   t.taskID,
 		"task-type": model.TaskTypeGeneric,
 	}
 	priorityChange := func(priority int) error {
 		return nil
 	}
-	if err = tasklist.GroupPriorityChangeRegistry.Add(jobID, priorityChange); err != nil {
-		return nil, err
+	if err := tasklist.GroupPriorityChangeRegistry.Add(t.jobID, priorityChange); err != nil {
+		t.failStart(ctx, err)
+		return err
 	}
 
-	allocationID := model.AllocationID(fmt.Sprintf("%s.%d", taskID, 1))
-	onAllocationExit := getGenericTaskOnAllocationExit(ctx, taskID, allocationID, jobID, logCtx)
-	isSingleNode := genericTaskSpec.GenericTaskConfig.Resources.IsSingleNode() != nil &&
-		*genericTaskSpec.GenericTaskConfig.Resources.IsSingleNode()
-	err = task.DefaultService.StartAllocation(logCtx, sproto.AllocateRequest{
-		AllocationID:      allocationID,
-		TaskID:            taskID,
-		JobID:             jobID,
-		JobSubmissionTime: startTime,
+	onAllocationExit := getGenericTaskOnAllocationExit(ctx, t.taskID, t.allocationID, t.jobID, logCtx)
+	isSingleNode := t.spec.GenericTaskConfig.Resources.IsSingleNode() != nil &&
+		*t.spec.GenericTaskConfig.Resources.IsSingleNode()
+	err := task.DefaultService.StartAllocation(logCtx, sproto.AllocateRequest{
+		AllocationID:      t.allocationID,
+		TaskID:            t.taskID,
+		JobID:             t.jobID,
+		JobSubmissionTime: t.startTime,
 		IsUserVisible:     true,
-		Name:              fmt.Sprintf("Generic Task %s", taskID),
+		Name:              fmt.Sprintf("Generic Task %s", t.taskID),
 
-		SlotsNeeded:  *genericTaskSpec.GenericTaskConfig.Resources.Slots(),
-		ResourcePool: genericTaskSpec.GenericTaskConfig.Resources.ResourcePool(),
+		SlotsNeeded:  *t.spec.GenericTaskConfig.Resources.Slots(),
+		ResourcePool: t.spec.GenericTaskConfig.Resources.ResourcePool(),
 		FittingRequirements: sproto.FittingRequirements{
 			SingleAgent: isSingleNode,
 		},
 
-		Restore: false,
-	}, a.m.db, a.m.rm, genericTaskSpec, onAllocationExit)
+		Restore:   false,
+		Persisted: true,
+	}, m.db, m.rm, t.spec, onAllocationExit)
 	if err != nil {
-		return nil, err
+		t.failStart(ctx, err)
+		return err
 	}
 
-	err = persistGenericTaskSpec(ctx, taskID, *genericTaskSpec, allocationID)
-	if err != nil {
-		return nil, err
+	jobservice.DefaultService.RegisterJob(t.jobID, t.spec)
+	return nil
+}
+
+// failStart ends a committed generic task whose start failed, so that it reads as ended rather
+// than open, and releases what the task held.
+func (t *preparedGenericTask) failStart(ctx context.Context, cause error) {
+	syslog := logrus.WithField("component", "genericTask").WithField("task-id", t.taskID)
+	if _, ok := tasklist.GroupPriorityChangeRegistry.Load(t.jobID); ok {
+		if err := tasklist.GroupPriorityChangeRegistry.Delete(t.jobID); err != nil {
+			syslog.WithError(err).Error("deleting group priority change registry")
+		}
 	}
-
-	jobservice.DefaultService.RegisterJob(jobID, genericTaskSpec)
-
-	return &apiv1.CreateGenericTaskResponse{
-		TaskId:   string(taskID),
-		Warnings: pkgCommand.LaunchWarningToProto(warnings),
-	}, nil
+	if err := db.FailTaskStart(
+		ctx, t.taskID, t.allocationID, ptrs.Ptr(model.TaskStateError), cause,
+	); err != nil {
+		syslog.WithError(err).Error("ending a generic task that failed to start")
+	}
+	if err := user.DeleteSessionByToken(ctx, t.spec.Base.UserSessionToken); err != nil {
+		syslog.WithError(err).Error("deleting the user session of a generic task that failed to start")
+	}
 }
 
 func (a *apiServer) GetTaskChildren(

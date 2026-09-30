@@ -38,9 +38,13 @@ import (
 	"github.com/determined-ai/determined/master/internal/job/jobservice"
 	"github.com/determined-ai/determined/master/internal/prom"
 	"github.com/determined-ai/determined/master/internal/rm"
+	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/sproto"
+	"github.com/determined-ai/determined/master/internal/submission"
+	"github.com/determined-ai/determined/master/internal/telemetry"
 	"github.com/determined-ai/determined/master/internal/trials"
 	"github.com/determined-ai/determined/master/internal/user"
+	"github.com/determined-ai/determined/master/internal/webhooks"
 	"github.com/determined-ai/determined/master/internal/workspace"
 	"github.com/determined-ai/determined/master/pkg/command"
 	"github.com/determined-ai/determined/master/pkg/model"
@@ -50,6 +54,7 @@ import (
 	"github.com/determined-ai/determined/master/pkg/schemas"
 	"github.com/determined-ai/determined/master/pkg/schemas/expconf"
 	"github.com/determined-ai/determined/master/pkg/searcher"
+	"github.com/determined-ai/determined/master/pkg/tasks"
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
 	"github.com/determined-ai/determined/proto/pkg/checkpointv1"
 	"github.com/determined-ai/determined/proto/pkg/experimentv1"
@@ -1474,6 +1479,12 @@ func (a *apiServer) ContinueExperiment(
 	dbExp.ID = int(req.Id)
 	dbExp.JobID = origExperiment.JobID // Revive job.
 
+	token, err := getTaskSessionToken(ctx, user)
+	if err != nil {
+		return nil, errors.Wrapf(err, "unable to create user session inside task")
+	}
+	taskSpec.UserSessionToken = token
+
 	e, launchWarnings, err := newExperiment(a.m, dbExp, modelDef, activeConfig, taskSpec)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to create experiment: %s", err)
@@ -1596,15 +1607,93 @@ func (a *apiServer) CreateExperiment(
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get the user: %s", err)
 	}
+	s, err := submission.NewExperiment(user.ID, req)
+	if err != nil {
+		return nil, err
+	}
+
+	var p *preparedExperiment
+	var unmanagedResp *apiv1.CreateExperimentResponse
+	return submission.Run(ctx, s, submission.Handler[*apiv1.CreateExperimentResponse]{
+		AuthorizeReplay: func(ctx context.Context, job *model.Job) error {
+			return authorizeExperimentReplay(ctx, *user, job)
+		},
+		Replayed: func(result *apiv1.SubmitResult) *apiv1.CreateExperimentResponse {
+			return &apiv1.CreateExperimentResponse{Submission: result}
+		},
+		Prepare: func(ctx context.Context) error {
+			p, err = a.prepareExperiment(ctx, req, user, session)
+			return err
+		},
+		DryRun: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.CreateExperimentResponse, error) {
+			if result == nil {
+				// validate_only without submit options keeps its response.
+				return &apiv1.CreateExperimentResponse{
+					Experiment: &experimentv1.Experiment{},
+				}, nil
+			}
+			resp := &apiv1.CreateExperimentResponse{
+				Experiment: &experimentv1.Experiment{},
+				Config:     protoutils.ToStruct(p.activeConfig),
+				Submission: result,
+			}
+			if p.plan != nil {
+				resp.Warnings = command.LaunchWarningToProto(p.plan.launchWarnings)
+			}
+			return resp, nil
+		},
+		Commit: func(ctx context.Context, tx bun.Tx) error {
+			if req.Unmanaged != nil && *req.Unmanaged {
+				unmanagedResp, err = a.createUnmanagedExperimentTx(
+					ctx, tx, p.dbExp, p.modelDef, p.activeConfig, user)
+				return err
+			}
+			return p.commitTx(ctx, tx, s, req.Activate, user)
+		},
+		Start: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.CreateExperimentResponse, error) {
+			if unmanagedResp != nil {
+				return unmanagedResp, nil
+			}
+			if err := a.startExperiment(p, req.Activate); err != nil {
+				return nil, err
+			}
+
+			protoExp, err := a.getExperiment(ctx, *user, p.dbExp.ID)
+			if err != nil {
+				return nil, err
+			}
+			return &apiv1.CreateExperimentResponse{
+				Experiment: protoExp,
+				Config:     protoutils.ToStruct(p.activeConfig),
+				Warnings:   command.LaunchWarningToProto(p.plan.launchWarnings),
+				Submission: result,
+			}, nil
+		},
+	})
+}
+
+// preparedExperiment is an experiment that CreateExperiment has parsed and checked.
+type preparedExperiment struct {
+	dbExp        *model.Experiment
+	modelDef     []byte
+	activeConfig expconf.ExperimentConfig
+	taskSpec     *tasks.TaskSpec
+	// plan is nil for an unmanaged experiment.
+	plan *experimentPlan
+}
+
+// prepareExperiment parses, authorizes, and checks a CreateExperimentRequest without side effects.
+func (a *apiServer) prepareExperiment(
+	ctx context.Context, req *apiv1.CreateExperimentRequest, user *model.User,
+	session *model.UserSession,
+) (*preparedExperiment, error) {
 	if req.ParentId != 0 {
 		// Can't use getExperimentAndCheckDoActions since model.Experiment doesn't have ParentArchived.
-		var parentExp *experimentv1.Experiment
-		parentExp, err = a.getExperiment(ctx, *user, int(req.ParentId))
+		parentExp, err := a.getExperiment(ctx, *user, int(req.ParentId))
 		if err != nil {
 			return nil, err
 		}
-		var modelExp *model.Experiment
-		modelExp, err = model.ExperimentFromProto(parentExp)
+		modelExp, err := model.ExperimentFromProto(parentExp)
 		if err != nil {
 			return nil, err
 		}
@@ -1652,15 +1741,16 @@ func (a *apiServer) CreateExperiment(
 		return nil, status.Errorf(codes.InvalidArgument, err.Error())
 	}
 
-	if req.ValidateOnly {
-		return &apiv1.CreateExperimentResponse{
-			Experiment: &experimentv1.Experiment{},
-		}, nil
+	prepared := &preparedExperiment{
+		dbExp:        dbExp,
+		modelDef:     modelDef,
+		activeConfig: activeConfig,
+		taskSpec:     taskSpec,
+	}
+	if req.Unmanaged != nil && *req.Unmanaged {
+		return prepared, nil
 	}
 
-	if req.Unmanaged != nil && *req.Unmanaged {
-		return a.createUnmanagedExperimentTx(ctx, db.Bun(), dbExp, modelDef, activeConfig, user)
-	}
 	// Check user has permission for what they are trying to do
 	// before actually saving the experiment.
 	if req.Activate {
@@ -1669,32 +1759,101 @@ func (a *apiServer) CreateExperiment(
 		}
 	}
 
-	e, launchWarnings, err := newExperiment(a.m, dbExp, modelDef, activeConfig, taskSpec)
+	prepared.plan, err = planExperiment(a.m, dbExp, activeConfig)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to create experiment: %s", err)
 	}
-	modelDef = nil //nolint:ineffassign
+	return prepared, nil
+}
+
+// commitTx is the commit transaction of CreateExperiment. An activated experiment is committed
+// ACTIVE, so a crash before it starts leaves an experiment that restore starts, not a paused one.
+// The user session is minted in the transaction, so a rollback leaves no session behind.
+func (p *preparedExperiment) commitTx(
+	ctx context.Context, tx bun.Tx, s *submission.Submission, activate bool, owner *model.User,
+) error {
+	if activate {
+		p.dbExp.State = model.ActiveState
+	}
+	if err := s.InsertJobTx(ctx, tx, &model.Job{
+		JobID:   p.dbExp.JobID,
+		JobType: model.JobTypeExperiment,
+		OwnerID: p.dbExp.OwnerID,
+	}); err != nil {
+		return err
+	}
+	if err := db.InsertExperimentTx(
+		ctx, tx, p.dbExp, p.modelDef, p.plan.activeConfig, false,
+	); err != nil {
+		return err
+	}
+
+	token, err := getTaskSessionTokenTx(ctx, tx, owner)
+	if err != nil {
+		return err
+	}
+	p.taskSpec.UserSessionToken = token
+	return nil
+}
+
+// startExperiment starts a committed experiment. If the start fails, the experiment is marked
+// ERROR so that it does not stay open.
+func (a *apiServer) startExperiment(p *preparedExperiment, activate bool) error {
+	telemetry.ReportExperimentCreated(p.dbExp.ID, p.plan.activeConfig)
+
+	e, err := p.plan.build(a.m, p.dbExp, p.taskSpec)
+	if err != nil {
+		a.failExperimentStart(p, err)
+		return status.Errorf(codes.Internal, "failed to create experiment: %s", err)
+	}
+	p.modelDef = nil
+	// Once started, the experiment owns its model, so the activation is reported from a copy.
+	committed := *p.dbExp
 
 	if err = e.Start(); err != nil {
-		return nil, errors.Wrapf(err, "failed to start experiment %d", e.ID)
+		a.failExperimentStart(p, err)
+		return errors.Wrapf(err, "failed to start experiment %d", committed.ID)
 	}
 
-	if req.Activate {
-		_, err = a.ActivateExperiment(ctx, &apiv1.ActivateExperimentRequest{Id: int32(e.ID)})
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to activate experiment: %s", err)
+	if activate {
+		// The experiment was committed ACTIVE instead of being activated, so report the
+		// activation that clients and webhooks otherwise see.
+		telemetry.ReportExperimentStateChanged(a.m.db, &committed)
+		if err := webhooks.ReportExperimentStateChanged(
+			context.TODO(), committed, p.plan.activeConfig,
+		); err != nil {
+			log.WithError(err).Error("failed to send experiment state change webhook")
 		}
 	}
+	return nil
+}
 
-	protoExp, err := a.getExperiment(ctx, *user, e.ID)
+// failExperimentStart marks a committed experiment whose start failed ERROR, unless the failed
+// start already ended it, and releases what the experiment held.
+func (a *apiServer) failExperimentStart(p *preparedExperiment, cause error) {
+	syslog := log.WithField("experiment-id", p.dbExp.ID).WithError(cause)
+	syslog.Error("experiment failed to start")
+
+	exp, err := db.ExperimentByID(context.TODO(), p.dbExp.ID)
 	if err != nil {
-		return nil, err
+		syslog.WithError(err).Error("reading an experiment that failed to start")
+	} else if !model.TerminalStates[exp.State] {
+		if err := a.m.db.TerminateExperimentInRestart(exp.ID, model.ErrorState); err != nil {
+			syslog.WithError(err).Error("marking an experiment that failed to start as errored")
+		}
+		exp.State = model.ErrorState
+		telemetry.ReportExperimentStateChanged(a.m.db, exp)
 	}
-	return &apiv1.CreateExperimentResponse{
-		Experiment: protoExp,
-		Config:     protoutils.ToStruct(activeConfig),
-		Warnings:   command.LaunchWarningToProto(launchWarnings),
-	}, nil
+
+	if _, ok := tasklist.GroupPriorityChangeRegistry.Load(p.dbExp.JobID); ok {
+		if err := tasklist.GroupPriorityChangeRegistry.Delete(p.dbExp.JobID); err != nil {
+			syslog.WithError(err).Error("deleting group priority change registry")
+		}
+	}
+	jobservice.DefaultService.UnregisterJob(p.dbExp.JobID)
+	if err := user.DeleteSessionByToken(context.TODO(), p.taskSpec.UserSessionToken); err != nil {
+		syslog.WithError(err).Error("deleting the user session of an experiment that failed to start")
+	}
 }
 
 func (a *apiServer) PutExperimentRetainLogs(
@@ -1745,6 +1904,11 @@ func (a *apiServer) PutExperiment(
 
 	if req.CreateExperimentRequest.ParentId != 0 {
 		return nil, fmt.Errorf("can't fork into an unmanaged experiment")
+	}
+
+	if req.CreateExperimentRequest.Submit != nil {
+		return nil, status.Error(codes.InvalidArgument,
+			"submit options apply only to managed experiments")
 	}
 
 	user, _, err := grpcutil.GetUser(ctx)

@@ -154,8 +154,9 @@ type Handler[R any] struct {
 	// DryRun builds the response to a dry run. result is nil when the request had no submit
 	// options.
 	DryRun func(ctx context.Context, result *apiv1.SubmitResult) (R, error)
-	// Commit writes the job in the commit transaction, inserting its job row through InsertJobTx
-	// before anything else.
+	// Commit writes the job in the commit transaction. A create that can carry a key inserts its
+	// job row through InsertJobTx before anything else, so a key in use aborts it before it writes
+	// more.
 	Commit func(ctx context.Context, tx bun.Tx) error
 	// Start starts the committed job and builds the response. result is nil when the request had
 	// no submit options.

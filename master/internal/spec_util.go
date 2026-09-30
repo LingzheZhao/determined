@@ -7,6 +7,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"github.com/uptrace/bun"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	k8sV1 "k8s.io/api/core/v1"
@@ -114,22 +115,32 @@ func fillContextDir(
 }
 
 func getTaskSessionToken(ctx context.Context, userModel *model.User) (string, error) {
+	return getTaskSessionTokenTx(ctx, nil, userModel)
+}
+
+// getTaskSessionTokenTx mints the user session a task runs with. With a transaction, the session
+// is written in it, so a rollback leaves no session behind.
+func getTaskSessionTokenTx(ctx context.Context, tx bun.IDB, userModel *model.User) (string, error) {
 	var token string
 	var err error
-	if config.GetMasterConfig().InternalConfig.ExternalSessions.Enabled() {
+	switch {
+	case config.GetMasterConfig().InternalConfig.ExternalSessions.Enabled():
 		token, err = grpcutil.GetUserExternalToken(ctx)
 		if err != nil {
 			return "", status.Errorf(codes.Internal,
 				errors.Wrapf(err,
 					"unable to get external user token").Error())
 		}
-	} else {
+		return token, nil
+	case tx != nil:
+		token, err = user.StartSessionTx(ctx, tx, userModel)
+	default:
 		token, err = user.StartSession(ctx, userModel)
-		if err != nil {
-			return "", status.Errorf(codes.Internal,
-				errors.Wrapf(err,
-					"unable to create user session inside task").Error())
-		}
+	}
+	if err != nil {
+		return "", status.Errorf(codes.Internal,
+			errors.Wrapf(err,
+				"unable to create user session inside task").Error())
 	}
 	return token, nil
 }

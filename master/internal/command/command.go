@@ -99,6 +99,7 @@ func commandFromSnapshot(
 		taskType:           taskType,
 		jobType:            snapshot.Task.Job.JobType,
 		jobID:              jobID,
+		allocationID:       model.AllocationID(fmt.Sprintf("%s.%d", taskID, 1)),
 		restored:           true,
 		logCtx:             logCtx,
 		syslog:             logrus.WithFields(logrus.Fields{"component": "command"}).WithFields(logCtx.Fields()),
@@ -106,7 +107,86 @@ func commandFromSnapshot(
 	return cmd, cmd.Start(context.TODO())
 }
 
-// Start starts the command & its respective allocation. Once started, it persists to the db.
+// newCommand returns a new command for a launch request. Nothing is persisted until the commit
+// transaction calls PersistTx.
+func newCommand(
+	db *internaldb.PgDB, rm rm.ResourceManager, taskType model.TaskType, jobType model.JobType,
+	req *CreateGeneric,
+) *Command {
+	taskID := model.NewTaskID()
+	jobID := model.NewJobID()
+	req.Spec.CommandID = string(taskID)
+	req.Spec.TaskType = taskType
+
+	logCtx := logger.Context{
+		"job-id":    jobID,
+		"task-id":   taskID,
+		"task-type": taskType,
+	}
+
+	return &Command{
+		db: db,
+		rm: rm,
+
+		GenericCommandSpec: *req.Spec,
+
+		registeredTime:   time.Now().Truncate(time.Millisecond),
+		taskID:           taskID,
+		taskType:         taskType,
+		jobType:          jobType,
+		jobID:            jobID,
+		allocationID:     model.AllocationID(fmt.Sprintf("%s.%d", taskID, 1)),
+		contextDirectory: req.ContextDirectory,
+		logCtx:           logCtx,
+		syslog:           logrus.WithFields(logrus.Fields{"component": "command"}).WithFields(logCtx.Fields()),
+	}
+}
+
+// Job returns the job row of a new command.
+func (c *Command) Job() *model.Job {
+	return &model.Job{
+		JobID:   c.jobID,
+		JobType: c.jobType,
+		OwnerID: &c.Base.Owner.ID,
+	}
+}
+
+// PersistTx writes a new command's rows, besides its job row, in the commit transaction: the
+// task, its context directory, the allocation workspace record, the first allocation, and
+// command_state.
+func (c *Command) PersistTx(ctx context.Context, tx bun.IDB) error {
+	if err := InsertNewTaskTx(ctx, tx, NewTaskRecords{
+		Task: &model.Task{
+			TaskID:     c.taskID,
+			TaskType:   c.taskType,
+			StartTime:  c.registeredTime,
+			JobID:      &c.jobID,
+			LogVersion: model.CurrentTaskLogVersion,
+		},
+		ContextDirectory: c.contextDirectory,
+		WorkspaceID:      int(c.Metadata.WorkspaceID),
+		WorkspaceName:    c.Base.Workspace,
+		Allocation: &model.Allocation{
+			AllocationID: c.allocationID,
+			TaskID:       c.taskID,
+			Slots:        c.Config.Resources.Slots,
+			ResourcePool: c.Config.Resources.ResourcePool,
+		},
+		Snapshot: &CommandSnapshot{
+			TaskID:             c.taskID,
+			RegisteredTime:     c.registeredTime,
+			AllocationID:       c.allocationID,
+			GenericCommandSpec: c.GenericCommandSpec,
+		},
+	}); err != nil {
+		return err
+	}
+	c.contextDirectory = nil
+	return nil
+}
+
+// Start starts the command & its respective allocation. A new command must already be persisted
+// by PersistTx; a restored command is persisted again once it starts.
 func (c *Command) Start(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -116,28 +196,6 @@ func (c *Command) Start(ctx context.Context) error {
 	}
 	if err := tasklist.GroupPriorityChangeRegistry.Add(c.jobID, priorityChange); err != nil {
 		return err
-	}
-	c.allocationID = model.AllocationID(fmt.Sprintf("%s.%d", c.taskID, 1))
-
-	if !c.restored {
-		if err := internaldb.Bun().RunInTx(ctx, nil, c.registerJobAndTask); err != nil {
-			return err
-		}
-		if err := c.persistAndEvictContextDirectoryFromMemory(); err != nil {
-			return err
-		}
-		err := task.InsertNTSCAllocationWorkspaceRecord(
-			ctx,
-			c.allocationID,
-			int(c.Metadata.WorkspaceID),
-			c.Base.Workspace,
-		)
-		if err != nil {
-			return fmt.Errorf(
-				"failure while attempting to persist workspace information for NTSC task (%s) allocation: %w",
-				c.taskID,
-				err)
-		}
 	}
 
 	priority := c.Config.Resources.Priority
@@ -172,6 +230,7 @@ func (c *Command) Start(ctx context.Context) error {
 			ProxyPorts:          sproto.NewProxyPortConfig(c.GenericCommandSpec.ProxyPorts(), c.taskID),
 			IdleTimeout:         idleWatcherConfig,
 			Restore:             c.restored,
+			Persisted:           !c.restored,
 			ProxyTLS:            c.TaskType == model.TaskTypeNotebook,
 		}, c.db, c.rm, c.GenericCommandSpec, c.OnExit)
 	if err != nil {
@@ -181,44 +240,30 @@ func (c *Command) Start(ctx context.Context) error {
 	// Once the command is persisted to the dbs & allocation starts, register it with the local job service.
 	jobservice.DefaultService.RegisterJob(c.jobID, c)
 
-	if err := c.persist(); err != nil {
-		c.syslog.WithError(err).Warnf("command persist failure")
+	if c.restored {
+		if err := c.persist(); err != nil {
+			c.syslog.WithError(err).Warnf("command persist failure")
+		}
 	}
 	return nil
 }
 
-// registerJobAndTask registers the command with the job service & adds the command to the job & task dbs.
-func (c *Command) registerJobAndTask(ctx context.Context, tx bun.Tx) error {
-	c.registeredTime = time.Now().Truncate(time.Millisecond)
-	if err := internaldb.AddJobTx(ctx, tx, &model.Job{
-		JobID:   c.jobID,
-		JobType: c.jobType,
-		OwnerID: &c.Base.Owner.ID,
-	}); err != nil {
-		return fmt.Errorf("persisting job %v: %w", c.taskID, err)
+// failStart ends a new command whose start failed after it was committed, so that it reads as
+// ended rather than open, and releases what the command held.
+func (c *Command) failStart(cause error) {
+	if _, ok := tasklist.GroupPriorityChangeRegistry.Load(c.jobID); ok {
+		if err := tasklist.GroupPriorityChangeRegistry.Delete(c.jobID); err != nil {
+			c.syslog.WithError(err).Error("deleting command from GroupPriorityChangeRegistry")
+		}
 	}
-
-	if err := internaldb.AddTaskTx(ctx, tx, &model.Task{
-		TaskID:     c.taskID,
-		TaskType:   c.taskType,
-		StartTime:  c.registeredTime,
-		JobID:      &c.jobID,
-		LogVersion: model.CurrentTaskLogVersion,
-	}); err != nil {
-		return fmt.Errorf("persisting task %v: %w", c.taskID, err)
-	}
-	return nil
-}
-
-func (c *Command) persistAndEvictContextDirectoryFromMemory() error {
-	if err := internaldb.AddNonExperimentTasksContextDirectory(
-		context.TODO(), c.taskID, c.contextDirectory,
+	if err := internaldb.FailTaskStart(
+		context.TODO(), c.taskID, c.allocationID, nil, cause,
 	); err != nil {
-		return fmt.Errorf("saving NTSC context directory: %w", err)
+		c.syslog.WithError(err).Error("ending a command that failed to start")
 	}
-
-	c.contextDirectory = nil
-	return nil
+	if err := user.DeleteSessionByToken(context.TODO(), c.Base.UserSessionToken); err != nil {
+		c.syslog.WithError(err).Error("deleting the user session of a command that failed to start")
+	}
 }
 
 func (c *Command) persist() error {

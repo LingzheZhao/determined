@@ -7,12 +7,12 @@ import (
 	"sync"
 
 	"github.com/sirupsen/logrus"
+	"github.com/uptrace/bun"
 
 	"github.com/determined-ai/determined/master/internal/api"
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/rm"
 	"github.com/determined-ai/determined/master/internal/task"
-	"github.com/determined-ai/determined/master/pkg/logger"
 	"github.com/determined-ai/determined/master/pkg/model"
 	"github.com/determined-ai/determined/master/pkg/protoutils"
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
@@ -86,47 +86,56 @@ func (cs *CommandService) RestoreAllCommands(
 	return nil
 }
 
+// NewGenericCommand returns a new NTSC command for a launch request. The caller persists it with
+// PersistTx in its commit transaction, together with its job row, and then starts it with
+// StartCommand.
+func (cs *CommandService) NewGenericCommand(
+	taskType model.TaskType,
+	jobType model.JobType,
+	req *CreateGeneric,
+) *Command {
+	return newCommand(cs.db, cs.rm, taskType, jobType, req)
+}
+
+// StartCommand starts a committed command and adds it to the registry. If the start fails, the
+// command is ended so that it does not stay open.
+func (cs *CommandService) StartCommand(cmd *Command) error {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	if err := cmd.Start(context.TODO()); err != nil {
+		cmd.failStart(err)
+		return err
+	}
+
+	// Add it to the registry.
+	cs.commands[cmd.taskID] = cmd
+	return nil
+}
+
+// persistNewCommand commits a new command with its job row.
+func persistNewCommand(ctx context.Context, cmd *Command) error {
+	return db.Bun().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := db.AddJobTx(ctx, tx, cmd.Job()); err != nil {
+			return fmt.Errorf("persisting job %v: %w", cmd.taskID, err)
+		}
+		return cmd.PersistTx(ctx, tx)
+	})
+}
+
 // LaunchGenericCommand creates NTSC commands and persists them to the database.
 func (cs *CommandService) LaunchGenericCommand(
 	taskType model.TaskType,
 	jobType model.JobType,
 	req *CreateGeneric,
 ) (*Command, error) {
-	cs.mu.Lock()
-	defer cs.mu.Unlock()
-	taskID := model.NewTaskID()
-	jobID := model.NewJobID()
-	req.Spec.CommandID = string(taskID)
-	req.Spec.TaskType = taskType
-
-	logCtx := logger.Context{
-		"job-id":    jobID,
-		"task-id":   taskID,
-		"task-type": taskType,
-	}
-
-	cmd := &Command{
-		db: cs.db,
-		rm: cs.rm,
-
-		GenericCommandSpec: *req.Spec,
-
-		taskID:           taskID,
-		taskType:         taskType,
-		jobType:          jobType,
-		jobID:            jobID,
-		contextDirectory: req.ContextDirectory,
-		logCtx:           logCtx,
-		syslog:           logrus.WithFields(logrus.Fields{"component": "command"}).WithFields(logCtx.Fields()),
-	}
-
-	if err := cmd.Start(context.TODO()); err != nil {
+	cmd := cs.NewGenericCommand(taskType, jobType, req)
+	if err := persistNewCommand(context.TODO(), cmd); err != nil {
 		return nil, err
 	}
-
-	// Add it to the registry.
-	cs.commands[cmd.taskID] = cmd
-
+	if err := cs.StartCommand(cmd); err != nil {
+		return nil, err
+	}
 	return cmd, nil
 }
 
@@ -135,51 +144,24 @@ func (cs *CommandService) LaunchNotebookCommand(
 	req *CreateGeneric,
 	user *model.User,
 ) (*Command, error) {
-	cs.mu.Lock()
-	defer cs.mu.Unlock()
+	cmd := cs.NewGenericCommand(model.TaskTypeNotebook, model.JobTypeNotebook, req)
 
-	taskID := model.NewTaskID()
-	jobID := model.NewJobID()
-	req.Spec.CommandID = string(taskID)
-	req.Spec.TaskType = model.TaskTypeNotebook
-
-	logCtx := logger.Context{
-		"job-id":    jobID,
-		"task-id":   taskID,
-		"task-type": model.TaskTypeNotebook,
-	}
-
-	token, err := db.GenerateNotebookSessionToken(user.ID, taskID)
+	token, err := db.GenerateNotebookSessionToken(user.ID, cmd.taskID)
 	if err != nil {
 		return nil, err
 	}
-	req.Spec.Base.ExtraEnvVars[model.NotebookSessionEnvVar] = token
-	cmd := &Command{
-		db: cs.db,
-		rm: cs.rm,
+	cmd.Base.ExtraEnvVars[model.NotebookSessionEnvVar] = token
 
-		GenericCommandSpec: *req.Spec,
-
-		taskID:           taskID,
-		taskType:         model.TaskTypeNotebook,
-		jobType:          model.JobTypeNotebook,
-		jobID:            jobID,
-		contextDirectory: req.ContextDirectory,
-		logCtx:           logCtx,
-		syslog:           logrus.WithFields(logrus.Fields{"component": "command"}).WithFields(logCtx.Fields()),
+	if err := persistNewCommand(context.TODO(), cmd); err != nil {
+		return nil, err
 	}
-
-	if err := cmd.Start(context.TODO()); err != nil {
+	if err := cs.StartCommand(cmd); err != nil {
 		return nil, err
 	}
 
-	if err := db.StartNotebookSession(context.TODO(), user.ID, taskID); err != nil {
+	if err := db.StartNotebookSession(context.TODO(), user.ID, cmd.taskID); err != nil {
 		return nil, err
 	}
-
-	// Add it to the registry.
-	cs.commands[cmd.taskID] = cmd
-
 	return cmd, nil
 }
 

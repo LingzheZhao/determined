@@ -428,11 +428,6 @@ func AddExperimentTx(
 		return errors.Errorf("error adding an experiment with non-zero id %v", experiment.ID)
 	}
 
-	activeConfigStr, err := json.Marshal(activeConfig)
-	if err != nil {
-		return errors.Wrapf(err, "error handling experiment config %v", activeConfig)
-	}
-
 	job := model.Job{
 		JobID:   experiment.JobID,
 		JobType: model.JobTypeExperiment,
@@ -440,6 +435,27 @@ func AddExperimentTx(
 	}
 	if _, err = idb.NewInsert().Model(&job).Exec(ctx); err != nil {
 		return errors.Wrapf(err, "error inserting job %v", job)
+	}
+
+	return InsertExperimentTx(ctx, idb, experiment, modelDef, activeConfig, upsert)
+}
+
+// InsertExperimentTx adds the experiment row to the database and sets its ID. Its job row must
+// already be inserted in the same transaction.
+func InsertExperimentTx(
+	ctx context.Context, idb bun.IDB,
+	experiment *model.Experiment,
+	modelDef []byte,
+	activeConfig expconf.ExperimentConfig,
+	upsert bool,
+) error {
+	if experiment.ID != 0 {
+		return errors.Errorf("error adding an experiment with non-zero id %v", experiment.ID)
+	}
+
+	activeConfigStr, err := json.Marshal(activeConfig)
+	if err != nil {
+		return errors.Wrapf(err, "error handling experiment config %v", activeConfig)
 	}
 
 	q := idb.NewInsert().Model(experiment).

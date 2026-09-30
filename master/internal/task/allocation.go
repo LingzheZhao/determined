@@ -524,12 +524,26 @@ func (a *allocation) requestResources() (*sproto.ResourcesSubscription, error) {
 		return sub, nil
 	}
 
-	// Insert new allocation.
-	a.syslog.Debug("requestResources add allocation")
+	if a.req.Persisted {
+		a.syslog.Debug("requestResources load persisted allocation")
+		err := db.Bun().NewSelect().Model(&a.model).
+			Where("allocation_id = ?", a.model.AllocationID).
+			Scan(context.TODO())
+		if err != nil {
+			return nil, errors.Wrap(err, "loading persisted allocation")
+		}
+		if a.model.EndTime != nil || a.getModelState() != model.AllocationStatePending {
+			return nil, fmt.Errorf("persisted allocation %s is %s, not pending",
+				a.model.AllocationID, a.getModelState())
+		}
+	} else {
+		// Insert new allocation.
+		a.syslog.Debug("requestResources add allocation")
 
-	a.setModelState(model.AllocationStatePending)
-	if err := db.AddAllocation(context.TODO(), &a.model); err != nil {
-		return nil, errors.Wrap(err, "saving trial allocation")
+		a.setModelState(model.AllocationStatePending)
+		if err := db.AddAllocation(context.TODO(), &a.model); err != nil {
+			return nil, errors.Wrap(err, "saving trial allocation")
+		}
 	}
 
 	sub, err := a.rm.Allocate(a.req)

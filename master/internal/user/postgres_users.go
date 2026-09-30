@@ -45,6 +45,20 @@ func WithInheritedClaims(claims map[string]string) UserSessionOption {
 
 // StartSession creates a row in the user_sessions table.
 func StartSession(ctx context.Context, user *model.User, opts ...UserSessionOption) (string, error) {
+	var token string
+	err := db.Bun().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var err error
+		token, err = StartSessionTx(ctx, tx, user, opts...)
+		return err
+	})
+	return token, err
+}
+
+// StartSessionTx creates a row in the user_sessions table in a transaction, so the session is
+// gone if the transaction rolls back.
+func StartSessionTx(
+	ctx context.Context, tx bun.IDB, user *model.User, opts ...UserSessionOption,
+) (string, error) {
 	now := time.Now().UTC()
 
 	userSession := &model.UserSession{
@@ -59,27 +73,19 @@ func StartSession(ctx context.Context, user *model.User, opts ...UserSessionOpti
 		opt(userSession)
 	}
 
-	err := db.Bun().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		_, err := tx.NewInsert().
-			Model(userSession).
-			Column("user_id", "expiry", "created_at", "token_type", "revoked_at").
-			Returning("id").
-			Exec(ctx, &userSession.ID)
-		if err != nil {
-			return err
-		}
+	if _, err := tx.NewInsert().
+		Model(userSession).
+		Column("user_id", "expiry", "created_at", "token_type", "revoked_at").
+		Returning("id").
+		Exec(ctx, &userSession.ID); err != nil {
+		return "", err
+	}
 
-		_, err = tx.NewUpdate().
-			Table("users").
-			SetColumn("last_auth_at", "NOW()").
-			Where("id = (?)", user.ID).
-			Exec(ctx)
-		if err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
+	if _, err := tx.NewUpdate().
+		Table("users").
+		SetColumn("last_auth_at", "NOW()").
+		Where("id = (?)", user.ID).
+		Exec(ctx); err != nil {
 		return "", err
 	}
 

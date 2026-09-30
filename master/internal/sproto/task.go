@@ -45,7 +45,10 @@ type (
 		IdleTimeout *IdleTimeoutConfig
 		ProxyPorts  []*ProxyPortConfig
 		Restore     bool
-		ProxyTLS    bool
+		// Persisted is set when the caller committed the allocation's PENDING row, which the
+		// allocation then loads instead of inserting.
+		Persisted bool
+		ProxyTLS  bool
 
 		// Logging context of the allocation actor.
 		LogContext logger.Context
