@@ -659,6 +659,67 @@ func TestCompleteAllocation(t *testing.T) {
 	require.Equal(t, aIn.EndTime, res.EndTime)
 }
 
+func TestRecordAllocationExit(t *testing.T) {
+	ctx := context.Background()
+	pgDB, closeDB := MustResolveTestPostgres(t)
+	defer closeDB()
+	MustMigrateTestPostgres(t, pgDB, MigrationsFromDB)
+
+	db := SingleDB()
+	addRunning := func(start *time.Time) *model.Allocation {
+		tIn := RequireMockTask(t, db, nil)
+		a := &model.Allocation{
+			AllocationID: model.AllocationID(fmt.Sprintf("%s.0", tIn.TaskID)),
+			TaskID:       tIn.TaskID,
+			ResourcePool: "default",
+			StartTime:    start,
+			State:        ptrs.Ptr(model.AllocationStateRunning),
+		}
+		require.NoError(t, AddAllocation(ctx, a))
+		return a
+	}
+	terminate := func(a *model.Allocation, end *time.Time, class model.ExitClass) {
+		a.State = ptrs.Ptr(model.AllocationStateTerminated)
+		a.EndTime = end
+		a.ExitReason = ptrs.Ptr("allocation ended")
+		a.ExitClass = &class
+	}
+
+	// One write records the state, the readiness, the times and the whole exit status.
+	start := time.Now().UTC().Truncate(time.Millisecond)
+	started := addRunning(&start)
+	terminate(started, ptrs.Ptr(start.Add(time.Minute)), model.ExitClassWorkloadFailed)
+	started.IsReady = ptrs.Ptr(true)
+	started.ExitErr = ptrs.Ptr("boom")
+	started.StatusCode = ptrs.Ptr(int32(2))
+	started.ExitDetail = model.NewExitDetail("FAILURE_TYPE_RESOURCES_FAILED", ptrs.Ptr(int32(2)), "boom")
+	require.NoError(t, RecordAllocationExit(ctx, started))
+	res, err := AllocationByID(ctx, started.AllocationID)
+	require.NoError(t, err)
+	require.Equal(t, started, res)
+
+	// Without a start or an end time, the record invents neither.
+	neverStarted := addRunning(nil)
+	terminate(neverStarted, nil, model.ExitClassNone)
+	require.NoError(t, RecordAllocationExit(ctx, neverStarted))
+	res, err = AllocationByID(ctx, neverStarted.AllocationID)
+	require.NoError(t, err)
+	require.Nil(t, res.StartTime)
+	require.Nil(t, res.EndTime)
+	require.Equal(t, ptrs.Ptr(model.ExitClassNone), res.ExitClass)
+	require.Equal(t, neverStarted.ExitReason, res.ExitReason)
+
+	// An end time without a start time is also the start time, as in CompleteAllocation.
+	end := time.Now().UTC().Truncate(time.Millisecond)
+	endedOnly := addRunning(nil)
+	terminate(endedOnly, &end, model.ExitClassPlacementUnsatisfied)
+	require.NoError(t, RecordAllocationExit(ctx, endedOnly))
+	res, err = AllocationByID(ctx, endedOnly.AllocationID)
+	require.NoError(t, err)
+	require.Equal(t, &end, res.StartTime)
+	require.Equal(t, &end, res.EndTime)
+}
+
 func TestCompleteAllocationTelemetry(t *testing.T) {
 	pgDB, closeDB := MustResolveTestPostgres(t)
 	defer closeDB()

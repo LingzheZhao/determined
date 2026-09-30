@@ -188,7 +188,7 @@ func TestAllocation(t *testing.T) {
 			require.Equal(t, tc.exit.Err, a.exited.Err)
 			require.Equal(t, tc.exit.UserRequestedStop, a.exited.UserRequestedStop)
 
-			// SetExitStatus persisted the class and detail with the exit reason.
+			// The exit record persisted the class and detail with the exit reason.
 			persisted, err := db.AllocationByID(context.TODO(), a.model.AllocationID)
 			require.NoError(t, err)
 			require.NotNil(t, persisted.ExitReason)

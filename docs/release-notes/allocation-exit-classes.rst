@@ -21,6 +21,9 @@
    failures, no longer counts against a trial's ``max_restarts``. On Kubernetes, a restore failure
    is now reported as missing resources and still counts against ``max_restarts``.
 
+-  Tasks: An allocation that fails to restore after a master restart keeps the last cluster
+   heartbeat as its end time instead of the time the new master released it.
+
 -  Tasks: Access checks and workspace-scoped task log webhooks for generic tasks now use the
    task's workspace instead of workspace 0, so a workspace's ``TASK_LOG`` webhooks now also fire
    on log lines from its generic tasks.

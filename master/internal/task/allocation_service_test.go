@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,12 +16,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
 
+	"github.com/determined-ai/determined/master/internal/cluster"
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/mocks"
 	"github.com/determined-ai/determined/master/internal/portregistry"
 	"github.com/determined-ai/determined/master/internal/proxy"
 	"github.com/determined-ai/determined/master/internal/sproto"
 	"github.com/determined-ai/determined/master/internal/task/tasklogger"
+	"github.com/determined-ai/determined/master/internal/task/taskmodel"
 	"github.com/determined-ai/determined/master/pkg/aproto"
 	"github.com/determined-ai/determined/master/pkg/cproto"
 	"github.com/determined-ai/determined/master/pkg/device"
@@ -63,6 +66,179 @@ func TestRestoreFailed(t *testing.T) {
 		FailureType: "FAILURE_TYPE_RESTORE_ERROR",
 		Message:     "things weren't there",
 	}, persisted.ExitDetail)
+
+	// The allocation never started, so the failure's end time is also its start time, and
+	// releasing its resources afterwards did not move either.
+	require.NotNil(t, persisted.StartTime)
+	require.NotNil(t, persisted.EndTime)
+	require.True(t, persisted.StartTime.Equal(*persisted.EndTime),
+		"start time %s, end time %s", persisted.StartTime, persisted.EndTime)
+}
+
+func TestExitRecordIsWrittenBeforePurge(t *testing.T) {
+	closeDB, _, id, q, exitFuture := requireStarted(t)
+	defer closeDB()
+	beforePurge := captureBeforePurge(t, id)
+
+	rID, _ := requireAssigned(t, id, q)
+	requireRunning(t, id, q, rID)
+
+	q.Put(&sproto.ResourcesStateChanged{
+		ResourcesID:    rID,
+		ResourcesState: sproto.Terminated,
+		ResourcesStopped: &sproto.ResourcesStopped{Failure: &sproto.ResourcesFailedError{
+			FailureType: sproto.ResourcesFailed,
+			ErrMsg:      "container failed with non-zero exit code: 2",
+			ExitCode:    ptrs.Ptr(sproto.ExitCode(2)),
+		}},
+	})
+	exit := requireTerminated(t, id, exitFuture)
+	require.Error(t, exit.Err)
+
+	// When finalize purges the restorable resources, the whole exit record is already written.
+	row, resources := beforePurge()
+	require.Equal(t, 1, resources)
+	require.NotNil(t, row.State)
+	require.Equal(t, model.AllocationStateTerminated, *row.State)
+	require.NotNil(t, row.StartTime)
+	require.NotNil(t, row.EndTime)
+	require.False(t, row.EndTime.Before(*row.StartTime))
+	require.NotNil(t, row.ExitReason)
+	require.True(t, strings.HasPrefix(*row.ExitReason, "allocation failed: "), *row.ExitReason)
+	require.NotNil(t, row.ExitErr)
+	require.Equal(t, ptrs.Ptr(int32(2)), row.StatusCode)
+	require.Equal(t, ptrs.Ptr(model.ExitClassWorkloadFailed), row.ExitClass)
+	require.Equal(t, &model.ExitDetail{
+		FailureType: "FAILURE_TYPE_RESOURCES_FAILED",
+		ExitCode:    ptrs.Ptr(int32(2)),
+		Message:     "container failed with non-zero exit code: 2",
+	}, row.ExitDetail)
+
+	// Purging and releasing afterwards removed the resources and left the record as it was.
+	resources, err := countRestorableResources(id)
+	require.NoError(t, err)
+	require.Zero(t, resources)
+	persisted, err := db.AllocationByID(context.TODO(), id)
+	require.NoError(t, err)
+	require.Equal(t, row, persisted)
+}
+
+func TestRestoreFailureKeepsHeartbeatEndTime(t *testing.T) {
+	pgDB, closeDB := requireDeps(t)
+	defer closeDB()
+
+	start := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	heartbeat := start.Add(30 * time.Minute)
+	_, err := pgDB.GetOrCreateClusterID("")
+	require.NoError(t, err)
+	require.NoError(t, pgDB.UpdateClusterHeartBeat(heartbeat))
+	cluster.InitTheLastBootClusterHeartbeat()
+
+	restoredTask := db.RequireMockTask(t, pgDB, nil)
+	restoredAr := stubAllocateRequest(restoredTask)
+	restoredAr.Restore = true
+	require.NoError(t, db.AddAllocation(context.TODO(), &model.Allocation{
+		AllocationID: restoredAr.AllocationID,
+		TaskID:       restoredAr.TaskID,
+		Slots:        restoredAr.SlotsNeeded,
+		ResourcePool: restoredAr.ResourcePool,
+		StartTime:    &start,
+		State:        ptrs.Ptr(model.AllocationStateRunning),
+	}))
+
+	closeDB, _, id, q, exitFuture := requireStarted(t, func(ar *sproto.AllocateRequest) {
+		*ar = restoredAr
+	})
+	defer closeDB()
+	beforePurge := captureBeforePurge(t, id)
+
+	q.Put(&sproto.ResourcesFailedError{
+		FailureType: sproto.RestoreError,
+		ErrMsg:      "things weren't there",
+	})
+	requireTerminated(t, id, exitFuture)
+
+	// The restored allocation ended at the last heartbeat before the restart, not when the
+	// master noticed; the exit record keeps that end time, and releasing does not replace it.
+	row, _ := beforePurge()
+	require.NotNil(t, row.EndTime)
+	require.True(t, heartbeat.Equal(*row.EndTime), "end time %s, heartbeat %s", row.EndTime, heartbeat)
+	require.Equal(t, ptrs.Ptr(model.ExitClassInfrastructureFailed), row.ExitClass)
+
+	persisted, err := db.AllocationByID(context.TODO(), id)
+	require.NoError(t, err)
+	require.NotNil(t, persisted.StartTime)
+	require.True(t, start.Equal(*persisted.StartTime),
+		"start time %s, expected %s", persisted.StartTime, start)
+	require.NotNil(t, persisted.EndTime)
+	require.True(t, heartbeat.Equal(*persisted.EndTime),
+		"end time %s, heartbeat %s", persisted.EndTime, heartbeat)
+	require.Equal(t, ptrs.Ptr(model.ExitClassInfrastructureFailed), persisted.ExitClass)
+}
+
+func TestNeverStartedExitRecord(t *testing.T) {
+	closeDB, _, id, _, exitFuture := requireStarted(t)
+	defer closeDB()
+	beforePurge := captureBeforePurge(t, id)
+
+	exit := requireKilled(t, id, exitFuture)
+	require.NoError(t, exit.Err)
+
+	row, _ := beforePurge()
+	require.NotNil(t, row.State)
+	require.Equal(t, model.AllocationStateTerminated, *row.State)
+	require.NotNil(t, row.ExitReason)
+	require.True(t, strings.HasPrefix(*row.ExitReason, "allocation aborted after "),
+		*row.ExitReason)
+	require.Equal(t, ptrs.Ptr(model.ExitClassNone), row.ExitClass)
+	require.Nil(t, row.ExitDetail)
+	// It never started, so the record invents no start time. Its end time stays unset, as
+	// before, until startup closes it and keeps its class.
+	require.Nil(t, row.StartTime)
+	require.Nil(t, row.EndTime)
+
+	persisted, err := db.AllocationByID(context.TODO(), id)
+	require.NoError(t, err)
+	require.Equal(t, row, persisted)
+}
+
+// captureBeforePurge records the allocation's row and the number of its restorable resources when
+// finalize is about to purge them. The returned function reads what it recorded.
+func captureBeforePurge(t *testing.T, id model.AllocationID) func() (*model.Allocation, int) {
+	var (
+		mu    sync.Mutex
+		calls int
+		row   *model.Allocation
+		count int
+		err   error
+	)
+	beforePurgeRestorableResources = func(aID model.AllocationID) {
+		if aID != id {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		calls++
+		// This runs with the allocation locked, so it only reads the database.
+		row, err = db.AllocationByID(context.TODO(), aID)
+		if err == nil {
+			count, err = countRestorableResources(aID)
+		}
+	}
+	t.Cleanup(func() { beforePurgeRestorableResources = nil })
+
+	return func() (*model.Allocation, int) {
+		mu.Lock()
+		defer mu.Unlock()
+		require.Equal(t, 1, calls, "finalize did not reach the purge exactly once")
+		require.NoError(t, err)
+		return row, count
+	}
+}
+
+func countRestorableResources(id model.AllocationID) (int, error) {
+	return db.Bun().NewSelect().Model((*taskmodel.ResourcesWithState)(nil)).
+		Where("allocation_id = ?", id).Count(context.TODO())
 }
 
 func TestInvalidResourcesRequest(t *testing.T) {

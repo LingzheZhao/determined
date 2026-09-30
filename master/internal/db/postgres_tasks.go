@@ -216,6 +216,24 @@ func CompleteAllocation(ctx context.Context, a *model.Allocation) error {
 	return err
 }
 
+// RecordAllocationExit persists the whole exit record of an allocation in one UPDATE: its state
+// and readiness, its start and end times, and its exit reason, error, status code, class and
+// detail. The times follow CompleteAllocation: a missing start time takes the end time, and
+// both stay NULL when neither is set.
+func RecordAllocationExit(ctx context.Context, a *model.Allocation) error {
+	if a.StartTime == nil {
+		a.StartTime = a.EndTime
+	}
+
+	if _, err := Bun().NewUpdate().Model(a).
+		Column("state", "is_ready", "start_time", "end_time",
+			"exit_reason", "exit_error", "status_code", "exit_class", "exit_detail").
+		Where("allocation_id = ?", a.AllocationID).Exec(ctx); err != nil {
+		return fmt.Errorf("recording allocation exit: %w", err)
+	}
+	return nil
+}
+
 // CompleteAllocationTelemetry returns the analytics of an allocation for the telemetry.
 func CompleteAllocationTelemetry(ctx context.Context, aID model.AllocationID) ([]byte, error) {
 	var res []byte

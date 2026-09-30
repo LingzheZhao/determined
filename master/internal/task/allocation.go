@@ -567,11 +567,11 @@ func (a *allocation) Cleanup() {
 	a.finalize(status)
 }
 
-func (a *allocation) finalize(status exitStatus) {
-	// Record the class before purging the restorable resources, which classification may read.
-	a.model.ExitClass = &status.class
-	a.model.ExitDetail = status.detail
+// beforePurgeRestorableResources, when a test sets it, runs in finalize after the exit record is
+// written and before the restorable resources are purged.
+var beforePurgeRestorableResources func(model.AllocationID)
 
+func (a *allocation) finalize(status exitStatus) {
 	a.clearResourceMetrics()
 	defer a.rm.Release(sproto.ResourcesReleased{
 		AllocationID: a.req.AllocationID,
@@ -581,9 +581,24 @@ func (a *allocation) finalize(status exitStatus) {
 		defer cl()
 	}
 
+	// Write the whole exit record in one UPDATE before any other write, so a crash leaves either
+	// an open allocation or a complete record. The restorable resources are the evidence behind
+	// the class, so they are purged only after it is written. An end time that is already set,
+	// such as the heartbeat a failed restore picks, is kept. An allocation that never started gets
+	// no end time, as before, and startup closes it with its class.
 	a.setMostProgressedModelState(model.AllocationStateTerminated)
-	if err := db.UpdateAllocationState(context.TODO(), a.model); err != nil {
-		a.syslog.WithError(err).Error("failed to set allocation state to terminated")
+	if a.model.EndTime == nil && a.model.StartTime != nil {
+		a.model.EndTime = ptrs.Ptr(time.Now().UTC())
+	}
+	a.setExitStatus(status.reason, status.err, nil)
+	a.model.ExitClass = &status.class
+	a.model.ExitDetail = status.detail
+	if err := db.RecordAllocationExit(context.TODO(), &a.model); err != nil {
+		a.syslog.WithError(err).Error("failed to record allocation exit")
+	}
+
+	if beforePurgeRestorableResources != nil {
+		beforePurgeRestorableResources(a.model.AllocationID)
 	}
 	a.purgeRestorableResources()
 	a.markResourcesReleased()
@@ -593,7 +608,6 @@ func (a *allocation) finalize(status exitStatus) {
 		Err:               status.err,
 		FinalState:        a.state(),
 	}
-	a.SetExitStatus(status.reason, status.err, nil)
 	log := fmt.Sprintf("%s was terminated: %s", a.req.Name, status.reason)
 	a.syslog.Log(status.severity, log)
 	a.sendTaskLog(&model.TaskLog{
@@ -925,10 +939,9 @@ func (a *allocation) restoreResourceFailure(msg *sproto.ResourcesFailedError) {
 		a.model.EndTime = ptrs.Ptr(time.Now().UTC())
 	}
 
-	if err := db.CompleteAllocation(ctx, &a.model); err != nil {
-		a.syslog.WithError(err).Error("failed to mark allocation completed")
-	}
-
+	// The end time is persisted with the rest of the exit record in finalize. Writing it here
+	// would leave an ended allocation without a class if the master stopped before finalize;
+	// left open, startup closes it as an infrastructure failure instead.
 	a.crash(*msg)
 }
 
@@ -1085,7 +1098,17 @@ func (a *allocation) exitedWithoutErr() bool {
 	return true
 }
 
+// SetExitStatus records the exit reason, error and status code, and persists them with the class
+// and detail the allocation holds.
 func (a *allocation) SetExitStatus(exitReason string, exitErr error, statusCode *int32) {
+	a.setExitStatus(exitReason, exitErr, statusCode)
+	if err := db.AddAllocationExitStatus(context.TODO(), &a.model); err != nil {
+		a.syslog.WithError(err).Error("failed to add allocation exit status to db")
+	}
+}
+
+// setExitStatus records the exit reason, error and status code without persisting them.
+func (a *allocation) setExitStatus(exitReason string, exitErr error, statusCode *int32) {
 	switch err := exitErr.(type) {
 	case sproto.ResourcesFailedError:
 		a.model.ExitErr = ptrs.Ptr(err.Error())
@@ -1101,10 +1124,6 @@ func (a *allocation) SetExitStatus(exitReason string, exitErr error, statusCode 
 
 	if statusCode != nil {
 		a.model.StatusCode = statusCode
-	}
-
-	if err := db.AddAllocationExitStatus(context.TODO(), &a.model); err != nil {
-		a.syslog.WithError(err).Error("failed to add allocation exit status to db")
 	}
 }
 
@@ -1354,18 +1373,14 @@ func (a *allocation) markResourcesStarted() {
 	}
 }
 
-// markResourcesReleased persists completion information.
+// markResourcesReleased ends the allocation's session and reports its completion. It leaves the
+// end time in the exit record unchanged.
 func (a *allocation) markResourcesReleased() {
-	ctx := context.TODO()
-	if err := db.DeleteAllocationSession(ctx, a.model.AllocationID); err != nil {
+	if err := db.DeleteAllocationSession(context.TODO(), a.model.AllocationID); err != nil {
 		a.syslog.WithError(err).Error("error deleting allocation session")
 	}
 	if a.model.StartTime == nil {
 		return
-	}
-	a.model.EndTime = ptrs.Ptr(time.Now().UTC())
-	if err := db.CompleteAllocation(ctx, &a.model); err != nil {
-		a.syslog.WithError(err).Error("failed to mark allocation completed")
 	}
 
 	telemetry.ReportAllocationTerminal(a.model, a.resources.firstDevice())
