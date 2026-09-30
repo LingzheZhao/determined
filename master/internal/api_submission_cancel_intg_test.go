@@ -88,9 +88,9 @@ func commitCommand(
 			Config: commandConfig(t, "true"),
 			Submit: &apiv1.SubmitOptions{IdempotencyKey: uuid.NewString()},
 		}
-		s, err = submission.NewShell(owner.ID, req)
+		s, err = submission.NewShell(owner.ID, req, nil)
 		require.NoError(t, err)
-		launchReq, _, err = api.prepareLaunchShell(ctx, req, &owner, nil)
+		launchReq, _, err = api.prepareLaunchShell(ctx, req, &owner, nil, nil)
 		require.NoError(t, err)
 		keys, err := ssh.GenerateKey(launchReq.Spec.Base.SSHConfig)
 		require.NoError(t, err)
@@ -102,9 +102,9 @@ func commitCommand(
 			Config: commandConfig(t, "true"),
 			Submit: &apiv1.SubmitOptions{IdempotencyKey: uuid.NewString()},
 		}
-		s, err = submission.NewCommand(owner.ID, req)
+		s, err = submission.NewCommand(owner.ID, req, nil)
 		require.NoError(t, err)
-		launchReq, _, err = api.prepareLaunchCommand(ctx, req, &owner, nil)
+		launchReq, _, err = api.prepareLaunchCommand(ctx, req, &owner, nil, nil)
 		require.NoError(t, err)
 	}
 	cmd := command.DefaultCmdService.NewGenericCommand(taskType, jobType, launchReq)

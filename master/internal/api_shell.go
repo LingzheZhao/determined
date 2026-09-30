@@ -208,7 +208,7 @@ func (a *apiServer) LaunchShell(
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get the user: %s", err)
 	}
-	s, err := submission.NewShell(user.ID, req)
+	s, err := submission.NewShell(user.ID, req, submission.ViewableTemplates(ctx, user))
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +224,7 @@ func (a *apiServer) LaunchShell(
 			return &apiv1.LaunchShellResponse{Submission: result}
 		},
 		Prepare: func(ctx context.Context) error {
-			launchReq, launchWarnings, err = a.prepareLaunchShell(ctx, req, user, session)
+			launchReq, launchWarnings, err = a.prepareLaunchShell(ctx, req, user, session, s.Template())
 			return err
 		},
 		DryRun: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.LaunchShellResponse, error) {
@@ -263,12 +263,15 @@ func (a *apiServer) LaunchShell(
 }
 
 // prepareLaunchShell parses, authorizes, and checks a LaunchShellRequest without side effects.
-// The shell's SSH keys are generated only for a commit.
+// The shell's SSH keys are generated only for a commit. A template the submission's digest read
+// is applied as read.
 func (a *apiServer) prepareLaunchShell(
 	ctx context.Context, req *apiv1.LaunchShellRequest, user *model.User, session *model.UserSession,
+	template *model.Template,
 ) (*command.CreateGeneric, []pkgCommand.LaunchWarning, error) {
 	launchReq, launchWarnings, err := a.prepareCommandLaunchParams(ctx, &protoCommandParams{
 		TemplateName: req.TemplateName,
+		Template:     template,
 		WorkspaceID:  req.WorkspaceId,
 		Config:       req.Config,
 		Files:        req.Files,

@@ -71,7 +71,7 @@ func commandRequest(t *testing.T) *apiv1.LaunchCommandRequest {
 }
 
 func commandDigest(t *testing.T, req *apiv1.LaunchCommandRequest) string {
-	s, err := NewCommand(1, req)
+	s, err := NewCommand(1, req, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, s.digest)
 	return s.digest
@@ -136,7 +136,7 @@ func TestCommandDigest(t *testing.T) {
 	req := commandRequest(t)
 	shell, err := NewShell(1, &apiv1.LaunchShellRequest{
 		Config: req.Config, WorkspaceId: req.WorkspaceId, Files: req.Files, Submit: req.Submit,
-	})
+	}, nil)
 	require.NoError(t, err)
 	require.NotEqual(t, base, shell.digest)
 }
@@ -150,7 +150,7 @@ func TestAdmissionIsInTheDigest(t *testing.T) {
 }
 
 func experimentDigest(t *testing.T, req *apiv1.CreateExperimentRequest) string {
-	s, err := NewExperiment(1, req)
+	s, err := NewExperiment(1, req, nil)
 	require.NoError(t, err)
 	return s.digest
 }
@@ -193,7 +193,7 @@ func TestExperimentDigest(t *testing.T) {
 		require.NotEqual(t, base, experimentDigest(t, r), name)
 	}
 
-	_, err := NewExperiment(1, req("entrypoint: [unclosed"))
+	_, err := NewExperiment(1, req("entrypoint: [unclosed"), nil)
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
@@ -229,42 +229,42 @@ func TestGenericTaskDigest(t *testing.T) {
 func TestNewSubmissionOptions(t *testing.T) {
 	immediate := &apiv1.SubmitOptions{Admission: apiv1.Admission_ADMISSION_IMMEDIATE}
 
-	_, err := NewCommand(1, &apiv1.LaunchCommandRequest{Submit: immediate})
+	_, err := NewCommand(1, &apiv1.LaunchCommandRequest{Submit: immediate}, nil)
 	require.Equal(t, codes.Unimplemented, status.Code(err))
-	_, err = NewShell(1, &apiv1.LaunchShellRequest{Submit: immediate})
+	_, err = NewShell(1, &apiv1.LaunchShellRequest{Submit: immediate}, nil)
 	require.Equal(t, codes.Unimplemented, status.Code(err))
 	_, err = NewGenericTask(1, &apiv1.CreateGenericTaskRequest{Submit: immediate})
 	require.Equal(t, codes.Unimplemented, status.Code(err))
 	for _, dryRun := range []bool{false, true} {
 		opts := proto.Clone(immediate).(*apiv1.SubmitOptions)
 		opts.DryRun = dryRun
-		_, err = NewExperiment(1, &apiv1.CreateExperimentRequest{Submit: opts})
+		_, err = NewExperiment(1, &apiv1.CreateExperimentRequest{Submit: opts}, nil)
 		require.Equal(t, codes.InvalidArgument, status.Code(err))
 	}
 
 	_, err = NewCommand(1, &apiv1.LaunchCommandRequest{
 		Submit: &apiv1.SubmitOptions{Admission: apiv1.Admission(9)},
-	})
+	}, nil)
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 
 	_, err = NewCommand(1, &apiv1.LaunchCommandRequest{
 		Submit: &apiv1.SubmitOptions{IdempotencyKey: "not a key"},
-	})
+	}, nil)
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 
 	_, err = NewExperiment(1, &apiv1.CreateExperimentRequest{
 		Unmanaged: ptrs.Ptr(true), Submit: &apiv1.SubmitOptions{},
-	})
+	}, nil)
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 
 	// Without submit options, a create has no digest and no submission result.
-	s, err := NewExperiment(1, &apiv1.CreateExperimentRequest{ValidateOnly: true})
+	s, err := NewExperiment(1, &apiv1.CreateExperimentRequest{ValidateOnly: true}, nil)
 	require.NoError(t, err)
 	require.True(t, s.DryRun())
 	require.Empty(t, s.digest)
 	require.Nil(t, s.result())
 
-	s, err = NewCommand(1, &apiv1.LaunchCommandRequest{})
+	s, err = NewCommand(1, &apiv1.LaunchCommandRequest{}, nil)
 	require.NoError(t, err)
 	require.False(t, s.DryRun())
 	require.Nil(t, s.result())
@@ -285,7 +285,7 @@ func unexpected[R any](t *testing.T, step string) func(context.Context, *apiv1.S
 func TestRunDryRun(t *testing.T) {
 	req := commandRequest(t)
 	req.Submit.DryRun = true
-	s, err := NewCommand(1, req)
+	s, err := NewCommand(1, req, nil)
 	require.NoError(t, err)
 
 	prepared := false
@@ -314,7 +314,7 @@ func TestRunDryRun(t *testing.T) {
 func TestRunPlanChanged(t *testing.T) {
 	req := commandRequest(t)
 	req.Submit.ExpectedDigest = strings.Repeat("0", 64)
-	s, err := NewCommand(1, req)
+	s, err := NewCommand(1, req, nil)
 	require.NoError(t, err)
 
 	_, err = Run(context.Background(), s, Handler[*testResponse]{
@@ -328,4 +328,53 @@ func TestRunPlanChanged(t *testing.T) {
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 	require.True(t, strings.HasPrefix(status.Convert(err).Message(), "plan_changed:"))
 	require.Contains(t, status.Convert(err).Message(), s.digest)
+}
+
+func TestTemplateContentIsInTheDigest(t *testing.T) {
+	templates := map[string]*model.Template{}
+	read := func(name string) (*model.Template, error) { return templates[name], nil }
+	digestOf := func(name string) (string, *Submission) {
+		req := commandRequest(t)
+		req.TemplateName = name
+		s, err := NewCommand(1, req, read)
+		require.NoError(t, err)
+		return s.digest, s
+	}
+
+	templates["t"] = &model.Template{Name: "t", Config: []byte(`{"resources": {"slots": 1}}`)}
+	base, s := digestOf("t")
+	require.Equal(t, templates["t"], s.Template(), "the create applies the template the digest read")
+
+	// The same content in another form is the same template.
+	templates["t"] = &model.Template{Name: "t", Config: []byte("resources:\n  slots: 1.0\n")}
+	same, _ := digestOf("t")
+	require.Equal(t, base, same)
+
+	templates["t"] = &model.Template{Name: "t", Config: []byte(`{"resources": {"slots": 2}}`)}
+	changed, _ := digestOf("t")
+	require.NotEqual(t, base, changed, "a changed template changes the digest")
+
+	// A template that cannot be read digests as its name alone, and the create reads it itself.
+	missing, s := digestOf("missing")
+	require.Nil(t, s.Template())
+	unread, err := NewCommand(1, func() *apiv1.LaunchCommandRequest {
+		req := commandRequest(t)
+		req.TemplateName = "missing"
+		return req
+	}(), nil)
+	require.NoError(t, err)
+	require.Equal(t, missing, unread.digest)
+
+	// Without submit options, no template is read.
+	_, err = NewCommand(1, &apiv1.LaunchCommandRequest{TemplateName: "t"},
+		func(string) (*model.Template, error) {
+			t.Error("a create without submit options read its template for a digest")
+			return nil, nil
+		})
+	require.NoError(t, err)
+
+	_, err = NewExperiment(1, &apiv1.CreateExperimentRequest{
+		Config: "entrypoint: x\n", Template: ptrs.Ptr("t"), Submit: &apiv1.SubmitOptions{},
+	}, func(string) (*model.Template, error) { return nil, fmt.Errorf("the database is down") })
+	require.ErrorContains(t, err, "the database is down")
 }

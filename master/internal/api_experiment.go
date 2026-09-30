@@ -1471,7 +1471,7 @@ func (a *apiServer) ContinueExperiment(
 	dbExp, modelDef, activeConfig, _, taskSpec, err := a.m.parseCreateExperiment(ctx,
 		&apiv1.CreateExperimentRequest{
 			Config: string(configBytes),
-		}, user,
+		}, user, nil,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("parsing continue experiment request: %w", err)
@@ -1615,7 +1615,7 @@ func (a *apiServer) CreateExperiment(
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get the user: %s", err)
 	}
-	s, err := submission.NewExperiment(user.ID, req)
+	s, err := submission.NewExperiment(user.ID, req, submission.ViewableTemplates(ctx, user))
 	if err != nil {
 		return nil, err
 	}
@@ -1630,7 +1630,7 @@ func (a *apiServer) CreateExperiment(
 			return &apiv1.CreateExperimentResponse{Submission: result}
 		},
 		Prepare: func(ctx context.Context) error {
-			p, err = a.prepareExperiment(ctx, req, user, session)
+			p, err = a.prepareExperiment(ctx, req, user, session, s.Template())
 			return err
 		},
 		DryRun: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.CreateExperimentResponse, error) {
@@ -1691,9 +1691,10 @@ type preparedExperiment struct {
 }
 
 // prepareExperiment parses, authorizes, and checks a CreateExperimentRequest without side effects.
+// A template the submission's digest read is applied as read.
 func (a *apiServer) prepareExperiment(
 	ctx context.Context, req *apiv1.CreateExperimentRequest, user *model.User,
-	session *model.UserSession,
+	session *model.UserSession, template *model.Template,
 ) (*preparedExperiment, error) {
 	if req.ParentId != 0 {
 		// Can't use getExperimentAndCheckDoActions since model.Experiment doesn't have ParentArchived.
@@ -1717,7 +1718,7 @@ func (a *apiServer) prepareExperiment(
 	}
 
 	dbExp, modelDef, activeConfig, p, taskSpec, err := a.m.parseCreateExperiment(ctx,
-		req, user,
+		req, user, template,
 	)
 	if err != nil {
 		return nil, err
@@ -1926,7 +1927,7 @@ func (a *apiServer) PutExperiment(
 	}
 
 	dbExp, modelDef, activeConfig, p, _, err := a.m.parseCreateExperiment(ctx,
-		req.CreateExperimentRequest, user,
+		req.CreateExperimentRequest, user, nil,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse exp config: %w", err)

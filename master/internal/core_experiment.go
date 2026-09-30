@@ -265,8 +265,11 @@ func getCreateExperimentsProject(
 	return p, nil
 }
 
+// parseCreateExperiment parses and resolves an experiment create. template, when set, is the
+// template named by req.Template as a submission's digest read it, which is applied instead of
+// reading the template again.
 func (m *Master) parseCreateExperiment(ctx context.Context, req *apiv1.CreateExperimentRequest,
-	owner *model.User) (
+	owner *model.User, template *model.Template) (
 	*model.Experiment, []byte, expconf.ExperimentConfig, *projectv1.Project, *tasks.TaskSpec, error,
 ) {
 	// Read the config as the user provided it.
@@ -282,7 +285,12 @@ func (m *Master) parseCreateExperiment(ctx context.Context, req *apiv1.CreateExp
 	// Apply the template that the user specified.
 	if req.Template != nil {
 		var tc expconf.ExperimentConfig
-		err := templates.UnmarshalTemplateConfig(ctx, *req.Template, owner, &tc, true)
+		var err error
+		if template != nil {
+			err = templates.UnmarshalConfig(*template, &tc, true)
+		} else {
+			err = templates.UnmarshalTemplateConfig(ctx, *req.Template, owner, &tc, true)
+		}
 		if err != nil {
 			return nil, nil, config, nil, nil, err
 		}

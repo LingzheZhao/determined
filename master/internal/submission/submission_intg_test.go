@@ -42,9 +42,9 @@ func TestRunKeyRaceReplaysTheWinner(t *testing.T) {
 	req := &apiv1.LaunchCommandRequest{
 		Submit: &apiv1.SubmitOptions{IdempotencyKey: uuid.NewString()},
 	}
-	winner, err := NewCommand(owner, req)
+	winner, err := NewCommand(owner, req, nil)
 	require.NoError(t, err)
-	loser, err := NewCommand(owner, req)
+	loser, err := NewCommand(owner, req, nil)
 	require.NoError(t, err)
 
 	replayed := func(result *apiv1.SubmitResult) *testResponse { return &testResponse{result: result} }
@@ -114,7 +114,7 @@ func TestInsertJobTxKeyInUseIsOnlyTheKeyIndex(t *testing.T) {
 	owner := db.RequireMockUser(t, db.SingleDB()).ID
 	s, err := NewCommand(owner, &apiv1.LaunchCommandRequest{
 		Submit: &apiv1.SubmitOptions{IdempotencyKey: uuid.NewString()},
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	job := commandJob(owner)
@@ -126,7 +126,7 @@ func TestInsertJobTxKeyInUseIsOnlyTheKeyIndex(t *testing.T) {
 	// A duplicate job ID is an error, not a key in use.
 	other, err := NewCommand(owner, &apiv1.LaunchCommandRequest{
 		Submit: &apiv1.SubmitOptions{IdempotencyKey: uuid.NewString()},
-	})
+	}, nil)
 	require.NoError(t, err)
 	err = other.InsertJobTx(ctx, db.Bun(), &model.Job{
 		JobID: job.JobID, JobType: model.JobTypeCommand, OwnerID: &owner,
@@ -135,7 +135,7 @@ func TestInsertJobTxKeyInUseIsOnlyTheKeyIndex(t *testing.T) {
 	require.False(t, errors.Is(err, errKeyInUse))
 
 	// Without submit options, the job row has no key or digest and the default admission.
-	legacy, err := NewCommand(owner, &apiv1.LaunchCommandRequest{})
+	legacy, err := NewCommand(owner, &apiv1.LaunchCommandRequest{}, nil)
 	require.NoError(t, err)
 	legacyJob := commandJob(owner)
 	require.NoError(t, legacy.InsertJobTx(ctx, db.Bun(), legacyJob))

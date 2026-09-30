@@ -2,6 +2,7 @@ package submission
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/determined-ai/determined/master/internal/templates"
 	"github.com/determined-ai/determined/master/pkg/model"
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
 	"github.com/determined-ai/determined/proto/pkg/utilv1"
@@ -21,7 +23,51 @@ import (
 // The digest identifies the content of a client request, so it is taken before master defaults
 // and merges: petnames, ports, keys, tokens, and pool defaults vary between identical requests.
 // The idempotency key, dry run, and expected digest are not content, and neither are a file's
-// mtime, uid, and gid. The master alone computes it, so clients treat it as opaque.
+// mtime, uid, and gid. A named template is content: the digest binds its config as read at
+// submit, so a template that changes between a plan and its launch fails the plan check. The
+// master alone computes it, so clients treat it as opaque.
+
+// TemplateReader returns the template of a name if the caller may view it, and nil if the template
+// does not exist or the caller may not view it. Such a template digests as its name alone, which
+// reveals nothing of a config the caller may not read, and the create then fails as it would
+// without a digest.
+type TemplateReader func(name string) (*model.Template, error)
+
+// ViewableTemplates returns the TemplateReader of a user.
+func ViewableTemplates(ctx context.Context, user *model.User) TemplateReader {
+	return func(name string) (*model.Template, error) {
+		tpl, err := templates.ViewableTemplate(ctx, name, user)
+		if status.Code(err) == codes.NotFound {
+			return nil, nil
+		} else if err != nil {
+			return nil, err
+		}
+		return &tpl, nil
+	}
+}
+
+// templateFields adds the canonical config of a request's template to its fields and returns the
+// template, or nil if it cannot be read. A nil readTemplate reads no template.
+func templateFields(
+	fields map[string]any, name string, readTemplate TemplateReader,
+) (*model.Template, error) {
+	var tpl *model.Template
+	if readTemplate != nil {
+		var err error
+		if tpl, err = readTemplate(name); err != nil {
+			return nil, fmt.Errorf("reading template %s: %w", name, err)
+		}
+	}
+	var config any
+	if tpl != nil {
+		var err error
+		if config, err = yamlConfig(string(tpl.Config)); err != nil {
+			return nil, fmt.Errorf("parsing template %s: %w", name, err)
+		}
+	}
+	fields["template_config"] = config
+	return tpl, nil
+}
 
 // digest returns the SHA-256 of the canonical JSON of fields, in lowercase hex.
 func digest(fields map[string]any) (string, error) {

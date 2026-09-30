@@ -59,44 +59,55 @@ type Submission struct {
 	dryRun         bool
 	expectedDigest string
 	digest         string
+	// template is the template whose content the digest binds, which the create applies instead of
+	// reading the template again. It is nil without submit options or a readable template.
+	template *model.Template
 
 	jobID model.JobID
 }
 
 // NewCommand starts the submission of a LaunchCommandRequest.
-func NewCommand(ownerID model.UserID, req *apiv1.LaunchCommandRequest) (*Submission, error) {
-	return newSubmission(model.JobTypeCommand, ownerID, req.Submit, false, func() (map[string]any, error) {
-		return commandFields(req.WorkspaceId, req.TemplateName, req.Config, req.Files), nil
-	})
+func NewCommand(
+	ownerID model.UserID, req *apiv1.LaunchCommandRequest, readTemplate TemplateReader,
+) (*Submission, error) {
+	return newSubmission(model.JobTypeCommand, ownerID, req.Submit, false, req.TemplateName,
+		readTemplate, func() (map[string]any, error) {
+			return commandFields(req.WorkspaceId, req.TemplateName, req.Config, req.Files), nil
+		})
 }
 
 // NewShell starts the submission of a LaunchShellRequest.
-func NewShell(ownerID model.UserID, req *apiv1.LaunchShellRequest) (*Submission, error) {
-	return newSubmission(model.JobTypeShell, ownerID, req.Submit, false, func() (map[string]any, error) {
-		return commandFields(req.WorkspaceId, req.TemplateName, req.Config, req.Files), nil
-	})
+func NewShell(
+	ownerID model.UserID, req *apiv1.LaunchShellRequest, readTemplate TemplateReader,
+) (*Submission, error) {
+	return newSubmission(model.JobTypeShell, ownerID, req.Submit, false, req.TemplateName,
+		readTemplate, func() (map[string]any, error) {
+			return commandFields(req.WorkspaceId, req.TemplateName, req.Config, req.Files), nil
+		})
 }
 
 // NewGenericTask starts the submission of a CreateGenericTaskRequest.
 func NewGenericTask(ownerID model.UserID, req *apiv1.CreateGenericTaskRequest) (*Submission, error) {
-	return newSubmission(model.JobTypeGeneric, ownerID, req.Submit, false, func() (map[string]any, error) {
-		return genericTaskFields(req)
-	})
+	return newSubmission(model.JobTypeGeneric, ownerID, req.Submit, false, "", nil,
+		func() (map[string]any, error) { return genericTaskFields(req) })
 }
 
 // NewExperiment starts the submission of a CreateExperimentRequest. validate_only is a dry run.
-func NewExperiment(ownerID model.UserID, req *apiv1.CreateExperimentRequest) (*Submission, error) {
+func NewExperiment(
+	ownerID model.UserID, req *apiv1.CreateExperimentRequest, readTemplate TemplateReader,
+) (*Submission, error) {
 	if req.Submit != nil && req.GetUnmanaged() {
 		return nil, status.Error(codes.InvalidArgument,
 			"submit options apply only to managed experiments")
 	}
 	return newSubmission(model.JobTypeExperiment, ownerID, req.Submit, req.ValidateOnly,
+		req.GetTemplate(), readTemplate,
 		func() (map[string]any, error) { return experimentFields(req) })
 }
 
 func newSubmission(
 	kind model.JobType, ownerID model.UserID, opts *apiv1.SubmitOptions, dryRun bool,
-	fields func() (map[string]any, error),
+	templateName string, readTemplate TemplateReader, fields func() (map[string]any, error),
 ) (*Submission, error) {
 	s := &Submission{kind: kind, ownerID: ownerID, admission: model.AdmissionQueue, dryRun: dryRun}
 	if opts == nil {
@@ -131,6 +142,11 @@ func newSubmission(
 	if err != nil {
 		return nil, err
 	}
+	if templateName != "" {
+		if s.template, err = templateFields(f, templateName, readTemplate); err != nil {
+			return nil, err
+		}
+	}
 	if s.digest, err = requestDigest(kind, s.admission, f); err != nil {
 		return nil, err
 	}
@@ -140,6 +156,12 @@ func newSubmission(
 // DryRun is whether the request is a dry run, through dry_run or its alias validate_only.
 func (s *Submission) DryRun() bool {
 	return s.dryRun
+}
+
+// Template returns the template that the request digest binds, or nil if the create reads its
+// template itself: without submit options, or when the caller may not read the template.
+func (s *Submission) Template() *model.Template {
+	return s.template
 }
 
 // Handler supplies the steps of the handler order that depend on the kind of create.

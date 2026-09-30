@@ -37,12 +37,22 @@ func UnmarshalTemplateConfig(
 	out interface{},
 	disallowUnknownFields bool,
 ) error {
+	tpl, err := ViewableTemplate(ctx, name, user)
+	if err != nil {
+		return err
+	}
+	return UnmarshalConfig(tpl, out, disallowUnknownFields)
+}
+
+// ViewableTemplate returns the template of a name if the user may view it. A template that does
+// not exist and one the user may not view are both not found.
+func ViewableTemplate(ctx context.Context, name string, user *model.User) (model.Template, error) {
 	tpl, err := TemplateByName(ctx, name)
 	switch {
 	case errors.Is(err, db.ErrNotFound):
-		return api.NotFoundErrs("template", name, true)
+		return model.Template{}, api.NotFoundErrs("template", name, true)
 	case err != nil:
-		return err
+		return model.Template{}, err
 	}
 
 	permErr, err := AuthZProvider.Get().CanViewTemplate(
@@ -52,18 +62,21 @@ func UnmarshalTemplateConfig(
 	)
 	switch {
 	case err != nil:
-		return err
+		return model.Template{}, err
 	case permErr != nil:
-		return api.NotFoundErrs("template", name, true)
+		return model.Template{}, api.NotFoundErrs("template", name, true)
 	}
+	return tpl, nil
+}
 
+// UnmarshalConfig unmarshals the config of a template into out.
+func UnmarshalConfig(tpl model.Template, out interface{}, disallowUnknownFields bool) error {
 	var opts []yaml.JSONOpt
 	if disallowUnknownFields {
 		opts = append(opts, yaml.DisallowUnknownFields)
 	}
-	err = yaml.Unmarshal(tpl.Config, out, opts...)
-	if err != nil {
-		return fmt.Errorf("yaml.Unmarshal(template=%s): %w", name, err)
+	if err := yaml.Unmarshal(tpl.Config, out, opts...); err != nil {
+		return fmt.Errorf("yaml.Unmarshal(template=%s): %w", tpl.Name, err)
 	}
 	return nil
 }

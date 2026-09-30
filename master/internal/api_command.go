@@ -55,6 +55,9 @@ func getRandomPort(min, max int) int {
 
 type protoCommandParams struct {
 	TemplateName string
+	// Template is the template named TemplateName as a submission's digest read it, which is
+	// applied instead of reading the template again. nil reads the template.
+	Template     *model.Template
 	WorkspaceID  int32
 	Config       *pstruct.Struct
 	Files        []*utilv1.File
@@ -139,7 +142,12 @@ func (a *apiServer) prepareCommandLaunchParams(ctx context.Context, req *protoCo
 
 	// Get the full configuration.
 	config := model.DefaultConfig(&taskSpec.TaskContainerDefaults)
-	if req.TemplateName != "" {
+	switch {
+	case req.Template != nil:
+		if err := templates.UnmarshalConfig(*req.Template, &config, false); err != nil {
+			return nil, launchWarnings, err
+		}
+	case req.TemplateName != "":
 		err := templates.UnmarshalTemplateConfig(ctx, req.TemplateName, aUser, &config, false)
 		if err != nil {
 			return nil, launchWarnings, err
@@ -371,7 +379,7 @@ func (a *apiServer) LaunchCommand(
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get the user: %s", err)
 	}
-	s, err := submission.NewCommand(user.ID, req)
+	s, err := submission.NewCommand(user.ID, req, submission.ViewableTemplates(ctx, user))
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +395,7 @@ func (a *apiServer) LaunchCommand(
 			return &apiv1.LaunchCommandResponse{Submission: result}
 		},
 		Prepare: func(ctx context.Context) error {
-			launchReq, launchWarnings, err = a.prepareLaunchCommand(ctx, req, user, session)
+			launchReq, launchWarnings, err = a.prepareLaunchCommand(ctx, req, user, session, s.Template())
 			return err
 		},
 		DryRun: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.LaunchCommandResponse, error) {
@@ -418,11 +426,14 @@ func (a *apiServer) LaunchCommand(
 }
 
 // prepareLaunchCommand parses, authorizes, and checks a LaunchCommandRequest without side effects.
+// A template the submission's digest read is applied as read.
 func (a *apiServer) prepareLaunchCommand(
 	ctx context.Context, req *apiv1.LaunchCommandRequest, user *model.User, session *model.UserSession,
+	template *model.Template,
 ) (*command.CreateGeneric, []pkgCommand.LaunchWarning, error) {
 	launchReq, launchWarnings, err := a.prepareCommandLaunchParams(ctx, &protoCommandParams{
 		TemplateName: req.TemplateName,
+		Template:     template,
 		WorkspaceID:  req.WorkspaceId,
 		Config:       req.Config,
 		Files:        req.Files,

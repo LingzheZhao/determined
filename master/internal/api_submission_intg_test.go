@@ -770,6 +770,95 @@ resources:
 	requireSameRows(ctx, t, curUser.ID, rows)
 }
 
+func TestSubmitTemplateBindsItsContent(t *testing.T) {
+	api, curUser, ctx := setupSubmissionTest(t, nil)
+	name := uuid.NewString()
+	setTemplate := func(config string) {
+		_, err := db.Bun().NewRaw(`INSERT INTO templates (name, config, workspace_id)
+			VALUES (?, ?::jsonb, ?) ON CONFLICT (name) DO UPDATE SET config = EXCLUDED.config`,
+			name, config, model.DefaultWorkspaceID).Exec(ctx)
+		require.NoError(t, err)
+	}
+	req := func(key, expected string) *apiv1.LaunchCommandRequest {
+		return &apiv1.LaunchCommandRequest{
+			Config:       commandConfig(t, "true"),
+			TemplateName: name,
+			Submit:       &apiv1.SubmitOptions{IdempotencyKey: key, ExpectedDigest: expected},
+		}
+	}
+	plan := func() string {
+		resp, err := api.LaunchCommand(ctx, &apiv1.LaunchCommandRequest{
+			Config:       commandConfig(t, "true"),
+			TemplateName: name,
+			Submit:       &apiv1.SubmitOptions{DryRun: true},
+		})
+		require.NoError(t, err)
+		return resp.Submission.RequestDigest
+	}
+
+	setTemplate(`{"description": "planned"}`)
+	planned := plan()
+	key := uuid.NewString()
+	launched, err := api.LaunchCommand(ctx, req(key, planned))
+	require.NoError(t, err)
+	require.Equal(t, planned, launched.Submission.RequestDigest)
+	require.Equal(t, "planned", launched.Command.Description, "the job runs the planned template")
+
+	// An identical template replays.
+	replayed, err := api.LaunchCommand(ctx, req(key, ""))
+	require.NoError(t, err)
+	require.True(t, replayed.Submission.Replayed)
+
+	// A template that changed after the plan fails the plan check and writes nothing.
+	setTemplate(`{"description": "changed"}`)
+	rows := countSubmissionRows(ctx, t, curUser.ID)
+	_, err = api.LaunchCommand(ctx, req(uuid.NewString(), planned))
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	require.Contains(t, status.Convert(err).Message(), "plan_changed")
+	requireSameRows(ctx, t, curUser.ID, rows)
+
+	// The launch bound to the plan still replays, and an unbound retry conflicts.
+	replayed, err = api.LaunchCommand(ctx, req(key, planned))
+	require.NoError(t, err)
+	require.True(t, replayed.Submission.Replayed)
+	_, err = api.LaunchCommand(ctx, req(key, ""))
+	require.Equal(t, codes.AlreadyExists, status.Code(err))
+
+	// A change to master defaults is not bound: it applies to the launch without plan_changed.
+	replanned := plan()
+	require.NotEqual(t, planned, replanned)
+	api.m.config.TaskContainerDefaults.BindMounts = model.BindMountsConfig{{
+		HostPath: "/mnt/shared", ContainerPath: "/shared",
+	}}
+	defer func() { api.m.config.TaskContainerDefaults.BindMounts = nil }()
+	require.Equal(t, replanned, plan())
+	relaunched, err := api.LaunchCommand(ctx, req(uuid.NewString(), replanned))
+	require.NoError(t, err)
+	require.Equal(t, "changed", relaunched.Command.Description)
+	mounts := relaunched.Config.AsMap()["bind_mounts"].([]any)
+	require.Equal(t, "/shared", mounts[0].(map[string]any)["container_path"])
+
+	// An experiment's template is bound the same way.
+	setTemplate(`{"description": "planned"}`)
+	expReq := func(submit *apiv1.SubmitOptions) *apiv1.CreateExperimentRequest {
+		return &apiv1.CreateExperimentRequest{
+			ModelDefinition: []*utilv1.File{{Content: []byte{1}}},
+			Config:          minExpConfToYaml(t),
+			ProjectId:       1,
+			Template:        &name,
+			Submit:          submit,
+		}
+	}
+	expPlan, err := api.CreateExperiment(ctx, expReq(&apiv1.SubmitOptions{DryRun: true}))
+	require.NoError(t, err)
+	setTemplate(`{"description": "changed"}`)
+	_, err = api.CreateExperiment(ctx, expReq(&apiv1.SubmitOptions{
+		IdempotencyKey: uuid.NewString(), ExpectedDigest: expPlan.Submission.RequestDigest,
+	}))
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	require.Contains(t, status.Convert(err).Message(), "plan_changed")
+}
+
 func TestGetMasterSubmissionProtocol(t *testing.T) {
 	api, _, ctx := setupSubmissionTest(t, nil)
 	resp, err := api.GetMaster(ctx, &apiv1.GetMasterRequest{})
