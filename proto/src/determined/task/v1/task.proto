@@ -104,6 +104,19 @@ message Allocation {
   // Structured detail about the exit: failure_type, exit_code, and message.
   // Unset when the allocation has not exited or recorded no detail.
   google.protobuf.Struct exit_detail = 11;
+  // The resource pool the allocation was requested from.
+  string resource_pool = 12;
+  // Where the allocation's containers were placed, as their tasks reported
+  // it. Empty until a container reports its accelerators.
+  repeated Placement placements = 13;
+}
+
+// Where one container of an allocation was placed.
+message Placement {
+  // The agent node that runs the container.
+  string node = 1;
+  // The UUIDs of the accelerators assigned to the container.
+  repeated string accelerator_uuids = 2;
 }
 
 // The outcome class of an allocation's exit. It records how the allocation

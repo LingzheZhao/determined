@@ -1538,6 +1538,13 @@ func (a *apiServer) ContinueExperiment(
 			Exec(ctx); err != nil {
 			return fmt.Errorf("updating experiment's job: %w", err)
 		}
+		// Continuing revives the job, so a cancel of its earlier run no longer applies.
+		if _, err := tx.NewUpdate().Table("jobs").
+			Set("cancel_requested_at = NULL").
+			Where("job_id = ?", dbExp.JobID).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("reviving experiment's job: %w", err)
+		}
 
 		// Update active config but not original config.
 		// We actually do this in experiment's PreStart in setWeight but relying on that
@@ -1589,6 +1596,7 @@ func (a *apiServer) ContinueExperiment(
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to activate experiment: %s", err)
 	}
+	killExperimentIfCancelRequested(e, int(req.Id), dbExp.JobID)
 
 	protoExp, err := a.getExperiment(ctx, *user, int(req.Id))
 	if err != nil {
@@ -1814,6 +1822,7 @@ func (a *apiServer) startExperiment(p *preparedExperiment, activate bool) error 
 		a.failExperimentStart(p, err)
 		return errors.Wrapf(err, "failed to start experiment %d", committed.ID)
 	}
+	killExperimentIfCancelRequested(e, committed.ID, committed.JobID)
 
 	if activate {
 		// The experiment was committed ACTIVE instead of being activated, so report the

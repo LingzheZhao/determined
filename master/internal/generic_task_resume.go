@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	log "github.com/sirupsen/logrus"
 	"github.com/uptrace/bun"
 	"golang.org/x/exp/slices"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/determined-ai/determined/master/internal/task"
 	"github.com/determined-ai/determined/master/pkg/logger"
 	"github.com/determined-ai/determined/master/pkg/model"
+	"github.com/determined-ai/determined/master/pkg/ptrs"
 	"github.com/determined-ai/determined/master/pkg/tasks"
 )
 
@@ -64,86 +66,6 @@ func genericTaskResumeConflicts(ctx context.Context, tasks []model.Task) error {
 		return fmt.Errorf("generic task resume is in progress")
 	}
 	return nil
-}
-
-func cancelGenericTaskResumeMembers(ctx context.Context, tasks []model.Task) (map[model.TaskID]model.AllocationID, error) {
-	ids := make([]model.TaskID, 0, len(tasks))
-	for _, t := range tasks {
-		ids = append(ids, t.TaskID)
-	}
-	result := make(map[model.TaskID]model.AllocationID)
-	if len(ids) == 0 {
-		return result, nil
-	}
-	var rows []genericTaskResume
-	if err := db.Bun().NewSelect().Model(&rows).
-		Where("task_id IN (?) OR root_task_id IN (?)", bun.In(ids), bun.In(ids)).Scan(ctx); err != nil {
-		return nil, err
-	}
-	live := task.DefaultService.GetAllAllocationIDs()
-	started := make(map[model.TaskID]bool, len(rows))
-	for _, row := range rows {
-		result[row.TaskID] = row.NewAllocationID
-		if slices.Contains(live, row.NewAllocationID) {
-			started[row.TaskID] = true
-			continue
-		}
-		exists, err := db.Bun().NewSelect().Table("allocations").
-			Where("allocation_id = ?", row.NewAllocationID).Exists(ctx)
-		if err != nil {
-			return nil, err
-		}
-		started[row.TaskID] = exists
-	}
-	err := db.Bun().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		final := make(map[model.TaskID]bool, len(rows))
-		for _, row := range rows {
-			var state model.TaskState
-			if err := tx.NewSelect().Table("tasks").Column("task_state").
-				Where("task_id = ?", row.TaskID).For("UPDATE").Scan(ctx, &state); err != nil {
-				return err
-			}
-			final[row.TaskID] = genericTaskTerminal(state)
-		}
-		if _, err := tx.NewUpdate().Table("tasks").Set("task_state = ?", model.TaskStateStoppingCanceled).
-			Where("task_id IN (?)", bun.In(ids)).
-			Where("task_state NOT IN (?)", bun.In([]model.TaskState{
-				model.TaskStateCanceled, model.TaskStateCompleted, model.TaskStateError,
-			})).Exec(ctx); err != nil {
-			return err
-		}
-		for _, row := range rows {
-			if final[row.TaskID] {
-				if _, err := tx.NewUpdate().Table("generic_task_resume").Set("completed = TRUE").
-					Where("task_id = ?", row.TaskID).Exec(ctx); err != nil {
-					return err
-				}
-				continue
-			}
-			if _, err := tx.NewUpdate().Table("generic_task_resume").
-				Set("canceled = TRUE").Set("completed = ?", !started[row.TaskID]).
-				Where("task_id = ?", row.TaskID).Exec(ctx); err != nil {
-				return err
-			}
-			if !started[row.TaskID] {
-				if _, err := tx.NewUpdate().Table("tasks").
-					Set("task_state = ?", model.TaskStateCanceled).Set("end_time = ?", time.Now().UTC()).
-					Where("task_id = ?", row.TaskID).Exec(ctx); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	for _, row := range rows {
-		if err := cleanupGenericTaskResume(ctx, row.RootTaskID, row.OperationID); err != nil {
-			return nil, err
-		}
-	}
-	return result, nil
 }
 
 func cleanupGenericTaskResume(ctx context.Context, rootID model.TaskID, operationID string) error {
@@ -249,7 +171,13 @@ func (a *apiServer) runGenericTaskResume(ctx context.Context, plan []genericTask
 		if member.Completed {
 			continue
 		}
-		if member.Canceled {
+		// A resume never continues a task whose job was asked to stop, even if the cancel did not
+		// reach the resume's row.
+		cancelRequested, err := genericTaskCancelRequested(ctx, member.TaskID)
+		if err != nil {
+			return err
+		}
+		if member.Canceled || cancelRequested {
 			if slices.Contains(task.DefaultService.GetAllAllocationIDs(), member.NewAllocationID) {
 				if err := task.DefaultService.Signal(member.NewAllocationID, task.KillAllocation, "resume canceled by user"); err != nil {
 					return err
@@ -261,7 +189,13 @@ func (a *apiServer) runGenericTaskResume(ctx context.Context, plan []genericTask
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
-			if err == nil && command.DecideRestore(&allocation, false) != command.RestoreEnded {
+			action := command.RestoreEnded
+			if err == nil {
+				action = command.DecideRestore(&allocation, true)
+			}
+			switch action {
+			case command.RestorePlaced:
+				// The allocation may have containers, so it is restored to be killed.
 				var t model.Task
 				if err := db.Bun().NewSelect().Model(&t).Where("task_id = ?", member.TaskID).Scan(ctx); err != nil {
 					return err
@@ -276,7 +210,22 @@ func (a *apiServer) runGenericTaskResume(ctx context.Context, plan []genericTask
 				if err := a.startGenericTaskResumeAllocation(ctx, member, t, spec, &allocation); err != nil {
 					return err
 				}
-				if err := task.DefaultService.Signal(member.NewAllocationID, task.KillAllocation, "resume canceled by user"); err != nil {
+				// A job that was asked to stop is killed as its allocation starts.
+				if !cancelRequested {
+					if err := task.DefaultService.Signal(
+						member.NewAllocationID, task.KillAllocation, "resume canceled by user",
+					); err != nil {
+						return err
+					}
+				}
+				continue
+			case command.RestoreStopQueued:
+				// The allocation was never placed, so it is closed instead of requested.
+				if err := db.EndQueuedTask(ctx, member.TaskID, member.NewAllocationID,
+					ptrs.Ptr(model.TaskStateCanceled), command.StopQueuedReason); err != nil {
+					return err
+				}
+				if err := completeGenericTaskResumeMember(ctx, member); err != nil {
 					return err
 				}
 				continue
@@ -388,7 +337,7 @@ func (a *apiServer) startGenericTaskResumeAllocation(
 	logCtx := logger.Context{"job-id": t.JobID, "task-id": t.TaskID, "task-type": model.TaskTypeGeneric}
 	singleNode := spec.GenericTaskConfig.Resources.IsSingleNode() != nil && *spec.GenericTaskConfig.Resources.IsSingleNode()
 	now := time.Now().UTC()
-	return task.DefaultService.StartAllocation(logCtx, sproto.AllocateRequest{
+	err := task.DefaultService.StartAllocation(logCtx, sproto.AllocateRequest{
 		AllocationID: member.NewAllocationID, TaskID: member.TaskID, JobID: *t.JobID,
 		JobSubmissionTime: now, RequestTime: now, IsUserVisible: true,
 		Name:                fmt.Sprintf("Generic Task %s", member.TaskID),
@@ -400,6 +349,14 @@ func (a *apiServer) startGenericTaskResumeAllocation(
 		Restore: restore, Persisted: persisted,
 	}, a.m.db, a.m.rm, spec,
 		getGenericTaskOnAllocationExit(context.WithoutCancel(ctx), member.TaskID, member.NewAllocationID, *t.JobID, logCtx))
+	if err != nil {
+		return err
+	}
+	if err := task.KillIfCancelRequested(ctx, *t.JobID, member.NewAllocationID); err != nil {
+		log.WithField("task-id", t.TaskID).WithError(err).
+			Error("checking whether a resumed generic task was asked to stop")
+	}
+	return nil
 }
 
 func reconcileEndedGenericTaskResume(ctx context.Context, t model.Task, allocation model.Allocation) error {
@@ -416,6 +373,19 @@ func reconcileEndedGenericTaskResume(ctx context.Context, t model.Task, allocati
 		Set("end_time = ?", endTime).Where("task_id = ?", t.TaskID).
 		Where("task_state = ?", *t.State).Exec(ctx)
 	return err
+}
+
+// genericTaskCancelRequested reports whether the job of a generic task was asked to stop.
+func genericTaskCancelRequested(ctx context.Context, taskID model.TaskID) (bool, error) {
+	requested, err := db.Bun().NewSelect().Table("tasks").
+		Join("JOIN jobs ON jobs.job_id = tasks.job_id").
+		Where("tasks.task_id = ?", taskID).
+		Where("jobs.cancel_requested_at IS NOT NULL").
+		Exists(ctx)
+	if err != nil {
+		return false, fmt.Errorf("reading whether task %s was asked to stop: %w", taskID, err)
+	}
+	return requested, nil
 }
 
 func genericTaskTerminal(state model.TaskState) bool {

@@ -1333,6 +1333,8 @@ class v1Allocation(Printable):
     exitDetail: "typing.Optional[typing.Dict[str, typing.Any]]" = None
     exitReason: "typing.Optional[str]" = None
     isReady: "typing.Optional[bool]" = None
+    placements: "typing.Optional[typing.Sequence[v1Placement]]" = None
+    resourcePool: "typing.Optional[str]" = None
     startTime: "typing.Optional[str]" = None
     statusCode: "typing.Optional[int]" = None
 
@@ -1348,6 +1350,8 @@ class v1Allocation(Printable):
         exitDetail: "typing.Union[typing.Dict[str, typing.Any], None, Unset]" = _unset,
         exitReason: "typing.Union[str, None, Unset]" = _unset,
         isReady: "typing.Union[bool, None, Unset]" = _unset,
+        placements: "typing.Union[typing.Sequence[v1Placement], None, Unset]" = _unset,
+        resourcePool: "typing.Union[str, None, Unset]" = _unset,
         startTime: "typing.Union[str, None, Unset]" = _unset,
         statusCode: "typing.Union[int, None, Unset]" = _unset,
     ):
@@ -1365,6 +1369,10 @@ class v1Allocation(Printable):
             self.exitReason = exitReason
         if not isinstance(isReady, Unset):
             self.isReady = isReady
+        if not isinstance(placements, Unset):
+            self.placements = placements
+        if not isinstance(resourcePool, Unset):
+            self.resourcePool = resourcePool
         if not isinstance(startTime, Unset):
             self.startTime = startTime
         if not isinstance(statusCode, Unset):
@@ -1388,6 +1396,10 @@ class v1Allocation(Printable):
             kwargs["exitReason"] = obj["exitReason"]
         if "isReady" in obj:
             kwargs["isReady"] = obj["isReady"]
+        if "placements" in obj:
+            kwargs["placements"] = [v1Placement.from_json(x) for x in obj["placements"]] if obj["placements"] is not None else None
+        if "resourcePool" in obj:
+            kwargs["resourcePool"] = obj["resourcePool"]
         if "startTime" in obj:
             kwargs["startTime"] = obj["startTime"]
         if "statusCode" in obj:
@@ -1411,6 +1423,10 @@ class v1Allocation(Printable):
             out["exitReason"] = self.exitReason
         if not omit_unset or "isReady" in vars(self):
             out["isReady"] = self.isReady
+        if not omit_unset or "placements" in vars(self):
+            out["placements"] = None if self.placements is None else [x.to_json(omit_unset) for x in self.placements]
+        if not omit_unset or "resourcePool" in vars(self):
+            out["resourcePool"] = self.resourcePool
         if not omit_unset or "startTime" in vars(self):
             out["startTime"] = self.startTime
         if not omit_unset or "statusCode" in vars(self):
@@ -2119,6 +2135,56 @@ class v1CancelExperimentsResponse(Printable):
     def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
         out: "typing.Dict[str, typing.Any]" = {
             "results": [x.to_json(omit_unset) for x in self.results],
+        }
+        return out
+
+class v1CancelSubmissionRequest(Printable):
+    """Cancel a submitted job."""
+    jobId: "typing.Optional[str]" = None
+
+    def __init__(
+        self,
+        *,
+        jobId: "typing.Union[str, None, Unset]" = _unset,
+    ):
+        if not isinstance(jobId, Unset):
+            self.jobId = jobId
+
+    @classmethod
+    def from_json(cls, obj: Json) -> "v1CancelSubmissionRequest":
+        kwargs: "typing.Dict[str, typing.Any]" = {
+        }
+        if "jobId" in obj:
+            kwargs["jobId"] = obj["jobId"]
+        return cls(**kwargs)
+
+    def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
+        out: "typing.Dict[str, typing.Any]" = {
+        }
+        if not omit_unset or "jobId" in vars(self):
+            out["jobId"] = self.jobId
+        return out
+
+class v1CancelSubmissionResponse(Printable):
+    """Response to CancelSubmissionRequest."""
+
+    def __init__(
+        self,
+        *,
+        submission: "v1Submission",
+    ):
+        self.submission = submission
+
+    @classmethod
+    def from_json(cls, obj: Json) -> "v1CancelSubmissionResponse":
+        kwargs: "typing.Dict[str, typing.Any]" = {
+            "submission": v1Submission.from_json(obj["submission"]),
+        }
+        return cls(**kwargs)
+
+    def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
+        out: "typing.Dict[str, typing.Any]" = {
+            "submission": self.submission.to_json(omit_unset),
         }
         return out
 
@@ -6464,6 +6530,29 @@ class v1GetSlotsResponse(Printable):
             out["slots"] = None if self.slots is None else [x.to_json(omit_unset) for x in self.slots]
         return out
 
+class v1GetSubmissionResponse(Printable):
+    """Response to GetSubmissionRequest."""
+
+    def __init__(
+        self,
+        *,
+        submission: "v1Submission",
+    ):
+        self.submission = submission
+
+    @classmethod
+    def from_json(cls, obj: Json) -> "v1GetSubmissionResponse":
+        kwargs: "typing.Dict[str, typing.Any]" = {
+            "submission": v1Submission.from_json(obj["submission"]),
+        }
+        return cls(**kwargs)
+
+    def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
+        out: "typing.Dict[str, typing.Any]" = {
+            "submission": self.submission.to_json(omit_unset),
+        }
+        return out
+
 class v1GetTaskAcceleratorDataResponse(Printable):
 
     def __init__(
@@ -8610,6 +8699,37 @@ class v1ListRolesResponse(Printable):
             "pagination": self.pagination.to_json(omit_unset),
             "roles": [x.to_json(omit_unset) for x in self.roles],
         }
+        return out
+
+class v1ListSubmissionsResponse(Printable):
+    """Response to ListSubmissionsRequest."""
+    nextPageToken: "typing.Optional[str]" = None
+
+    def __init__(
+        self,
+        *,
+        submissions: "typing.Sequence[v1Submission]",
+        nextPageToken: "typing.Union[str, None, Unset]" = _unset,
+    ):
+        self.submissions = submissions
+        if not isinstance(nextPageToken, Unset):
+            self.nextPageToken = nextPageToken
+
+    @classmethod
+    def from_json(cls, obj: Json) -> "v1ListSubmissionsResponse":
+        kwargs: "typing.Dict[str, typing.Any]" = {
+            "submissions": [v1Submission.from_json(x) for x in obj["submissions"]],
+        }
+        if "nextPageToken" in obj:
+            kwargs["nextPageToken"] = obj["nextPageToken"]
+        return cls(**kwargs)
+
+    def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
+        out: "typing.Dict[str, typing.Any]" = {
+            "submissions": [x.to_json(omit_unset) for x in self.submissions],
+        }
+        if not omit_unset or "nextPageToken" in vars(self):
+            out["nextPageToken"] = self.nextPageToken
         return out
 
 class v1ListWorkspaceNamespaceBindingsResponse(Printable):
@@ -11038,6 +11158,41 @@ class v1PermissionType(DetEnum):
     CREATE_OTHER_TOKEN = "PERMISSION_TYPE_CREATE_OTHER_TOKEN"
     VIEW_OTHER_TOKEN = "PERMISSION_TYPE_VIEW_OTHER_TOKEN"
     VIEW_TOKEN = "PERMISSION_TYPE_VIEW_TOKEN"
+
+class v1Placement(Printable):
+    """Where one container of an allocation was placed."""
+    acceleratorUuids: "typing.Optional[typing.Sequence[str]]" = None
+    node: "typing.Optional[str]" = None
+
+    def __init__(
+        self,
+        *,
+        acceleratorUuids: "typing.Union[typing.Sequence[str], None, Unset]" = _unset,
+        node: "typing.Union[str, None, Unset]" = _unset,
+    ):
+        if not isinstance(acceleratorUuids, Unset):
+            self.acceleratorUuids = acceleratorUuids
+        if not isinstance(node, Unset):
+            self.node = node
+
+    @classmethod
+    def from_json(cls, obj: Json) -> "v1Placement":
+        kwargs: "typing.Dict[str, typing.Any]" = {
+        }
+        if "acceleratorUuids" in obj:
+            kwargs["acceleratorUuids"] = obj["acceleratorUuids"]
+        if "node" in obj:
+            kwargs["node"] = obj["node"]
+        return cls(**kwargs)
+
+    def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
+        out: "typing.Dict[str, typing.Any]" = {
+        }
+        if not omit_unset or "acceleratorUuids" in vars(self):
+            out["acceleratorUuids"] = self.acceleratorUuids
+        if not omit_unset or "node" in vars(self):
+            out["node"] = self.node
+        return out
 
 class v1PolymorphicFilter(Printable):
     doubleRange: "typing.Optional[v1DoubleFieldFilter]" = None
@@ -15240,6 +15395,184 @@ class v1StartTrialResponse(Printable):
             out["latestCheckpoint"] = self.latestCheckpoint
         return out
 
+class v1Submission(Printable):
+    """A job created through a managed create, as the database records it."""
+    endedAt: "typing.Optional[str]" = None
+    idempotencyKey: "typing.Optional[str]" = None
+    projectId: "typing.Optional[int]" = None
+    requestDigest: "typing.Optional[str]" = None
+    submittedAt: "typing.Optional[str]" = None
+
+    def __init__(
+        self,
+        *,
+        admission: "v1Admission",
+        entityId: str,
+        exitClass: "v1ExitClass",
+        exitReason: str,
+        jobId: str,
+        kind: "v1SubmissionKind",
+        name: str,
+        owner: str,
+        ownerId: int,
+        state: "v1SubmissionState",
+        tasks: "typing.Sequence[v1SubmissionTask]",
+        workspaceId: int,
+        endedAt: "typing.Union[str, None, Unset]" = _unset,
+        idempotencyKey: "typing.Union[str, None, Unset]" = _unset,
+        projectId: "typing.Union[int, None, Unset]" = _unset,
+        requestDigest: "typing.Union[str, None, Unset]" = _unset,
+        submittedAt: "typing.Union[str, None, Unset]" = _unset,
+    ):
+        self.admission = admission
+        self.entityId = entityId
+        self.exitClass = exitClass
+        self.exitReason = exitReason
+        self.jobId = jobId
+        self.kind = kind
+        self.name = name
+        self.owner = owner
+        self.ownerId = ownerId
+        self.state = state
+        self.tasks = tasks
+        self.workspaceId = workspaceId
+        if not isinstance(endedAt, Unset):
+            self.endedAt = endedAt
+        if not isinstance(idempotencyKey, Unset):
+            self.idempotencyKey = idempotencyKey
+        if not isinstance(projectId, Unset):
+            self.projectId = projectId
+        if not isinstance(requestDigest, Unset):
+            self.requestDigest = requestDigest
+        if not isinstance(submittedAt, Unset):
+            self.submittedAt = submittedAt
+
+    @classmethod
+    def from_json(cls, obj: Json) -> "v1Submission":
+        kwargs: "typing.Dict[str, typing.Any]" = {
+            "admission": v1Admission(obj["admission"]),
+            "entityId": obj["entityId"],
+            "exitClass": v1ExitClass(obj["exitClass"]),
+            "exitReason": obj["exitReason"],
+            "jobId": obj["jobId"],
+            "kind": v1SubmissionKind(obj["kind"]),
+            "name": obj["name"],
+            "owner": obj["owner"],
+            "ownerId": obj["ownerId"],
+            "state": v1SubmissionState(obj["state"]),
+            "tasks": [v1SubmissionTask.from_json(x) for x in obj["tasks"]],
+            "workspaceId": obj["workspaceId"],
+        }
+        if "endedAt" in obj:
+            kwargs["endedAt"] = obj["endedAt"]
+        if "idempotencyKey" in obj:
+            kwargs["idempotencyKey"] = obj["idempotencyKey"]
+        if "projectId" in obj:
+            kwargs["projectId"] = obj["projectId"]
+        if "requestDigest" in obj:
+            kwargs["requestDigest"] = obj["requestDigest"]
+        if "submittedAt" in obj:
+            kwargs["submittedAt"] = obj["submittedAt"]
+        return cls(**kwargs)
+
+    def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
+        out: "typing.Dict[str, typing.Any]" = {
+            "admission": self.admission.value,
+            "entityId": self.entityId,
+            "exitClass": self.exitClass.value,
+            "exitReason": self.exitReason,
+            "jobId": self.jobId,
+            "kind": self.kind.value,
+            "name": self.name,
+            "owner": self.owner,
+            "ownerId": self.ownerId,
+            "state": self.state.value,
+            "tasks": [x.to_json(omit_unset) for x in self.tasks],
+            "workspaceId": self.workspaceId,
+        }
+        if not omit_unset or "endedAt" in vars(self):
+            out["endedAt"] = self.endedAt
+        if not omit_unset or "idempotencyKey" in vars(self):
+            out["idempotencyKey"] = self.idempotencyKey
+        if not omit_unset or "projectId" in vars(self):
+            out["projectId"] = self.projectId
+        if not omit_unset or "requestDigest" in vars(self):
+            out["requestDigest"] = self.requestDigest
+        if not omit_unset or "submittedAt" in vars(self):
+            out["submittedAt"] = self.submittedAt
+        return out
+
+class v1SubmissionKind(DetEnum):
+    """The kind of job a submission created.
+    - SUBMISSION_KIND_UNSPECIFIED: The kind is unknown, or any kind in a filter.
+    - SUBMISSION_KIND_COMMAND: A command.
+    - SUBMISSION_KIND_SHELL: A shell.
+    - SUBMISSION_KIND_GENERIC: A generic task.
+    - SUBMISSION_KIND_EXPERIMENT: An experiment.
+    """
+    UNSPECIFIED = "SUBMISSION_KIND_UNSPECIFIED"
+    COMMAND = "SUBMISSION_KIND_COMMAND"
+    SHELL = "SUBMISSION_KIND_SHELL"
+    GENERIC = "SUBMISSION_KIND_GENERIC"
+    EXPERIMENT = "SUBMISSION_KIND_EXPERIMENT"
+
+class v1SubmissionState(DetEnum):
+    """The state of a submitted job, derived from the database.
+    - SUBMISSION_STATE_UNSPECIFIED: The state is unknown, or any state in a filter.
+    - SUBMISSION_STATE_QUEUED: The job waits for placement, including between allocations and while a
+    paused generic task resumes.
+    - SUBMISSION_STATE_RUNNING: The job's current allocation is placed and has not ended, or the
+    experiment is active or stopping.
+    - SUBMISSION_STATE_PAUSED: The generic task or experiment is paused.
+    - SUBMISSION_STATE_COMPLETED: The job ended without failing.
+    - SUBMISSION_STATE_FAILED: The job ended with a failure.
+    - SUBMISSION_STATE_CANCELED: The job ended after it was asked to stop.
+    - SUBMISSION_STATE_DELETED: The experiment was deleted.
+    """
+    UNSPECIFIED = "SUBMISSION_STATE_UNSPECIFIED"
+    QUEUED = "SUBMISSION_STATE_QUEUED"
+    RUNNING = "SUBMISSION_STATE_RUNNING"
+    PAUSED = "SUBMISSION_STATE_PAUSED"
+    COMPLETED = "SUBMISSION_STATE_COMPLETED"
+    FAILED = "SUBMISSION_STATE_FAILED"
+    CANCELED = "SUBMISSION_STATE_CANCELED"
+    DELETED = "SUBMISSION_STATE_DELETED"
+
+class v1SubmissionTask(Printable):
+    """A task of a submitted job with its allocations."""
+    trialId: "typing.Optional[int]" = None
+
+    def __init__(
+        self,
+        *,
+        allocations: "typing.Sequence[v1Allocation]",
+        taskId: str,
+        trialId: "typing.Union[int, None, Unset]" = _unset,
+    ):
+        self.allocations = allocations
+        self.taskId = taskId
+        if not isinstance(trialId, Unset):
+            self.trialId = trialId
+
+    @classmethod
+    def from_json(cls, obj: Json) -> "v1SubmissionTask":
+        kwargs: "typing.Dict[str, typing.Any]" = {
+            "allocations": [v1Allocation.from_json(x) for x in obj["allocations"]],
+            "taskId": obj["taskId"],
+        }
+        if "trialId" in obj:
+            kwargs["trialId"] = obj["trialId"]
+        return cls(**kwargs)
+
+    def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
+        out: "typing.Dict[str, typing.Any]" = {
+            "allocations": [x.to_json(omit_unset) for x in self.allocations],
+            "taskId": self.taskId,
+        }
+        if not omit_unset or "trialId" in vars(self):
+            out["trialId"] = self.trialId
+        return out
+
 class v1SubmitOptions(Printable):
     """Options for submitting a managed command, shell, generic task, or experiment."""
     admission: "typing.Optional[v1Admission]" = None
@@ -18166,6 +18499,34 @@ def post_CancelExperiments(
         return v1CancelExperimentsResponse.from_json(_resp.json())
     raise APIHttpError("post_CancelExperiments", _resp)
 
+def post_CancelSubmission(
+    session: "api.BaseSession",
+    *,
+    body: "v1CancelSubmissionRequest",
+    jobId: str,
+) -> "v1CancelSubmissionResponse":
+    """Cancel a submitted job. The cancel is recorded before the job is
+    signaled, so a job that has not started yet is stopped as it starts.
+
+    - jobId: The ID of the job.
+    """
+    _params = None
+    if type(jobId) == str:
+        jobId = parse.quote(jobId)
+    _resp = session._do_request(
+        method="POST",
+        path=f"/api/v1/submissions/{jobId}/cancel",
+        params=_params,
+        json=body.to_json(True),
+        data=None,
+        headers=None,
+        timeout=None,
+        stream=False,
+    )
+    if _resp.status_code == 200:
+        return v1CancelSubmissionResponse.from_json(_resp.json())
+    raise APIHttpError("post_CancelSubmission", _resp)
+
 def post_CheckpointsRemoveFiles(
     session: "api.BaseSession",
     *,
@@ -20882,6 +21243,32 @@ def get_GetSlots(
         return v1GetSlotsResponse.from_json(_resp.json())
     raise APIHttpError("get_GetSlots", _resp)
 
+def get_GetSubmission(
+    session: "api.BaseSession",
+    *,
+    jobId: str,
+) -> "v1GetSubmissionResponse":
+    """Get a job submitted through a managed create, from the database.
+
+    - jobId: The ID of the job.
+    """
+    _params = None
+    if type(jobId) == str:
+        jobId = parse.quote(jobId)
+    _resp = session._do_request(
+        method="GET",
+        path=f"/api/v1/submissions/{jobId}",
+        params=_params,
+        json=None,
+        data=None,
+        headers=None,
+        timeout=None,
+        stream=False,
+    )
+    if _resp.status_code == 200:
+        return v1GetSubmissionResponse.from_json(_resp.json())
+    raise APIHttpError("get_GetSubmission", _resp)
+
 def get_GetTask(
     session: "api.BaseSession",
     *,
@@ -22412,6 +22799,64 @@ def post_ListRoles(
     if _resp.status_code == 200:
         return v1ListRolesResponse.from_json(_resp.json())
     raise APIHttpError("post_ListRoles", _resp)
+
+def get_ListSubmissions(
+    session: "api.BaseSession",
+    *,
+    kind: "typing.Optional[v1SubmissionKind]" = None,
+    limit: "typing.Optional[int]" = None,
+    ownerId: "typing.Optional[int]" = None,
+    pageToken: "typing.Optional[str]" = None,
+    state: "typing.Optional[v1SubmissionState]" = None,
+    submittedAfter: "typing.Optional[str]" = None,
+) -> "v1ListSubmissionsResponse":
+    """List jobs submitted through managed creates, newest first.
+
+    - kind: Only jobs of this kind.
+
+ - SUBMISSION_KIND_UNSPECIFIED: The kind is unknown, or any kind in a filter.
+ - SUBMISSION_KIND_COMMAND: A command.
+ - SUBMISSION_KIND_SHELL: A shell.
+ - SUBMISSION_KIND_GENERIC: A generic task.
+ - SUBMISSION_KIND_EXPERIMENT: An experiment.
+    - limit: The most jobs to return, 100 by default and at most 1000.
+    - ownerId: The user whose jobs to list. The default is the caller.
+    - pageToken: The next_page_token of the previous page.
+    - state: Only jobs in this state.
+
+ - SUBMISSION_STATE_UNSPECIFIED: The state is unknown, or any state in a filter.
+ - SUBMISSION_STATE_QUEUED: The job waits for placement, including between allocations and while a
+paused generic task resumes.
+ - SUBMISSION_STATE_RUNNING: The job's current allocation is placed and has not ended, or the
+experiment is active or stopping.
+ - SUBMISSION_STATE_PAUSED: The generic task or experiment is paused.
+ - SUBMISSION_STATE_COMPLETED: The job ended without failing.
+ - SUBMISSION_STATE_FAILED: The job ended with a failure.
+ - SUBMISSION_STATE_CANCELED: The job ended after it was asked to stop.
+ - SUBMISSION_STATE_DELETED: The experiment was deleted.
+    - submittedAfter: Only jobs submitted after this time.
+    """
+    _params = {
+        "kind": kind.value if kind is not None else None,
+        "limit": limit,
+        "ownerId": ownerId,
+        "pageToken": pageToken,
+        "state": state.value if state is not None else None,
+        "submittedAfter": submittedAfter,
+    }
+    _resp = session._do_request(
+        method="GET",
+        path="/api/v1/submissions",
+        params=_params,
+        json=None,
+        data=None,
+        headers=None,
+        timeout=None,
+        stream=False,
+    )
+    if _resp.status_code == 200:
+        return v1ListSubmissionsResponse.from_json(_resp.json())
+    raise APIHttpError("get_ListSubmissions", _resp)
 
 def get_ListWorkspaceNamespaceBindings(
     session: "api.BaseSession",

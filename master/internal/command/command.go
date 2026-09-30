@@ -294,6 +294,10 @@ func (c *Command) Start(ctx context.Context) error {
 			c.syslog.WithError(err).Warnf("command persist failure")
 		}
 	}
+
+	if err := task.KillIfCancelRequested(ctx, c.jobID, c.allocationID); err != nil {
+		c.syslog.WithError(err).Error("checking whether a started command was asked to stop")
+	}
 	return nil
 }
 

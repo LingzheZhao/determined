@@ -130,6 +130,7 @@ func (m *Master) restoreExperiment(expModel *model.Experiment) error {
 	if err := e.Start(); err != nil {
 		return errors.Wrapf(err, "failed to start experiment %d", expModel.ID)
 	}
+	killExperimentIfCancelRequested(e, expModel.ID, expModel.JobID)
 
 	return nil
 }

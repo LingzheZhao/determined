@@ -272,32 +272,41 @@ func (a *apiServer) KillCommand(
 		}
 	}()
 
-	targetCmd, err := a.GetCommand(ctx, &apiv1.GetCommandRequest{CommandId: req.CommandId})
-	if err != nil {
-		return nil, err
-	}
 	curUser, _, err := grpcutil.GetUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	ctx = audit.SupplyEntityID(ctx, req.CommandId)
-	if err = command.AuthZProvider.Get().CanTerminateNSC(
-		ctx, *curUser, model.AccessScopeID(targetCmd.Command.WorkspaceId),
-	); err != nil {
-		return nil, err
-	}
-	if err = authorizeNSCControl(ctx, *curUser,
-		model.AccessScopeID(targetCmd.Command.WorkspaceId), targetCmd.Command.UserId); err != nil {
-		return nil, err
-	}
-
-	cmd, err := command.DefaultCmdService.KillNTSC(req.CommandId, model.TaskTypeCommand)
+	record, err := ntscSubmission(ctx, *curUser, req.CommandId, model.TaskTypeCommand)
 	if err != nil {
 		return nil, err
 	}
+	if err := cancelNTSC(ctx, *curUser, record); err != nil {
+		return nil, err
+	}
 
-	return &apiv1.KillCommandResponse{Command: cmd.ToV1Command()}, nil
+	// A command that is not registered yet, or no longer, is reported from the database.
+	if got, err := command.DefaultCmdService.GetCommand(
+		&apiv1.GetCommandRequest{CommandId: req.CommandId},
+	); err == nil {
+		return &apiv1.KillCommandResponse{Command: got.Command}, nil
+	}
+	if record, err = submission.Get(ctx, record.JobID); err != nil {
+		return nil, err
+	}
+	cmd := &commandv1.Command{
+		Id:           req.CommandId,
+		State:        ntscStateProto(record),
+		Description:  valueOf(record.Name),
+		Username:     valueOf(record.Owner),
+		UserId:       int32(valueOf(record.OwnerID)),
+		ResourcePool: record.ResourcePool(),
+		JobId:        record.JobID.String(),
+		WorkspaceId:  int32(valueOf(record.WorkspaceID)),
+	}
+	if record.SubmittedAt != nil {
+		cmd.StartTime = protoutils.ToTimestamp(*record.SubmittedAt)
+	}
+	return &apiv1.KillCommandResponse{Command: cmd}, nil
 }
 
 func (a *apiServer) SetCommandPriority(

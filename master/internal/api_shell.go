@@ -126,30 +126,41 @@ func (a *apiServer) KillShell(
 		}
 	}()
 
-	getResponse, err := a.GetShell(ctx, &apiv1.GetShellRequest{ShellId: req.ShellId})
-	if err != nil {
-		return nil, err
-	}
-
 	curUser, _, err := grpcutil.GetUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	ctx = audit.SupplyEntityID(ctx, req.ShellId)
-	err = command.AuthZProvider.Get().CanTerminateNSC(
-		ctx, *curUser, model.AccessScopeID(getResponse.Shell.WorkspaceId))
+	record, err := ntscSubmission(ctx, *curUser, req.ShellId, model.TaskTypeShell)
 	if err != nil {
 		return nil, err
 	}
-	if err = authorizeNSCControl(ctx, *curUser,
-		model.AccessScopeID(getResponse.Shell.WorkspaceId), getResponse.Shell.UserId); err != nil {
+	if err := cancelNTSC(ctx, *curUser, record); err != nil {
 		return nil, err
 	}
 
-	cmd, err := command.DefaultCmdService.KillNTSC(req.ShellId, model.TaskTypeShell)
-
-	return &apiv1.KillShellResponse{Shell: cmd.ToV1Shell()}, nil
+	// A shell that is not registered yet, or no longer, is reported from the database.
+	if got, err := command.DefaultCmdService.GetShell(
+		&apiv1.GetShellRequest{ShellId: req.ShellId},
+	); err == nil {
+		return &apiv1.KillShellResponse{Shell: got.Shell}, nil
+	}
+	if record, err = submission.Get(ctx, record.JobID); err != nil {
+		return nil, err
+	}
+	shell := &shellv1.Shell{
+		Id:           req.ShellId,
+		State:        ntscStateProto(record),
+		Description:  valueOf(record.Name),
+		Username:     valueOf(record.Owner),
+		UserId:       int32(valueOf(record.OwnerID)),
+		ResourcePool: record.ResourcePool(),
+		JobId:        record.JobID.String(),
+		WorkspaceId:  int32(valueOf(record.WorkspaceID)),
+	}
+	if record.SubmittedAt != nil {
+		shell.StartTime = protoutils.ToTimestamp(*record.SubmittedAt)
+	}
+	return &apiv1.KillShellResponse{Shell: shell}, nil
 }
 
 func (a *apiServer) SetShellPriority(

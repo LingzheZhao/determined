@@ -269,6 +269,28 @@ func (e *internalExperiment) Start() error {
 	return nil
 }
 
+// killExperimentIfCancelRequested kills an experiment that was just registered if its job was asked
+// to stop. A cancel records the request before it kills the registered experiment, so either the
+// cancel finds the experiment or this finds the request.
+func killExperimentIfCancelRequested(e experiment.Experiment, experimentID int, jobID model.JobID) {
+	syslog := log.WithField("experiment-id", experimentID)
+	requested, err := internaldb.JobCancelRequested(context.TODO(), jobID)
+	if err != nil {
+		syslog.WithError(err).Error("checking whether a started experiment was asked to stop")
+		return
+	}
+	if !requested {
+		return
+	}
+	// Killing the trials waits for their restored allocations to be reattached, which must not
+	// hold up the start.
+	go func() {
+		if err := e.KillExperiment(); err != nil {
+			syslog.WithError(err).Error("killing an experiment that was asked to stop")
+		}
+	}()
+}
+
 func (e *internalExperiment) register() error {
 	return experiment.ExperimentRegistry.Add(e.ID, e)
 }

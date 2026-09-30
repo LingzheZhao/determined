@@ -462,6 +462,10 @@ func (t *preparedGenericTask) start(ctx context.Context, m *Master) error {
 	}
 
 	jobservice.DefaultService.RegisterJob(t.jobID, t.spec)
+	if err := task.KillIfCancelRequested(ctx, t.jobID, t.allocationID); err != nil {
+		logrus.WithField("task-id", t.taskID).WithError(err).
+			Error("checking whether a started generic task was asked to stop")
+	}
 	return nil
 }
 
@@ -674,7 +678,7 @@ func (a *apiServer) KillGenericTask(
 	ctx context.Context, req *apiv1.KillGenericTaskRequest,
 ) (*apiv1.KillGenericTaskResponse, error) {
 	if !genericTaskMutation.TryLock() {
-		return nil, fmt.Errorf("generic task mutation is in progress")
+		return nil, errGenericTaskMutationBusy
 	}
 	defer genericTaskMutation.Unlock()
 	killTaskID := model.TaskID(req.TaskId)
@@ -688,7 +692,6 @@ func (a *apiServer) KillGenericTask(
 	if taskModel.TaskType != model.TaskTypeGeneric {
 		return nil, fmt.Errorf("this operation is currently only supported for generic tasks")
 	}
-	overrideStates := []model.TaskState{model.TaskStateCanceled, model.TaskStateCompleted}
 	if req.KillFromRoot {
 		rootID, err := a.FindRoot(ctx, model.TaskID(req.TaskId))
 		if err != nil {
@@ -696,43 +699,18 @@ func (a *apiServer) KillGenericTask(
 		}
 		killTaskID = rootID
 	}
-	tasksToDelete, err := a.GetTaskChildren(ctx, killTaskID, nil)
+	tasksToKill, err := a.authorizedGenericTaskTree(ctx, model.TaskID(req.TaskId), killTaskID)
 	if err != nil {
-		return nil, err
-	}
-	if err := a.authorizeGenericTaskMutation(
-		ctx, model.TaskID(req.TaskId), tasksToDelete,
-	); err != nil {
 		return nil, err
 	}
 	if taskModel.State == nil {
 		return nil, fmt.Errorf("task state is NULL")
 	}
-	if slices.Contains(overrideStates, *taskModel.State) {
+	if *taskModel.State == model.TaskStateCanceled || *taskModel.State == model.TaskStateCompleted {
 		return nil, fmt.Errorf("cannot cancel task %s as it is in state '%s'", req.TaskId, *taskModel.State)
 	}
-	tasksToDelete = filterTasksByState(tasksToDelete, overrideStates)
-	resumeAllocations, err := cancelGenericTaskResumeMembers(ctx, tasksToDelete)
-	if err != nil {
+	if err := cancelGenericTaskTree(ctx, tasksToKill); err != nil {
 		return nil, err
-	}
-	for _, childTask := range tasksToDelete {
-		if intendedID, found := resumeAllocations[childTask.TaskID]; found {
-			if slices.Contains(task.DefaultService.GetAllAllocationIDs(), intendedID) {
-				if err := task.DefaultService.Signal(intendedID, task.KillAllocation, "user requested task kill"); err != nil {
-					return nil, err
-				}
-			}
-			continue
-		}
-		allocationID, err := getAllocationFromTaskID(ctx, childTask.TaskID)
-		if err != nil {
-			return nil, err
-		}
-		err = task.DefaultService.Signal(model.AllocationID(allocationID), task.KillAllocation, "user requested task kill")
-		if err != nil {
-			return nil, err
-		}
 	}
 	return &apiv1.KillGenericTaskResponse{}, nil
 }
@@ -741,7 +719,7 @@ func (a *apiServer) PauseGenericTask(
 	ctx context.Context, req *apiv1.PauseGenericTaskRequest,
 ) (*apiv1.PauseGenericTaskResponse, error) {
 	if !genericTaskMutation.TryLock() {
-		return nil, fmt.Errorf("generic task mutation is in progress")
+		return nil, errGenericTaskMutationBusy
 	}
 	defer genericTaskMutation.Unlock()
 	var taskModel model.Task
@@ -822,7 +800,7 @@ func (a *apiServer) UnpauseGenericTask(
 	ctx context.Context, req *apiv1.UnpauseGenericTaskRequest,
 ) (*apiv1.UnpauseGenericTaskResponse, error) {
 	if !genericTaskMutation.TryLock() {
-		return nil, fmt.Errorf("generic task mutation is in progress")
+		return nil, errGenericTaskMutationBusy
 	}
 	defer genericTaskMutation.Unlock()
 	var taskModel model.Task

@@ -32,7 +32,19 @@ SELECT
                 exit_reason,
                 status_code,
                 'EXIT_CLASS_' || NULLIF(exit_class, '') AS exit_class,
-                exit_detail
+                exit_detail,
+                resource_pool,
+                (
+                    SELECT COALESCE(
+                        JSONB_AGG(JSONB_BUILD_OBJECT(
+                            'node', aa.node_name,
+                            'accelerator_uuids', COALESCE(aa.accelerator_uuids, '{}')
+                        ) ORDER BY aa.id),
+                        '[]'::jsonb
+                    )
+                    FROM allocation_accelerators aa
+                    WHERE aa.allocation_id = allocations.allocation_id
+                ) AS placements
             FROM allocations
             WHERE allocations.task_id = t.task_id
         ) allo

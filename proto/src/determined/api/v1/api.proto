@@ -25,6 +25,7 @@ import "determined/api/v1/template.proto";
 import "determined/api/v1/tensorboard.proto";
 import "determined/api/v1/trial.proto";
 import "determined/api/v1/shell.proto";
+import "determined/api/v1/submission.proto";
 import "determined/api/v1/token.proto";
 import "determined/api/v1/user.proto";
 import "determined/api/v1/webhook.proto";
@@ -1678,6 +1679,40 @@ service Determined {
     };
     option (grpc.gateway.protoc_gen_swagger.options.openapiv2_operation) = {
       tags: "Tasks"
+    };
+  }
+
+  // Get a job submitted through a managed create, from the database.
+  rpc GetSubmission(GetSubmissionRequest) returns (GetSubmissionResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/submissions/{job_id}"
+    };
+    option (grpc.gateway.protoc_gen_swagger.options.openapiv2_operation) = {
+      tags: "Submissions"
+    };
+  }
+
+  // List jobs submitted through managed creates, newest first.
+  rpc ListSubmissions(ListSubmissionsRequest)
+      returns (ListSubmissionsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/submissions"
+    };
+    option (grpc.gateway.protoc_gen_swagger.options.openapiv2_operation) = {
+      tags: "Submissions"
+    };
+  }
+
+  // Cancel a submitted job. The cancel is recorded before the job is
+  // signaled, so a job that has not started yet is stopped as it starts.
+  rpc CancelSubmission(CancelSubmissionRequest)
+      returns (CancelSubmissionResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/submissions/{job_id}/cancel"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_swagger.options.openapiv2_operation) = {
+      tags: "Submissions"
     };
   }
 

@@ -332,6 +332,7 @@ func (a Allocation) Proto() *taskv1.Allocation {
 		StatusCode:   a.StatusCode,
 		ExitClass:    a.ExitClass.Proto(),
 		ExitDetail:   a.ExitDetail.Proto(),
+		ResourcePool: a.ResourcePool,
 	}
 }
 

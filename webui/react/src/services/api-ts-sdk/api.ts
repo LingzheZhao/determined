@@ -1321,6 +1321,18 @@ export interface V1Allocation {
      * @memberof V1Allocation
      */
     exitDetail?: any;
+    /**
+     * The resource pool the allocation was requested from.
+     * @type {string}
+     * @memberof V1Allocation
+     */
+    resourcePool?: string;
+    /**
+     * Where the allocation's containers were placed, as their tasks reported it. Empty until a container reports its accelerators.
+     * @type {Array<V1Placement>}
+     * @memberof V1Allocation
+     */
+    placements?: Array<V1Placement>;
 }
 /**
  * Arguments to an all gather.
@@ -1851,6 +1863,32 @@ export interface V1CancelExperimentsResponse {
      * @memberof V1CancelExperimentsResponse
      */
     results: Array<V1ExperimentActionResult>;
+}
+/**
+ * Cancel a submitted job.
+ * @export
+ * @interface V1CancelSubmissionRequest
+ */
+export interface V1CancelSubmissionRequest {
+    /**
+     * The ID of the job.
+     * @type {string}
+     * @memberof V1CancelSubmissionRequest
+     */
+    jobId?: string;
+}
+/**
+ * Response to CancelSubmissionRequest.
+ * @export
+ * @interface V1CancelSubmissionResponse
+ */
+export interface V1CancelSubmissionResponse {
+    /**
+     * The job after the cancel was recorded.
+     * @type {V1Submission}
+     * @memberof V1CancelSubmissionResponse
+     */
+    submission: V1Submission;
 }
 /**
  * Checkpoint a collection of files saved by a task.
@@ -4899,6 +4937,19 @@ export interface V1GetSlotsResponse {
     slots?: Array<V1Slot>;
 }
 /**
+ * Response to GetSubmissionRequest.
+ * @export
+ * @interface V1GetSubmissionResponse
+ */
+export interface V1GetSubmissionResponse {
+    /**
+     * The submitted job.
+     * @type {V1Submission}
+     * @memberof V1GetSubmissionResponse
+     */
+    submission: V1Submission;
+}
+/**
  * 
  * @export
  * @interface V1GetTaskAcceleratorDataResponse
@@ -6328,6 +6379,25 @@ export interface V1ListRPsBoundToWorkspaceResponse {
      * @memberof V1ListRPsBoundToWorkspaceResponse
      */
     pagination?: V1Pagination;
+}
+/**
+ * Response to ListSubmissionsRequest.
+ * @export
+ * @interface V1ListSubmissionsResponse
+ */
+export interface V1ListSubmissionsResponse {
+    /**
+     * The submitted jobs.
+     * @type {Array<V1Submission>}
+     * @memberof V1ListSubmissionsResponse
+     */
+    submissions: Array<V1Submission>;
+    /**
+     * The token of the next page, empty on the last page. A page can hold fewer jobs than the limit and still be followed by another.
+     * @type {string}
+     * @memberof V1ListSubmissionsResponse
+     */
+    nextPageToken?: string;
 }
 /**
  * Response for listing namespaces bound to a workspace.
@@ -8077,6 +8147,25 @@ export type V1PermissionType = ValueOf<typeof V1PermissionType>
  * @interface V1PinWorkspaceResponse
  */
 export interface V1PinWorkspaceResponse {
+}
+/**
+ * Where one container of an allocation was placed.
+ * @export
+ * @interface V1Placement
+ */
+export interface V1Placement {
+    /**
+     * The agent node that runs the container.
+     * @type {string}
+     * @memberof V1Placement
+     */
+    node?: string;
+    /**
+     * The UUIDs of the accelerators assigned to the container.
+     * @type {Array<string>}
+     * @memberof V1Placement
+     */
+    acceleratorUuids?: Array<string>;
 }
 /**
  * 
@@ -11129,6 +11218,169 @@ export interface V1StartTrialResponse {
      * @memberof V1StartTrialResponse
      */
     stepsCompleted: number;
+}
+/**
+ * A job created through a managed create, as the database records it.
+ * @export
+ * @interface V1Submission
+ */
+export interface V1Submission {
+    /**
+     * The ID of the job.
+     * @type {string}
+     * @memberof V1Submission
+     */
+    jobId: string;
+    /**
+     * The kind of the job.
+     * @type {V1SubmissionKind}
+     * @memberof V1Submission
+     */
+    kind: V1SubmissionKind;
+    /**
+     * The ID of the job's task, or of its experiment.
+     * @type {string}
+     * @memberof V1Submission
+     */
+    entityId: string;
+    /**
+     * The ID of the user who submitted the job.
+     * @type {number}
+     * @memberof V1Submission
+     */
+    ownerId: number;
+    /**
+     * The username of the user who submitted the job.
+     * @type {string}
+     * @memberof V1Submission
+     */
+    owner: string;
+    /**
+     * The workspace of the job. An experiment's workspace follows its project.
+     * @type {number}
+     * @memberof V1Submission
+     */
+    workspaceId: number;
+    /**
+     * The project of a generic task or experiment.
+     * @type {number}
+     * @memberof V1Submission
+     */
+    projectId?: number;
+    /**
+     * The name of the job.
+     * @type {string}
+     * @memberof V1Submission
+     */
+    name: string;
+    /**
+     * The idempotency key the job was submitted with. Only its owner and admins see it.
+     * @type {string}
+     * @memberof V1Submission
+     */
+    idempotencyKey?: string;
+    /**
+     * The digest of the request that submitted the job. Only its owner and admins see it.
+     * @type {string}
+     * @memberof V1Submission
+     */
+    requestDigest?: string;
+    /**
+     * How the job was admitted to the scheduler.
+     * @type {V1Admission}
+     * @memberof V1Submission
+     */
+    admission: V1Admission;
+    /**
+     * When the job was submitted. Unset for a deleted experiment that left no task behind.
+     * @type {Date | DateString}
+     * @memberof V1Submission
+     */
+    submittedAt?: Date | DateString;
+    /**
+     * When the job ended. Unset while it runs or is paused.
+     * @type {Date | DateString}
+     * @memberof V1Submission
+     */
+    endedAt?: Date | DateString;
+    /**
+     * The state of the job.
+     * @type {V1SubmissionState}
+     * @memberof V1Submission
+     */
+    state: V1SubmissionState;
+    /**
+     * The exit class of the allocation that ended the job. Unspecified while the job has not ended.
+     * @type {V1ExitClass}
+     * @memberof V1Submission
+     */
+    exitClass: V1ExitClass;
+    /**
+     * The exit reason of the allocation that ended the job.
+     * @type {string}
+     * @memberof V1Submission
+     */
+    exitReason: string;
+    /**
+     * The tasks of the job with their allocations.
+     * @type {Array<V1SubmissionTask>}
+     * @memberof V1Submission
+     */
+    tasks: Array<V1SubmissionTask>;
+}
+/**
+ * The kind of job a submission created.   - SUBMISSION_KIND_UNSPECIFIED: The kind is unknown, or any kind in a filter.  - SUBMISSION_KIND_COMMAND: A command.  - SUBMISSION_KIND_SHELL: A shell.  - SUBMISSION_KIND_GENERIC: A generic task.  - SUBMISSION_KIND_EXPERIMENT: An experiment.
+ * @export
+ * @enum {string}
+ */
+export const V1SubmissionKind = {
+    UNSPECIFIED: 'SUBMISSION_KIND_UNSPECIFIED',
+    COMMAND: 'SUBMISSION_KIND_COMMAND',
+    SHELL: 'SUBMISSION_KIND_SHELL',
+    GENERIC: 'SUBMISSION_KIND_GENERIC',
+    EXPERIMENT: 'SUBMISSION_KIND_EXPERIMENT',
+} as const
+export type V1SubmissionKind = ValueOf<typeof V1SubmissionKind>
+/**
+ * The state of a submitted job, derived from the database.   - SUBMISSION_STATE_UNSPECIFIED: The state is unknown, or any state in a filter.  - SUBMISSION_STATE_QUEUED: The job waits for placement, including between allocations and while a paused generic task resumes.  - SUBMISSION_STATE_RUNNING: The job's current allocation is placed and has not ended, or the experiment is active or stopping.  - SUBMISSION_STATE_PAUSED: The generic task or experiment is paused.  - SUBMISSION_STATE_COMPLETED: The job ended without failing.  - SUBMISSION_STATE_FAILED: The job ended with a failure.  - SUBMISSION_STATE_CANCELED: The job ended after it was asked to stop.  - SUBMISSION_STATE_DELETED: The experiment was deleted.
+ * @export
+ * @enum {string}
+ */
+export const V1SubmissionState = {
+    UNSPECIFIED: 'SUBMISSION_STATE_UNSPECIFIED',
+    QUEUED: 'SUBMISSION_STATE_QUEUED',
+    RUNNING: 'SUBMISSION_STATE_RUNNING',
+    PAUSED: 'SUBMISSION_STATE_PAUSED',
+    COMPLETED: 'SUBMISSION_STATE_COMPLETED',
+    FAILED: 'SUBMISSION_STATE_FAILED',
+    CANCELED: 'SUBMISSION_STATE_CANCELED',
+    DELETED: 'SUBMISSION_STATE_DELETED',
+} as const
+export type V1SubmissionState = ValueOf<typeof V1SubmissionState>
+/**
+ * A task of a submitted job with its allocations.
+ * @export
+ * @interface V1SubmissionTask
+ */
+export interface V1SubmissionTask {
+    /**
+     * The ID of the task.
+     * @type {string}
+     * @memberof V1SubmissionTask
+     */
+    taskId: string;
+    /**
+     * The trial that runs the task, for an experiment.
+     * @type {number}
+     * @memberof V1SubmissionTask
+     */
+    trialId?: number;
+    /**
+     * The allocations of the task, oldest first.
+     * @type {Array<V1Allocation>}
+     * @memberof V1SubmissionTask
+     */
+    allocations: Array<V1Allocation>;
 }
 /**
  * Options for submitting a managed command, shell, generic task, or experiment.
@@ -31576,6 +31828,323 @@ export class ShellsApi extends BaseAPI {
      */
     public setShellPriority(shellId: string, body: V1SetShellPriorityRequest, options?: any) {
         return ShellsApiFp(this.configuration).setShellPriority(shellId, body, options)(this.fetch, this.basePath)
+    }
+    
+}
+
+/**
+ * SubmissionsApi - fetch parameter creator
+ * @export
+ */
+export const SubmissionsApiFetchParamCreator = function (configuration?: Configuration) {
+    return {
+        /**
+         * 
+         * @summary Cancel a submitted job. The cancel is recorded before the job is signaled, so a job that has not started yet is stopped as it starts.
+         * @param {string} jobId The ID of the job.
+         * @param {V1CancelSubmissionRequest} body
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        cancelSubmission(jobId: string, body: V1CancelSubmissionRequest, options: any = {}): FetchArgs {
+            // verify required parameter 'jobId' is not null or undefined
+            if (jobId === null || jobId === undefined) {
+                throw new RequiredError('jobId','Required parameter jobId was null or undefined when calling cancelSubmission.');
+            }
+            // verify required parameter 'body' is not null or undefined
+            if (body === null || body === undefined) {
+                throw new RequiredError('body','Required parameter body was null or undefined when calling cancelSubmission.');
+            }
+            const localVarPath = `/api/v1/submissions/{jobId}/cancel`
+                .replace(`{${"jobId"}}`, encodeURIComponent(String(jobId)));
+            const localVarUrlObj = new URL(localVarPath, BASE_PATH);
+            const localVarRequestOptions = { method: 'POST', ...options };
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+            
+            // authentication BearerToken required
+            if (configuration && configuration.apiKey) {
+                const localVarApiKeyValue = typeof configuration.apiKey === 'function'
+                    ? configuration.apiKey("Authorization")
+                    : configuration.apiKey;
+                localVarHeaderParameter["Authorization"] = localVarApiKeyValue;
+            }
+            
+            localVarHeaderParameter['Content-Type'] = 'application/json';
+            
+            objToSearchParams(localVarQueryParameter, localVarUrlObj.searchParams);
+            objToSearchParams(options.query || {}, localVarUrlObj.searchParams);
+            localVarRequestOptions.headers = { ...localVarHeaderParameter, ...options.headers };
+            localVarRequestOptions.body = JSON.stringify(body)
+            
+            return {
+                url: `${localVarUrlObj.pathname}${localVarUrlObj.search}`,
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         * 
+         * @summary Get a job submitted through a managed create, from the database.
+         * @param {string} jobId The ID of the job.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        getSubmission(jobId: string, options: any = {}): FetchArgs {
+            // verify required parameter 'jobId' is not null or undefined
+            if (jobId === null || jobId === undefined) {
+                throw new RequiredError('jobId','Required parameter jobId was null or undefined when calling getSubmission.');
+            }
+            const localVarPath = `/api/v1/submissions/{jobId}`
+                .replace(`{${"jobId"}}`, encodeURIComponent(String(jobId)));
+            const localVarUrlObj = new URL(localVarPath, BASE_PATH);
+            const localVarRequestOptions = { method: 'GET', ...options };
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+            
+            // authentication BearerToken required
+            if (configuration && configuration.apiKey) {
+                const localVarApiKeyValue = typeof configuration.apiKey === 'function'
+                    ? configuration.apiKey("Authorization")
+                    : configuration.apiKey;
+                localVarHeaderParameter["Authorization"] = localVarApiKeyValue;
+            }
+            
+            objToSearchParams(localVarQueryParameter, localVarUrlObj.searchParams);
+            objToSearchParams(options.query || {}, localVarUrlObj.searchParams);
+            localVarRequestOptions.headers = { ...localVarHeaderParameter, ...options.headers };
+            
+            return {
+                url: `${localVarUrlObj.pathname}${localVarUrlObj.search}`,
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         * 
+         * @summary List jobs submitted through managed creates, newest first.
+         * @param {number} [ownerId] The user whose jobs to list. The default is the caller.
+         * @param {V1SubmissionKind} [kind] Only jobs of this kind.   - SUBMISSION_KIND_UNSPECIFIED: The kind is unknown, or any kind in a filter.  - SUBMISSION_KIND_COMMAND: A command.  - SUBMISSION_KIND_SHELL: A shell.  - SUBMISSION_KIND_GENERIC: A generic task.  - SUBMISSION_KIND_EXPERIMENT: An experiment.
+         * @param {V1SubmissionState} [state] Only jobs in this state.   - SUBMISSION_STATE_UNSPECIFIED: The state is unknown, or any state in a filter.  - SUBMISSION_STATE_QUEUED: The job waits for placement, including between allocations and while a paused generic task resumes.  - SUBMISSION_STATE_RUNNING: The job's current allocation is placed and has not ended, or the experiment is active or stopping.  - SUBMISSION_STATE_PAUSED: The generic task or experiment is paused.  - SUBMISSION_STATE_COMPLETED: The job ended without failing.  - SUBMISSION_STATE_FAILED: The job ended with a failure.  - SUBMISSION_STATE_CANCELED: The job ended after it was asked to stop.  - SUBMISSION_STATE_DELETED: The experiment was deleted.
+         * @param {Date | DateString} [submittedAfter] Only jobs submitted after this time.
+         * @param {number} [limit] The most jobs to return, 100 by default and at most 1000.
+         * @param {string} [pageToken] The next_page_token of the previous page.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        listSubmissions(ownerId?: number, kind?: V1SubmissionKind, state?: V1SubmissionState, submittedAfter?: Date | DateString, limit?: number, pageToken?: string, options: any = {}): FetchArgs {
+            const localVarPath = `/api/v1/submissions`;
+            const localVarUrlObj = new URL(localVarPath, BASE_PATH);
+            const localVarRequestOptions = { method: 'GET', ...options };
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+            
+            // authentication BearerToken required
+            if (configuration && configuration.apiKey) {
+                const localVarApiKeyValue = typeof configuration.apiKey === 'function'
+                    ? configuration.apiKey("Authorization")
+                    : configuration.apiKey;
+                localVarHeaderParameter["Authorization"] = localVarApiKeyValue;
+            }
+            
+            if (ownerId !== undefined) {
+                localVarQueryParameter['ownerId'] = ownerId
+            }
+            
+            if (kind !== undefined) {
+                localVarQueryParameter['kind'] = kind
+            }
+            
+            if (state !== undefined) {
+                localVarQueryParameter['state'] = state
+            }
+            
+            if (submittedAfter) {
+                localVarQueryParameter['submittedAfter'] = typeof submittedAfter === "string" ? submittedAfter : submittedAfter.toISOString()
+            }
+            
+            if (limit !== undefined) {
+                localVarQueryParameter['limit'] = limit
+            }
+            
+            if (pageToken !== undefined) {
+                localVarQueryParameter['pageToken'] = pageToken
+            }
+            
+            objToSearchParams(localVarQueryParameter, localVarUrlObj.searchParams);
+            objToSearchParams(options.query || {}, localVarUrlObj.searchParams);
+            localVarRequestOptions.headers = { ...localVarHeaderParameter, ...options.headers };
+            
+            return {
+                url: `${localVarUrlObj.pathname}${localVarUrlObj.search}`,
+                options: localVarRequestOptions,
+            };
+        },
+    }
+};
+
+/**
+ * SubmissionsApi - functional programming interface
+ * @export
+ */
+export const SubmissionsApiFp = function (configuration?: Configuration) {
+    return {
+        /**
+         * 
+         * @summary Cancel a submitted job. The cancel is recorded before the job is signaled, so a job that has not started yet is stopped as it starts.
+         * @param {string} jobId The ID of the job.
+         * @param {V1CancelSubmissionRequest} body
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        cancelSubmission(jobId: string, body: V1CancelSubmissionRequest, options?: any): (fetch?: FetchAPI, basePath?: string) => Promise<V1CancelSubmissionResponse> {
+            const localVarFetchArgs = SubmissionsApiFetchParamCreator(configuration).cancelSubmission(jobId, body, options);
+            return (fetch: FetchAPI = window.fetch, basePath: string = BASE_PATH) => {
+                return fetch(basePath + localVarFetchArgs.url, localVarFetchArgs.options).then((response) => {
+                    if (response.status >= 200 && response.status < 300) {
+                        return response.json();
+                    } else {
+                        throw response;
+                    }
+                });
+            };
+        },
+        /**
+         * 
+         * @summary Get a job submitted through a managed create, from the database.
+         * @param {string} jobId The ID of the job.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        getSubmission(jobId: string, options?: any): (fetch?: FetchAPI, basePath?: string) => Promise<V1GetSubmissionResponse> {
+            const localVarFetchArgs = SubmissionsApiFetchParamCreator(configuration).getSubmission(jobId, options);
+            return (fetch: FetchAPI = window.fetch, basePath: string = BASE_PATH) => {
+                return fetch(basePath + localVarFetchArgs.url, localVarFetchArgs.options).then((response) => {
+                    if (response.status >= 200 && response.status < 300) {
+                        return response.json();
+                    } else {
+                        throw response;
+                    }
+                });
+            };
+        },
+        /**
+         * 
+         * @summary List jobs submitted through managed creates, newest first.
+         * @param {number} [ownerId] The user whose jobs to list. The default is the caller.
+         * @param {V1SubmissionKind} [kind] Only jobs of this kind.   - SUBMISSION_KIND_UNSPECIFIED: The kind is unknown, or any kind in a filter.  - SUBMISSION_KIND_COMMAND: A command.  - SUBMISSION_KIND_SHELL: A shell.  - SUBMISSION_KIND_GENERIC: A generic task.  - SUBMISSION_KIND_EXPERIMENT: An experiment.
+         * @param {V1SubmissionState} [state] Only jobs in this state.   - SUBMISSION_STATE_UNSPECIFIED: The state is unknown, or any state in a filter.  - SUBMISSION_STATE_QUEUED: The job waits for placement, including between allocations and while a paused generic task resumes.  - SUBMISSION_STATE_RUNNING: The job's current allocation is placed and has not ended, or the experiment is active or stopping.  - SUBMISSION_STATE_PAUSED: The generic task or experiment is paused.  - SUBMISSION_STATE_COMPLETED: The job ended without failing.  - SUBMISSION_STATE_FAILED: The job ended with a failure.  - SUBMISSION_STATE_CANCELED: The job ended after it was asked to stop.  - SUBMISSION_STATE_DELETED: The experiment was deleted.
+         * @param {Date | DateString} [submittedAfter] Only jobs submitted after this time.
+         * @param {number} [limit] The most jobs to return, 100 by default and at most 1000.
+         * @param {string} [pageToken] The next_page_token of the previous page.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        listSubmissions(ownerId?: number, kind?: V1SubmissionKind, state?: V1SubmissionState, submittedAfter?: Date | DateString, limit?: number, pageToken?: string, options?: any): (fetch?: FetchAPI, basePath?: string) => Promise<V1ListSubmissionsResponse> {
+            const localVarFetchArgs = SubmissionsApiFetchParamCreator(configuration).listSubmissions(ownerId, kind, state, submittedAfter, limit, pageToken, options);
+            return (fetch: FetchAPI = window.fetch, basePath: string = BASE_PATH) => {
+                return fetch(basePath + localVarFetchArgs.url, localVarFetchArgs.options).then((response) => {
+                    if (response.status >= 200 && response.status < 300) {
+                        return response.json();
+                    } else {
+                        throw response;
+                    }
+                });
+            };
+        },
+    }
+};
+
+/**
+ * SubmissionsApi - factory interface
+ * @export
+ */
+export const SubmissionsApiFactory = function (configuration?: Configuration, fetch?: FetchAPI, basePath?: string) {
+    return {
+        /**
+         * 
+         * @summary Cancel a submitted job. The cancel is recorded before the job is signaled, so a job that has not started yet is stopped as it starts.
+         * @param {string} jobId The ID of the job.
+         * @param {V1CancelSubmissionRequest} body
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        cancelSubmission(jobId: string, body: V1CancelSubmissionRequest, options?: any) {
+            return SubmissionsApiFp(configuration).cancelSubmission(jobId, body, options)(fetch, basePath);
+        },
+        /**
+         * 
+         * @summary Get a job submitted through a managed create, from the database.
+         * @param {string} jobId The ID of the job.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        getSubmission(jobId: string, options?: any) {
+            return SubmissionsApiFp(configuration).getSubmission(jobId, options)(fetch, basePath);
+        },
+        /**
+         * 
+         * @summary List jobs submitted through managed creates, newest first.
+         * @param {number} [ownerId] The user whose jobs to list. The default is the caller.
+         * @param {V1SubmissionKind} [kind] Only jobs of this kind.   - SUBMISSION_KIND_UNSPECIFIED: The kind is unknown, or any kind in a filter.  - SUBMISSION_KIND_COMMAND: A command.  - SUBMISSION_KIND_SHELL: A shell.  - SUBMISSION_KIND_GENERIC: A generic task.  - SUBMISSION_KIND_EXPERIMENT: An experiment.
+         * @param {V1SubmissionState} [state] Only jobs in this state.   - SUBMISSION_STATE_UNSPECIFIED: The state is unknown, or any state in a filter.  - SUBMISSION_STATE_QUEUED: The job waits for placement, including between allocations and while a paused generic task resumes.  - SUBMISSION_STATE_RUNNING: The job's current allocation is placed and has not ended, or the experiment is active or stopping.  - SUBMISSION_STATE_PAUSED: The generic task or experiment is paused.  - SUBMISSION_STATE_COMPLETED: The job ended without failing.  - SUBMISSION_STATE_FAILED: The job ended with a failure.  - SUBMISSION_STATE_CANCELED: The job ended after it was asked to stop.  - SUBMISSION_STATE_DELETED: The experiment was deleted.
+         * @param {Date | DateString} [submittedAfter] Only jobs submitted after this time.
+         * @param {number} [limit] The most jobs to return, 100 by default and at most 1000.
+         * @param {string} [pageToken] The next_page_token of the previous page.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        listSubmissions(ownerId?: number, kind?: V1SubmissionKind, state?: V1SubmissionState, submittedAfter?: Date | DateString, limit?: number, pageToken?: string, options?: any) {
+            return SubmissionsApiFp(configuration).listSubmissions(ownerId, kind, state, submittedAfter, limit, pageToken, options)(fetch, basePath);
+        },
+    }
+};
+
+/**
+ * SubmissionsApi - object-oriented interface
+ * @export
+ * @class
+ * @extends {BaseAPI}
+ */
+export class SubmissionsApi extends BaseAPI {
+    /**
+     * 
+     * @summary Cancel a submitted job. The cancel is recorded before the job is signaled, so a job that has not started yet is stopped as it starts.
+     * @param {string} jobId The ID of the job.
+     * @param {V1CancelSubmissionRequest} body
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     * @memberof SubmissionsApi
+     */
+    public cancelSubmission(jobId: string, body: V1CancelSubmissionRequest, options?: any) {
+        return SubmissionsApiFp(this.configuration).cancelSubmission(jobId, body, options)(this.fetch, this.basePath)
+    }
+    
+    /**
+     * 
+     * @summary Get a job submitted through a managed create, from the database.
+     * @param {string} jobId The ID of the job.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     * @memberof SubmissionsApi
+     */
+    public getSubmission(jobId: string, options?: any) {
+        return SubmissionsApiFp(this.configuration).getSubmission(jobId, options)(this.fetch, this.basePath)
+    }
+    
+    /**
+     * 
+     * @summary List jobs submitted through managed creates, newest first.
+     * @param {number} [ownerId] The user whose jobs to list. The default is the caller.
+     * @param {V1SubmissionKind} [kind] Only jobs of this kind.   - SUBMISSION_KIND_UNSPECIFIED: The kind is unknown, or any kind in a filter.  - SUBMISSION_KIND_COMMAND: A command.  - SUBMISSION_KIND_SHELL: A shell.  - SUBMISSION_KIND_GENERIC: A generic task.  - SUBMISSION_KIND_EXPERIMENT: An experiment.
+     * @param {V1SubmissionState} [state] Only jobs in this state.   - SUBMISSION_STATE_UNSPECIFIED: The state is unknown, or any state in a filter.  - SUBMISSION_STATE_QUEUED: The job waits for placement, including between allocations and while a paused generic task resumes.  - SUBMISSION_STATE_RUNNING: The job's current allocation is placed and has not ended, or the experiment is active or stopping.  - SUBMISSION_STATE_PAUSED: The generic task or experiment is paused.  - SUBMISSION_STATE_COMPLETED: The job ended without failing.  - SUBMISSION_STATE_FAILED: The job ended with a failure.  - SUBMISSION_STATE_CANCELED: The job ended after it was asked to stop.  - SUBMISSION_STATE_DELETED: The experiment was deleted.
+     * @param {Date | DateString} [submittedAfter] Only jobs submitted after this time.
+     * @param {number} [limit] The most jobs to return, 100 by default and at most 1000.
+     * @param {string} [pageToken] The next_page_token of the previous page.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     * @memberof SubmissionsApi
+     */
+    public listSubmissions(ownerId?: number, kind?: V1SubmissionKind, state?: V1SubmissionState, submittedAfter?: Date | DateString, limit?: number, pageToken?: string, options?: any) {
+        return SubmissionsApiFp(this.configuration).listSubmissions(ownerId, kind, state, submittedAfter, limit, pageToken, options)(this.fetch, this.basePath)
     }
     
 }

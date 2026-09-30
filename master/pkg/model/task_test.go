@@ -43,6 +43,7 @@ func TestAllocationProto(t *testing.T) {
 		Slots:        1,
 		ExitReason:   nil,
 		StatusCode:   nil,
+		ResourcePool: "rp",
 	}
 	require.Equal(t, expected, a.Proto())
 

@@ -3,6 +3,10 @@ syntax = "proto3";
 package determined.api.v1;
 option go_package = "github.com/determined-ai/determined/proto/pkg/apiv1";
 
+import "google/protobuf/timestamp.proto";
+import "protoc-gen-swagger/options/annotations.proto";
+import "determined/task/v1/task.proto";
+
 // How the master admits a submitted job to the scheduler.
 enum Admission {
   // The default, which queues the job like ADMISSION_QUEUE.
@@ -56,4 +60,168 @@ message SubmitResult {
   string request_digest = 3;
   // The admission outcome of the job.
   AdmissionOutcome outcome = 4;
+}
+
+// The kind of job a submission created.
+enum SubmissionKind {
+  // The kind is unknown, or any kind in a filter.
+  SUBMISSION_KIND_UNSPECIFIED = 0;
+  // A command.
+  SUBMISSION_KIND_COMMAND = 1;
+  // A shell.
+  SUBMISSION_KIND_SHELL = 2;
+  // A generic task.
+  SUBMISSION_KIND_GENERIC = 3;
+  // An experiment.
+  SUBMISSION_KIND_EXPERIMENT = 4;
+}
+
+// The state of a submitted job, derived from the database.
+enum SubmissionState {
+  // The state is unknown, or any state in a filter.
+  SUBMISSION_STATE_UNSPECIFIED = 0;
+  // The job waits for placement, including between allocations and while a
+  // paused generic task resumes.
+  SUBMISSION_STATE_QUEUED = 1;
+  // The job's current allocation is placed and has not ended, or the
+  // experiment is active or stopping.
+  SUBMISSION_STATE_RUNNING = 2;
+  // The generic task or experiment is paused.
+  SUBMISSION_STATE_PAUSED = 3;
+  // The job ended without failing.
+  SUBMISSION_STATE_COMPLETED = 4;
+  // The job ended with a failure.
+  SUBMISSION_STATE_FAILED = 5;
+  // The job ended after it was asked to stop.
+  SUBMISSION_STATE_CANCELED = 6;
+  // The experiment was deleted.
+  SUBMISSION_STATE_DELETED = 7;
+}
+
+// A task of a submitted job with its allocations.
+message SubmissionTask {
+  option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = {
+    json_schema: { required: [ "task_id", "allocations" ] }
+  };
+  // The ID of the task.
+  string task_id = 1;
+  // The trial that runs the task, for an experiment.
+  optional int32 trial_id = 2;
+  // The allocations of the task, oldest first.
+  repeated determined.task.v1.Allocation allocations = 3;
+}
+
+// A job created through a managed create, as the database records it.
+message Submission {
+  option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = {
+    json_schema: {
+      required: [
+        "job_id",
+        "kind",
+        "entity_id",
+        "owner_id",
+        "owner",
+        "workspace_id",
+        "name",
+        "admission",
+        "state",
+        "exit_class",
+        "exit_reason",
+        "tasks"
+      ]
+    }
+  };
+  // The ID of the job.
+  string job_id = 1;
+  // The kind of the job.
+  SubmissionKind kind = 2;
+  // The ID of the job's task, or of its experiment.
+  string entity_id = 3;
+  // The ID of the user who submitted the job.
+  int32 owner_id = 4;
+  // The username of the user who submitted the job.
+  string owner = 5;
+  // The workspace of the job. An experiment's workspace follows its project.
+  int32 workspace_id = 6;
+  // The project of a generic task or experiment.
+  optional int32 project_id = 7;
+  // The name of the job.
+  string name = 8;
+  // The idempotency key the job was submitted with. Only its owner and
+  // admins see it.
+  optional string idempotency_key = 9;
+  // The digest of the request that submitted the job. Only its owner and
+  // admins see it.
+  optional string request_digest = 10;
+  // How the job was admitted to the scheduler.
+  Admission admission = 11;
+  // When the job was submitted. Unset for a deleted experiment that left no
+  // task behind.
+  google.protobuf.Timestamp submitted_at = 12;
+  // When the job ended. Unset while it runs or is paused.
+  google.protobuf.Timestamp ended_at = 13;
+  // The state of the job.
+  SubmissionState state = 14;
+  // The exit class of the allocation that ended the job. Unspecified while
+  // the job has not ended.
+  determined.task.v1.ExitClass exit_class = 15;
+  // The exit reason of the allocation that ended the job.
+  string exit_reason = 16;
+  // The tasks of the job with their allocations.
+  repeated SubmissionTask tasks = 17;
+}
+
+// Get a submitted job.
+message GetSubmissionRequest {
+  // The ID of the job.
+  string job_id = 1;
+}
+// Response to GetSubmissionRequest.
+message GetSubmissionResponse {
+  option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = {
+    json_schema: { required: [ "submission" ] }
+  };
+  // The submitted job.
+  Submission submission = 1;
+}
+
+// List submitted jobs, newest first.
+message ListSubmissionsRequest {
+  // The user whose jobs to list. The default is the caller.
+  optional int32 owner_id = 1;
+  // Only jobs of this kind.
+  SubmissionKind kind = 2;
+  // Only jobs in this state.
+  SubmissionState state = 3;
+  // Only jobs submitted after this time.
+  google.protobuf.Timestamp submitted_after = 4;
+  // The most jobs to return, 100 by default and at most 1000.
+  int32 limit = 5;
+  // The next_page_token of the previous page.
+  string page_token = 6;
+}
+// Response to ListSubmissionsRequest.
+message ListSubmissionsResponse {
+  option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = {
+    json_schema: { required: [ "submissions" ] }
+  };
+  // The submitted jobs.
+  repeated Submission submissions = 1;
+  // The token of the next page, empty on the last page. A page can hold
+  // fewer jobs than the limit and still be followed by another.
+  string next_page_token = 2;
+}
+
+// Cancel a submitted job.
+message CancelSubmissionRequest {
+  // The ID of the job.
+  string job_id = 1;
+}
+// Response to CancelSubmissionRequest.
+message CancelSubmissionResponse {
+  option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = {
+    json_schema: { required: [ "submission" ] }
+  };
+  // The job after the cancel was recorded.
+  Submission submission = 1;
 }

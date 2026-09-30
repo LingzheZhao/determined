@@ -159,6 +159,10 @@ func (m *Master) startRestoredGenericTask(
 		}
 		return err
 	}
+	if err := task.KillIfCancelRequested(ctx, jobID, snapshot.AllocationID); err != nil {
+		log.WithField("task-id", taskID).WithError(err).
+			Error("checking whether a restored generic task was asked to stop")
+	}
 	return nil
 }
 
