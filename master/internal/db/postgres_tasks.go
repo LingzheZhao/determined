@@ -320,17 +320,25 @@ func CloseOpenAllocations(ctx context.Context, exclude []model.AllocationID) err
 		excludedFilter = strings.Join(excludeStr, ",")
 	}
 
-	// Classify before the start time backfill below, which erases whether an allocation started.
-	// An allocation that started failed with the master; one that never started stays
-	// unclassified, and a class already recorded by the allocation is kept. Excluded allocations
-	// are being restored, so none of these updates touch them: a restored allocation that never
-	// started keeps its NULL start time, and a later restart still sees that it never started.
+	// Classify every allocation this closes by its persisted state, keeping a class the
+	// allocation already recorded. A PENDING allocation was never assigned resources, typically a
+	// queued trial allocation that restore replaced, so it did not fail. Any later state may
+	// already have a container, so it failed with the master. Excluded allocations are being
+	// restored, so none of these updates touch them.
 	if _, err := Bun().NewRaw(`UPDATE allocations SET exit_class = ?, exit_detail = ?
-	WHERE end_time IS NULL AND start_time IS NOT NULL AND exit_class IS NULL
+	WHERE end_time IS NULL AND exit_class IS NULL AND state = ?
+	AND (? = '' OR allocation_id NOT IN (SELECT unnest(string_to_array(?, ','))))`,
+		model.ExitClassNone,
+		model.NewExitDetail("", nil, "the allocation was still queued when the master restarted"),
+		model.AllocationStatePending, excludedFilter, excludedFilter).Exec(ctx); err != nil {
+		return errors.Wrap(err, "classifying queued open allocations")
+	}
+	if _, err := Bun().NewRaw(`UPDATE allocations SET exit_class = ?, exit_detail = ?
+	WHERE end_time IS NULL AND exit_class IS NULL AND state IS DISTINCT FROM ?
 	AND (? = '' OR allocation_id NOT IN (SELECT unnest(string_to_array(?, ','))))`,
 		model.ExitClassInfrastructureFailed,
 		model.NewExitDetail("", nil, "the allocation was open when the master restarted"),
-		excludedFilter, excludedFilter).Exec(ctx); err != nil {
+		model.AllocationStatePending, excludedFilter, excludedFilter).Exec(ctx); err != nil {
 		return errors.Wrap(err, "classifying open allocations")
 	}
 

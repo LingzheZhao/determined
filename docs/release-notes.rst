@@ -20,9 +20,9 @@ Version 0.41.0
 -  API: ``GetTask`` and ``GetAllocation`` report how each allocation ended. ``exit_class`` is
    ``NONE`` for an allocation that did not fail, or a failure class such as ``WORKLOAD_FAILED`` or
    ``INFRASTRUCTURE_FAILED``, and ``exit_detail`` holds the failure type, container exit code,
-   and message. An allocation that had started when the master restarted is
-   ``INFRASTRUCTURE_FAILED``. Allocations that ended before the upgrade, or that had not started
-   when the master restarted, have no class. ``GetTask`` also returns each allocation's
+   and message. An allocation left open by a master restart is ``NONE`` if it was still queued
+   and ``INFRASTRUCTURE_FAILED`` otherwise. Allocations that ended before the upgrade have no
+   class. ``GetTask`` also returns each allocation's
    ``slots``, ``exit_reason``, and ``status_code``, which it previously left empty.
 
 **Bug Fixes**

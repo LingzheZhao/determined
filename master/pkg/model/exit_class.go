@@ -13,13 +13,13 @@ import (
 
 // ExitClass is the outcome class of an allocation's exit, stored in allocations.exit_class. It
 // records how an allocation ended, not who asked it to stop. A NULL class means the allocation
-// has not exited, ended before exit classes were recorded, or had not started when the master
-// restarted.
+// has not exited, or ended before exit classes were recorded.
 type ExitClass string
 
 const (
 	// ExitClassNone denotes that the allocation did not fail: it completed, stopped early, was
-	// preempted or killed, or was aborted before it started.
+	// preempted or killed, was aborted before it started, or was still queued when the master
+	// restarted.
 	ExitClassNone ExitClass = "NONE"
 	// ExitClassPlacementUnsatisfied denotes that the scheduler could not place the allocation as
 	// requested.

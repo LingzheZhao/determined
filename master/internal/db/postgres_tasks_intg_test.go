@@ -823,29 +823,29 @@ func TestCloseOpenAllocationsExitClass(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.UpdateClusterHeartBeat(time.Now().UTC().Truncate(time.Millisecond)))
 
-	addOpen := func(started bool, class *model.ExitClass) *model.Allocation {
+	addOpen := func(state model.AllocationState, class *model.ExitClass) *model.Allocation {
 		tIn := RequireMockTask(t, db, nil)
 		a := &model.Allocation{
 			AllocationID: model.AllocationID(fmt.Sprintf("%s.0", tIn.TaskID)),
 			TaskID:       tIn.TaskID,
 			ResourcePool: "default",
-			State:        ptrs.Ptr(model.AllocationStateRunning),
+			State:        ptrs.Ptr(state),
 			ExitClass:    class,
 		}
-		if started {
+		if state == model.AllocationStateRunning {
 			a.StartTime = ptrs.Ptr(time.Now().UTC().Truncate(time.Millisecond))
-		} else {
-			a.State = ptrs.Ptr(model.AllocationStatePending)
 		}
 		require.NoError(t, AddAllocation(ctx, a))
 		require.NoError(t, AddAllocationExitStatus(ctx, a))
 		return a
 	}
-	started := addOpen(true, nil)
-	neverStarted := addOpen(false, nil)
-	classified := addOpen(true, ptrs.Ptr(model.ExitClassNone))
-	restoring := addOpen(true, nil)
-	restoringNeverStarted := addOpen(false, nil)
+	started := addOpen(model.AllocationStateRunning, nil)
+	neverStarted := addOpen(model.AllocationStatePending, nil)
+	// Assigned resources but no start notification yet: it may already have a container.
+	assigned := addOpen(model.AllocationStateAssigned, nil)
+	classified := addOpen(model.AllocationStateRunning, ptrs.Ptr(model.ExitClassNone))
+	restoring := addOpen(model.AllocationStateRunning, nil)
+	restoringNeverStarted := addOpen(model.AllocationStatePending, nil)
 
 	require.NoError(t, CloseOpenAllocations(ctx, []model.AllocationID{
 		restoring.AllocationID, restoringNeverStarted.AllocationID,
@@ -864,12 +864,19 @@ func TestCloseOpenAllocationsExitClass(t *testing.T) {
 		Message: "the allocation was open when the master restarted",
 	}, res.ExitDetail)
 
-	// The backfill gives it a start time, but it never started, so it stays unclassified.
+	// A queued allocation was never assigned resources, so it did not fail.
 	res = get(neverStarted)
 	require.NotNil(t, res.EndTime)
-	require.NotNil(t, res.StartTime)
-	require.Nil(t, res.ExitClass)
-	require.Nil(t, res.ExitDetail)
+	require.Equal(t, ptrs.Ptr(model.ExitClassNone), res.ExitClass)
+	require.Equal(t, &model.ExitDetail{
+		Message: "the allocation was still queued when the master restarted",
+	}, res.ExitDetail)
+
+	// The class follows the persisted state, not the start time.
+	res = get(assigned)
+	require.NotNil(t, res.EndTime)
+	require.Nil(t, assigned.StartTime)
+	require.Equal(t, ptrs.Ptr(model.ExitClassInfrastructureFailed), res.ExitClass)
 
 	res = get(classified)
 	require.NotNil(t, res.EndTime)
@@ -887,7 +894,7 @@ func TestCloseOpenAllocationsExitClass(t *testing.T) {
 	require.Nil(t, res.EndTime)
 	require.Nil(t, res.ExitClass)
 
-	// A later restart that restores neither closes both, classifying only the one that started.
+	// A later restart that restores neither closes and classifies both by state.
 	require.NoError(t, CloseOpenAllocations(ctx, nil))
 
 	res = get(restoring)
@@ -896,8 +903,7 @@ func TestCloseOpenAllocationsExitClass(t *testing.T) {
 
 	res = get(restoringNeverStarted)
 	require.NotNil(t, res.EndTime)
-	require.Nil(t, res.ExitClass)
-	require.Nil(t, res.ExitDetail)
+	require.Equal(t, ptrs.Ptr(model.ExitClassNone), res.ExitClass)
 }
 
 func TestTaskLogsFlow(t *testing.T) {

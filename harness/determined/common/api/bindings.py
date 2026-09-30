@@ -3714,10 +3714,10 @@ class v1EntityType(DetEnum):
 class v1ExitClass(DetEnum):
     """The outcome class of an allocation's exit. It records how the allocation
     ended, not who asked it to stop.
-    - EXIT_CLASS_UNSPECIFIED: The allocation has not exited, ended before exit classes were recorded,
-    or had not started when the master restarted.
+    - EXIT_CLASS_UNSPECIFIED: The allocation has not exited, or ended before exit classes were recorded.
     - EXIT_CLASS_NONE: The allocation did not fail: it completed, stopped early, was preempted
-    or killed, or was aborted before it started.
+    or killed, was aborted before it started, or was still queued when the
+    master restarted.
     - EXIT_CLASS_PLACEMENT_UNSATISFIED: The scheduler could not place the allocation as requested.
     - EXIT_CLASS_NODE_PREFLIGHT_FAILED: A node rejected the allocation before starting its containers.
     - EXIT_CLASS_WORKLOAD_INITIALIZATION_FAILED: The workload failed before it finished initializing.

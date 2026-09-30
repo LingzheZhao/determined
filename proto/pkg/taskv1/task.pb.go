@@ -256,11 +256,11 @@ func (GenericTaskState) EnumDescriptor() ([]byte, []int) {
 type ExitClass int32
 
 const (
-	// The allocation has not exited, ended before exit classes were recorded,
-	// or had not started when the master restarted.
+	// The allocation has not exited, or ended before exit classes were recorded.
 	ExitClass_EXIT_CLASS_UNSPECIFIED ExitClass = 0
 	// The allocation did not fail: it completed, stopped early, was preempted
-	// or killed, or was aborted before it started.
+	// or killed, was aborted before it started, or was still queued when the
+	// master restarted.
 	ExitClass_EXIT_CLASS_NONE ExitClass = 1
 	// The scheduler could not place the allocation as requested.
 	ExitClass_EXIT_CLASS_PLACEMENT_UNSATISFIED ExitClass = 2
