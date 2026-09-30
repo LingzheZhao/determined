@@ -34,10 +34,16 @@ def mksess(host: str, port: int, username: str = "determined", password: str = "
     return authentication.login(master_url, username=username, password=password)
 
 
+# CI tags its images as determinedai/determined-{master,agent}:<sha>, not under the CLI default.
+DEV_IMAGE_REPO_PREFIX = "determinedai"
+
+
 def det_deploy(subcommand: List, cmd_input: Optional[bytes] = None) -> subprocess.CompletedProcess:
     command = [
         "det",
         "deploy",
+        "--image-repo-prefix",
+        DEV_IMAGE_REPO_PREFIX,
         "local",
     ] + subcommand
     print(f"Running deployment: {' '.join(command)}")
@@ -64,7 +70,8 @@ def resource_up(
         flags: A list of flags to pass to the command.
         positional_arguments: A list of positional arguments to pass to the command.
 
-    This additionally sets a --det-version flag if DET_VERSION is set in the config.
+    This additionally sets a --det-version flag if DET_VERSION is set in the config, and the
+    image repository prefix of the CI images.
     """
     command = [f"{resource}-up", f"--{resource}-name", name]
     if kwflags:
@@ -79,6 +86,10 @@ def resource_up(
     det_version = conf.DET_VERSION
     if det_version is not None:
         command += ["--det-version", det_version]
+    # master-up and agent-up have their own --image-repo-prefix, which overrides the one of
+    # det deploy that cluster-up uses.
+    if resource != Resource.CLUSTER:
+        command += ["--image-repo-prefix", DEV_IMAGE_REPO_PREFIX]
     return det_deploy(command, cmd_input=cmd_input)
 
 

@@ -1,5 +1,6 @@
 from determined import cli
 from determined.cli import top_arg_descriptions
+from determined.deploy import constants
 from determined.deploy.aws import cli as aws_cli
 from determined.deploy.gcp import cli as gcp_cli
 from determined.deploy.gke import cli as gke_cli
@@ -15,7 +16,7 @@ args_subs: cli.ArgsDescription = [
     cli.Arg(
         "--image-repo-prefix",
         type=str,
-        default="determinedai",
+        default=constants.DEFAULT_IMAGE_REPO_PREFIX,
         help="Docker image repository to use for determined-master and determined-agent images",
     ),
     local_cli.args_description,

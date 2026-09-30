@@ -33,6 +33,12 @@ docker pull ghcr.io/wu-cvgl/determined-master:0.40.1
 docker pull ghcr.io/wu-cvgl/determined-agent:0.40.1
 ```
 
+With `det deploy local`, pass `--image-repo-prefix ghcr.io/wu-cvgl --det-version 0.40.1`
+to `master-up` and `agent-up`: the 0.40.1 CLI still defaults to the upstream
+`determinedai` images, which do not exist for this version. Later CLIs default to
+`ghcr.io/wu-cvgl`; images built from source are tagged `determinedai/...` and need
+`--image-repo-prefix determinedai`.
+
 Update the master and agent image references in your deployment to those
 exact tags or, preferably, their verified digests. Use the same deployment
 method and configuration as the existing cluster; see the

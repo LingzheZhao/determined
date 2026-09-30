@@ -11,6 +11,7 @@ import termcolor
 import determined
 from determined import cli
 from determined.cli import errors
+from determined.deploy import constants as deploy_constants
 from determined.deploy import errors as deploy_errors
 from determined.deploy.gcp import constants, gcp
 
@@ -106,7 +107,7 @@ def deploy_gcp(command: str, args: argparse.Namespace) -> None:
         det_configs = {
             "no_preflight_checks": False,
             "no_wait_for_master": False,
-            "image_repo_prefix": "determinedai",
+            "image_repo_prefix": deploy_constants.DEFAULT_IMAGE_REPO_PREFIX,
             "cluster_id": args.cluster_id,
             "project_id": args.project_id,
             "network": "det-default",
