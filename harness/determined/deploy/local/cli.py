@@ -5,7 +5,7 @@ from typing import Callable, Dict
 
 import determined
 from determined import cli
-from determined.deploy import errors
+from determined.deploy import constants, errors
 from determined.deploy.local import cluster_utils, preflight
 
 
@@ -286,7 +286,7 @@ args_description = cli.Cmd(
                 cli.Arg(
                     "--image-repo-prefix",
                     type=str,
-                    default="determinedai",
+                    default=constants.DEFAULT_IMAGE_REPO_PREFIX,
                     help="prefix for the master image",
                 ),
                 cli.Arg(
@@ -394,8 +394,8 @@ args_description = cli.Cmd(
                 cli.Arg(
                     "--image-repo-prefix",
                     type=str,
-                    default="determinedai",
-                    help="prefix for the master image",
+                    default=constants.DEFAULT_IMAGE_REPO_PREFIX,
+                    help="prefix for the agent image",
                 ),
                 cli.Arg(
                     "--enterprise-edition",
