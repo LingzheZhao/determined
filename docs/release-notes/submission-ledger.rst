@@ -10,7 +10,10 @@
    with ``ALREADY_EXISTS`` naming the job. A ``dry_run`` checks the request and returns its digest
    without creating anything, and ``validate_only`` remains an alias for it. A request whose
    digest differs from its ``expected_digest`` fails with ``FAILED_PRECONDITION`` and reason
-   ``plan_changed``, and creates nothing. ``admission`` defaults to ``QUEUE``; ``IMMEDIATE`` is
+   ``plan_changed``, and creates nothing. The digest covers the config of a named template as it
+   is at submit, so a template that changed since the dry run also fails with ``plan_changed``,
+   and the create applies the template it digested; master and pool defaults are not part of the
+   digest and apply as they are at the create. ``admission`` defaults to ``QUEUE``; ``IMMEDIATE`` is
    not supported yet, and experiments reject it. Requests without ``submit`` options behave as
    before. Unmanaged experiments do not accept ``submit`` options.
 
@@ -45,6 +48,14 @@
    start fails in the master now ends, with its allocation classed ``INFRASTRUCTURE_FAILED``,
    instead of staying open, and an experiment whose start fails is marked ``ERROR``.
 
+-  API: A committed command, shell, generic task, or experiment now always starts without a
+   master restart. The master starts it after the commit even if the client disconnects, and if
+   the master cannot tell whether a create committed, it looks the job up and starts it, or fails
+   with the retryable ``UNAVAILABLE`` when the job does not exist. A replay of an idempotency key
+   starts its job if the job never started, and every 30 seconds the master starts the committed
+   jobs that nothing started. The master never starts a job's allocation or experiment a second
+   time, however many of these start it.
+
 -  Experiments: An experiment created with ``activate`` is stored ``ACTIVE`` from the start, so a
    master restart right after the create restores it active instead of paused. A dry run or
    ``validate_only`` create no longer opens a user session, and it now also checks the warm start
@@ -71,6 +82,9 @@
    a second time. A task whose allocation had already ended is ended, and a task that cannot be
    restored now ends with its allocation classed ``INFRASTRUCTURE_FAILED`` instead of staying
    open. A generic task that was being unpaused resumes its new allocation the same way.
+
+-  Experiments: An experiment that fails to restore after a master restart no longer leaves its
+   user session behind.
 
 -  Tasks: With the agent resource manager, the master records a container's launch before it
    asks the agent to start it, and does not start a container whose launch it cannot record, so
