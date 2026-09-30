@@ -14,6 +14,24 @@
    not supported yet, and experiments reject it. Requests without ``submit`` options behave as
    before. Unmanaged experiments do not accept ``submit`` options.
 
+-  API: Add ``GetSubmission`` (``GET /api/v1/submissions/{job_id}``), ``ListSubmissions``
+   (``GET /api/v1/submissions``), and ``CancelSubmission``
+   (``POST /api/v1/submissions/{job_id}/cancel``) for commands, shells, generic tasks, and
+   experiments. They read the database only, so a job
+   reads the same after a master restart. A submission reports the job's kind, owner, workspace,
+   project, name, admission, submit and end times, a state of ``QUEUED``, ``RUNNING``, ``PAUSED``,
+   ``COMPLETED``, ``FAILED``, ``CANCELED``, or ``DELETED``, the exit class and reason of the
+   allocation that ended it, and its tasks with their allocations. ``ListSubmissions`` lists one
+   owner's jobs, the caller's by default, newest first, and filters them by kind, state, and submit
+   time; a page may hold fewer jobs than its ``limit`` and still have a ``next_page_token``. Each
+   job needs the read permission of its kind, a deleted experiment is visible only to its owner
+   and admins, and only the owner and admins see a job's ``idempotency_key`` and
+   ``request_digest``. ``CancelSubmission`` records the cancel before it signals the job, so a job
+   that has not started yet stops as it starts, and a job that has ended is returned unchanged.
+
+-  API: Task allocations report their ``resource_pool`` and ``placements``, the node and
+   accelerator UUIDs of each container that reported them.
+
 -  API: ``GetMaster`` reports ``submission_protocol``, the version of the submission options that
    the master implements. It is ``0`` in this release.
 
@@ -31,6 +49,16 @@
    master restart right after the create restores it active instead of paused. A dry run or
    ``validate_only`` create no longer opens a user session, and it now also checks the warm start
    checkpoint and the agent user group that a create checks.
+
+-  Tasks: ``KillCommand``, ``KillShell``, and ``KillGenericTask`` record the cancel on the job
+   before they signal it, as ``CancelSubmission`` does. A task that ends after the cancel was
+   recorded ends ``CANCELED``, a cancel that comes after the task ended changes nothing, and a
+   restarted master never continues or unpauses a canceled task. ``KillCommand`` and ``KillShell``
+   no longer fail with ``NotFound`` for a command or shell that has not registered yet. Canceling
+   a paused generic task ends it ``CANCELED`` at once, and a busy generic task lock now fails with
+   the retryable ``UNAVAILABLE``.
+
+-  Experiments: ``ContinueExperiment`` clears the cancel recorded for the experiment's earlier run.
 
 **Bug Fixes**
 
