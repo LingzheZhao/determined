@@ -242,6 +242,7 @@ func TestCalculateExitStatus(t *testing.T) {
 			setup: func(a *allocation) {
 				withResource(a, &sproto.ResourcesStopped{Failure: &taskError})
 				a.killedWhileRunning = true
+				a.killedWhileRunningErr = handlerErr
 				a.exitErr = handlerErr
 			},
 			expected: exitStatus{
@@ -249,6 +250,19 @@ func TestCalculateExitStatus(t *testing.T) {
 				severity: logrus.InfoLevel,
 				class:    model.ExitClassInfrastructureFailed,
 				detail:   &model.ExitDetail{Message: "database is down"},
+			},
+		},
+		{
+			name: "killed while running before a handler error",
+			setup: func(a *allocation) {
+				withResource(a, &sproto.ResourcesStopped{Failure: &taskError})
+				a.killedWhileRunning = true
+				a.exitErr = handlerErr
+			},
+			expected: exitStatus{
+				reason:   "allocation killed after reason",
+				severity: logrus.InfoLevel,
+				class:    model.ExitClassNone,
 			},
 		},
 		{

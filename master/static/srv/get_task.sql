@@ -31,7 +31,7 @@ SELECT
                 slots,
                 exit_reason,
                 status_code,
-                'EXIT_CLASS_' || exit_class AS exit_class,
+                'EXIT_CLASS_' || NULLIF(exit_class, '') AS exit_class,
                 exit_detail
             FROM allocations
             WHERE allocations.task_id = t.task_id

@@ -53,7 +53,11 @@ func TestExitDetail(t *testing.T) {
 	require.JSONEq(t, `{"message":"only a message"}`, v.(string))
 
 	long := NewExitDetail("", nil, strings.Repeat("é", exitDetailMessageLimit))
-	require.LessOrEqual(t, len(long.Message), exitDetailMessageLimit)
 	require.True(t, utf8.ValidString(long.Message))
-	require.Equal(t, exitDetailMessageLimit, len(long.Message))
+	require.Len(t, long.Message, exitDetailMessageLimit)
+
+	// The limit falls inside a rune, so the cut backs up to the rune's start.
+	split := NewExitDetail("", nil, "a"+strings.Repeat("é", exitDetailMessageLimit))
+	require.True(t, utf8.ValidString(split.Message))
+	require.Len(t, split.Message, exitDetailMessageLimit-1)
 }

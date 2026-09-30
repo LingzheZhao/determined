@@ -77,6 +77,104 @@ func TestInvalidResourcesRequest(t *testing.T) {
 	requireTerminated(t, id, exitFuture)
 }
 
+func TestKillWhileRunningIsNotAFailure(t *testing.T) {
+	closeDB, _, id, q, exitFuture := requireStarted(t)
+	defer closeDB()
+
+	rID, _ := requireAssigned(t, id, q)
+	requireRunning(t, id, q, rID)
+
+	// The mock container reports TaskError 137 when killed; that must not classify the exit.
+	exit := requireKilled(t, id, exitFuture)
+	require.NoError(t, exit.Err)
+	requireKilledNotFailed(t, id)
+}
+
+func TestPreemptionTimeoutKillIsNotAFailure(t *testing.T) {
+	closeDB, _, id, q, exitFuture := requireStarted(t, func(ar *sproto.AllocateRequest) {
+		ar.Preemption.Preemptible = true
+		ar.Preemption.TimeoutDuration = 50 * time.Millisecond
+	})
+	defer closeDB()
+
+	rID, _ := requireAssigned(t, id, q)
+	requireRunning(t, id, q, rID)
+	require.NoError(t, DefaultService.SetReady(context.Background(), id))
+
+	// Never ack the preemption: the timeout escalates to a kill.
+	require.NoError(t, DefaultService.Signal(id, TerminateAllocation, "stop"))
+	exit := requireTerminated(t, id, exitFuture)
+	require.NoError(t, exit.Err)
+	requireKilledNotFailed(t, id)
+}
+
+func TestKillThenFailedPersistIsNotAFailure(t *testing.T) {
+	closeDB, _, id, q, exitFuture := requireStarted(t)
+	defer closeDB()
+
+	rID, _ := requireAssigned(t, id, q)
+	requireRunning(t, id, q, rID)
+
+	// Persisting the killed resources' exit fails after the user's kill; that error did not
+	// cause the kill.
+	drop := failResourcesPersist(t, rID)
+	defer drop()
+	exit := requireKilled(t, id, exitFuture)
+	require.NoError(t, exit.Err)
+	requireKilledNotFailed(t, id)
+}
+
+func TestFailedPersistThenKillIsAFailure(t *testing.T) {
+	closeDB, _, id, q, exitFuture := requireStarted(t)
+	defer closeDB()
+
+	rID, _ := requireAssigned(t, id, q)
+
+	// Persisting the running resources fails, so the master kills the allocation because of it.
+	drop := failResourcesPersist(t, rID)
+	defer drop()
+	q.Put(&sproto.ResourcesStateChanged{
+		ResourcesID:      rID,
+		ResourcesState:   sproto.Running,
+		ResourcesStarted: &sproto.ResourcesStarted{},
+	})
+	exit := requireTerminated(t, id, exitFuture)
+	require.NoError(t, exit.Err)
+
+	persisted, err := db.AllocationByID(context.TODO(), id)
+	require.NoError(t, err)
+	require.NotNil(t, persisted.ExitReason)
+	require.True(t, strings.HasPrefix(*persisted.ExitReason, "allocation killed after "),
+		*persisted.ExitReason)
+	require.Equal(t, ptrs.Ptr(model.ExitClassInfrastructureFailed), persisted.ExitClass)
+	require.NotNil(t, persisted.ExitDetail)
+	require.Empty(t, persisted.ExitDetail.FailureType)
+	require.Contains(t, persisted.ExitDetail.Message, failResourcesPersistMessage)
+}
+
+type unknownRMEvent struct{}
+
+func (unknownRMEvent) ResourcesEvent() {}
+
+func TestCleanupClassifiesRecoveredPanic(t *testing.T) {
+	closeDB, _, id, q, exitFuture := requireStarted(t)
+	defer closeDB()
+	defer requireKilled(t, id, exitFuture)
+
+	rID, _ := requireAssigned(t, id, q)
+	requireRunning(t, id, q, rID)
+
+	q.Put(unknownRMEvent{}) // HandleRMEvent panics, and the allocation exits through Cleanup.
+	exit := requireTerminated(t, id, exitFuture)
+	require.ErrorContains(t, exit.Err, "unexpected panic")
+
+	persisted, err := db.AllocationByID(context.TODO(), id)
+	require.NoError(t, err)
+	require.Equal(t, ptrs.Ptr(model.ExitClassInfrastructureFailed), persisted.ExitClass)
+	require.NotNil(t, persisted.ExitDetail)
+	require.Contains(t, persisted.ExitDetail.Message, "unexpected panic")
+}
+
 type checkWriter struct {
 	expected string
 	received atomic.Int64
@@ -572,6 +670,55 @@ func TestRestore(t *testing.T) {
 		Recovered:    true,
 	})
 	defer requireKilled(t, id, exitFuture)
+}
+
+func requireRunning(
+	t *testing.T,
+	id model.AllocationID,
+	q *queue.Queue[sproto.ResourcesEvent],
+	rID sproto.ResourcesID,
+) {
+	q.Put(&sproto.ResourcesStateChanged{
+		ResourcesID:      rID,
+		ResourcesState:   sproto.Running,
+		ResourcesStarted: &sproto.ResourcesStarted{},
+	})
+	requireState(t, id, model.AllocationStateRunning)
+}
+
+// requireKilledNotFailed checks that the allocation exited through a kill that nothing failed.
+func requireKilledNotFailed(t *testing.T, id model.AllocationID) {
+	persisted, err := db.AllocationByID(context.TODO(), id)
+	require.NoError(t, err)
+	require.NotNil(t, persisted.ExitReason)
+	// Pins that the killed while running branch classified the exit.
+	require.True(t, strings.HasPrefix(*persisted.ExitReason, "allocation killed after "),
+		*persisted.ExitReason)
+	require.Equal(t, ptrs.Ptr(model.ExitClassNone), persisted.ExitClass)
+	require.Nil(t, persisted.ExitDetail)
+}
+
+const failResourcesPersistMessage = "persisting these resources fails in this test"
+
+// failResourcesPersist makes every later write of the resources' row fail, until the returned
+// function drops the trigger that does it.
+func failResourcesPersist(t *testing.T, rID sproto.ResourcesID) func() {
+	ctx := context.Background()
+	name := "fail_persist_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	_, err := db.Bun().ExecContext(ctx, fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger AS $$
+BEGIN RAISE EXCEPTION '%s'; END; $$ LANGUAGE plpgsql`, name, failResourcesPersistMessage))
+	require.NoError(t, err)
+	_, err = db.Bun().ExecContext(ctx, fmt.Sprintf(`CREATE TRIGGER %[1]s
+BEFORE INSERT OR UPDATE ON allocation_resources
+FOR EACH ROW WHEN (NEW.resource_id = '%[2]s') EXECUTE FUNCTION %[1]s()`, name, rID))
+	require.NoError(t, err)
+	return func() {
+		_, err := db.Bun().ExecContext(ctx,
+			fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON allocation_resources", name))
+		require.NoError(t, err)
+		_, err = db.Bun().ExecContext(ctx, fmt.Sprintf("DROP FUNCTION IF EXISTS %s()", name))
+		require.NoError(t, err)
+	}
 }
 
 func requireDeps(t *testing.T) (*db.PgDB, func()) {

@@ -257,7 +257,7 @@ type ExitClass int32
 
 const (
 	// The allocation has not exited, ended before exit classes were recorded,
-	// or never started.
+	// or had not started when the master restarted.
 	ExitClass_EXIT_CLASS_UNSPECIFIED ExitClass = 0
 	// The allocation did not fail: it completed, stopped early, was preempted
 	// or killed, or was aborted before it started.

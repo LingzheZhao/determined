@@ -3715,7 +3715,7 @@ class v1ExitClass(DetEnum):
     """The outcome class of an allocation's exit. It records how the allocation
     ended, not who asked it to stop.
     - EXIT_CLASS_UNSPECIFIED: The allocation has not exited, ended before exit classes were recorded,
-    or never started.
+    or had not started when the master restarted.
     - EXIT_CLASS_NONE: The allocation did not fail: it completed, stopped early, was preempted
     or killed, or was aborted before it started.
     - EXIT_CLASS_PLACEMENT_UNSATISFIED: The scheduler could not place the allocation as requested.

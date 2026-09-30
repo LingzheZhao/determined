@@ -110,7 +110,7 @@ message Allocation {
 // ended, not who asked it to stop.
 enum ExitClass {
   // The allocation has not exited, ended before exit classes were recorded,
-  // or never started.
+  // or had not started when the master restarted.
   EXIT_CLASS_UNSPECIFIED = 0;
   // The allocation did not fail: it completed, stopped early, was preempted
   // or killed, or was aborted before it started.

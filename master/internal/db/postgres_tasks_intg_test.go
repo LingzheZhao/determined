@@ -26,6 +26,7 @@ import (
 
 	"github.com/determined-ai/determined/master/internal/api"
 	"github.com/determined-ai/determined/master/pkg/cproto"
+	"github.com/determined-ai/determined/master/pkg/etc"
 	"github.com/determined-ai/determined/master/pkg/model"
 	"github.com/determined-ai/determined/master/pkg/ptrs"
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
@@ -226,6 +227,7 @@ func TestAllocationState(t *testing.T) {
 	pgDB, closeDB := MustResolveTestPostgres(t)
 	defer closeDB()
 	MustMigrateTestPostgres(t, pgDB, MigrationsFromDB)
+	require.NoError(t, etc.SetRootPath(RootFromDB))
 
 	db := SingleDB()
 
@@ -514,6 +516,7 @@ func TestGetTaskAllocationExitFields(t *testing.T) {
 	pgDB, closeDB := MustResolveTestPostgres(t)
 	defer closeDB()
 	MustMigrateTestPostgres(t, pgDB, MigrationsFromDB)
+	require.NoError(t, etc.SetRootPath(RootFromDB))
 
 	db := SingleDB()
 
@@ -545,9 +548,22 @@ func TestGetTaskAllocationExitFields(t *testing.T) {
 	require.NoError(t, AddAllocation(ctx, failed))
 	require.NoError(t, AddAllocationExitStatus(ctx, failed))
 
+	// An empty class reads as unspecified, as model.ExitClass.Proto reads it, instead of
+	// failing the whole task.
+	empty := &model.Allocation{
+		AllocationID: model.AllocationID(fmt.Sprintf("%s.2", tIn.TaskID)),
+		TaskID:       tIn.TaskID,
+		Slots:        1,
+		ResourcePool: "default",
+		State:        ptrs.Ptr(model.AllocationStateTerminated),
+		ExitClass:    ptrs.Ptr(model.ExitClass("")),
+	}
+	require.NoError(t, AddAllocation(ctx, empty))
+	require.NoError(t, AddAllocationExitStatus(ctx, empty))
+
 	tOut := &taskv1.Task{}
 	require.NoError(t, db.QueryProto("get_task", tOut, tIn.TaskID))
-	require.Len(t, tOut.Allocations, 2)
+	require.Len(t, tOut.Allocations, 3)
 	byID := map[string]*taskv1.Allocation{}
 	for _, a := range tOut.Allocations {
 		byID[a.AllocationId] = a
@@ -572,6 +588,11 @@ func TestGetTaskAllocationExitFields(t *testing.T) {
 		"exit_code":    float64(137),
 		"message":      "container failed",
 	}, f.ExitDetail.AsMap())
+
+	e := byID[string(empty.AllocationID)]
+	require.NotNil(t, e)
+	require.Equal(t, taskv1.ExitClass_EXIT_CLASS_UNSPECIFIED, e.ExitClass)
+	require.Equal(t, empty.ExitClass.Proto(), e.ExitClass)
 }
 
 func TestAllocationExitClassMigration(t *testing.T) {
@@ -813,6 +834,8 @@ func TestCloseOpenAllocationsExitClass(t *testing.T) {
 		}
 		if started {
 			a.StartTime = ptrs.Ptr(time.Now().UTC().Truncate(time.Millisecond))
+		} else {
+			a.State = ptrs.Ptr(model.AllocationStatePending)
 		}
 		require.NoError(t, AddAllocation(ctx, a))
 		require.NoError(t, AddAllocationExitStatus(ctx, a))
@@ -822,8 +845,11 @@ func TestCloseOpenAllocationsExitClass(t *testing.T) {
 	neverStarted := addOpen(false, nil)
 	classified := addOpen(true, ptrs.Ptr(model.ExitClassNone))
 	restoring := addOpen(true, nil)
+	restoringNeverStarted := addOpen(false, nil)
 
-	require.NoError(t, CloseOpenAllocations(ctx, []model.AllocationID{restoring.AllocationID}))
+	require.NoError(t, CloseOpenAllocations(ctx, []model.AllocationID{
+		restoring.AllocationID, restoringNeverStarted.AllocationID,
+	}))
 
 	get := func(a *model.Allocation) *model.Allocation {
 		res, err := AllocationByID(ctx, a.AllocationID)
@@ -853,6 +879,25 @@ func TestCloseOpenAllocationsExitClass(t *testing.T) {
 	res = get(restoring)
 	require.Nil(t, res.EndTime)
 	require.Nil(t, res.ExitClass)
+
+	// The backfill skips allocations being restored, so one that never started keeps no start
+	// time and is still seen as never started if a later restart closes it.
+	res = get(restoringNeverStarted)
+	require.Nil(t, res.StartTime)
+	require.Nil(t, res.EndTime)
+	require.Nil(t, res.ExitClass)
+
+	// A later restart that restores neither closes both, classifying only the one that started.
+	require.NoError(t, CloseOpenAllocations(ctx, nil))
+
+	res = get(restoring)
+	require.NotNil(t, res.EndTime)
+	require.Equal(t, ptrs.Ptr(model.ExitClassInfrastructureFailed), res.ExitClass)
+
+	res = get(restoringNeverStarted)
+	require.NotNil(t, res.EndTime)
+	require.Nil(t, res.ExitClass)
+	require.Nil(t, res.ExitDetail)
 }
 
 func TestTaskLogsFlow(t *testing.T) {

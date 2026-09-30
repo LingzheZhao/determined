@@ -125,6 +125,9 @@ type allocation struct {
 	// ignore any errors from containers dying. Not set when we kill an already
 	// terminating trial.
 	killedWhileRunning bool
+	// The error, if any, that led to the first kill while running. An error recorded after that
+	// kill, such as a failure to persist the killed resources' exit, did not cause it.
+	killedWhileRunningErr error
 	// Marks that the trial exited successfully, but we killed some daemon containers.
 	killedDaemons bool
 	// Marks that we killed some daemon containers but after a zero exit.
@@ -1039,6 +1042,9 @@ func (a *allocation) kill(reason string) {
 
 	if len(a.resources.exited()) == 0 {
 		a.syslog.Debugf("setting killed while running: %d", len(a.resources.exited()))
+		if !a.killedWhileRunning {
+			a.killedWhileRunningErr = a.exitErr
+		}
 		a.killedWhileRunning = true
 	}
 
@@ -1213,13 +1219,14 @@ type exitStatus struct {
 func (a *allocation) calculateExitStatus(reason string) exitStatus {
 	switch {
 	case a.killedWhileRunning:
-		// A kill with a recorded error is the master stopping the allocation because of that
-		// error; otherwise someone asked for the kill and nothing failed.
+		// A kill that an error led to is the master stopping the allocation because of that
+		// error; otherwise someone asked for the kill and nothing failed. An error recorded after
+		// the kill did not cause it, so it does not classify the exit.
 		status := exitStatus{
 			reason:   fmt.Sprintf("allocation killed after %s", reason),
 			severity: logrus.InfoLevel,
 		}
-		status.class, status.detail = classifyExitErr(a.exitErr)
+		status.class, status.detail = classifyExitErr(a.killedWhileRunningErr)
 		return status
 	case a.req.Preemption.Preemptible && preemptible.Acknowledged(a.req.AllocationID.String()):
 		return exitStatus{

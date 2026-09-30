@@ -23,8 +23,8 @@ func getAllocation(ctx context.Context, allocationID string,
 ) (*model.Allocation, error) {
 	var allocation model.Allocation
 	err := db.Bun().NewRaw(`
-SELECT allocation_id, task_id, state, slots, is_ready, start_time, 
-end_time, exit_reason, exit_error, status_code
+SELECT allocation_id, task_id, state, slots, is_ready, start_time,
+end_time, exit_reason, exit_error, status_code, exit_class, exit_detail
 FROM allocations
 WHERE allocation_id = ?
 	`, allocationID).Scan(ctx, &allocation)

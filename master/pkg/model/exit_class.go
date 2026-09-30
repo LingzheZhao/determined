@@ -13,7 +13,8 @@ import (
 
 // ExitClass is the outcome class of an allocation's exit, stored in allocations.exit_class. It
 // records how an allocation ended, not who asked it to stop. A NULL class means the allocation
-// has not exited, ended before exit classes were recorded, or never started.
+// has not exited, ended before exit classes were recorded, or had not started when the master
+// restarted.
 type ExitClass string
 
 const (

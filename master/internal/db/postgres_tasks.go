@@ -322,7 +322,9 @@ func CloseOpenAllocations(ctx context.Context, exclude []model.AllocationID) err
 
 	// Classify before the start time backfill below, which erases whether an allocation started.
 	// An allocation that started failed with the master; one that never started stays
-	// unclassified, and a class already recorded by the allocation is kept.
+	// unclassified, and a class already recorded by the allocation is kept. Excluded allocations
+	// are being restored, so none of these updates touch them: a restored allocation that never
+	// started keeps its NULL start time, and a later restart still sees that it never started.
 	if _, err := Bun().NewRaw(`UPDATE allocations SET exit_class = ?, exit_detail = ?
 	WHERE end_time IS NULL AND start_time IS NOT NULL AND exit_class IS NULL
 	AND (? = '' OR allocation_id NOT IN (SELECT unnest(string_to_array(?, ','))))`,
@@ -333,7 +335,9 @@ func CloseOpenAllocations(ctx context.Context, exclude []model.AllocationID) err
 	}
 
 	if _, err := Bun().NewRaw(`UPDATE allocations SET start_time = cluster_heartbeat FROM cluster_id
-	WHERE start_time is NULL`).Exec(ctx); err != nil {
+	WHERE start_time is NULL
+	AND (? = '' OR allocation_id NOT IN (SELECT unnest(string_to_array(?, ','))))`,
+		excludedFilter, excludedFilter).Exec(ctx); err != nil {
 		return errors.Wrap(err,
 			"setting start time to cluster heartbeat when it's assigned to zero value")
 	}
