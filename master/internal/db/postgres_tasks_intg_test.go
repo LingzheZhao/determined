@@ -11,6 +11,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/require"
 
 	"github.com/determined-ai/determined/master/internal/api"
@@ -489,6 +491,130 @@ func TestAddAllocationExitStatus(t *testing.T) {
 	require.Equal(t, aIn.ExitErr, res.ExitErr)
 	require.Equal(t, aIn.ExitReason, res.ExitReason)
 	require.Equal(t, aIn.StatusCode, res.StatusCode)
+	require.Nil(t, res.ExitClass)
+	require.Nil(t, res.ExitDetail)
+
+	aIn.ExitClass = ptrs.Ptr(model.ExitClassWorkloadFailed)
+	aIn.ExitDetail = model.NewExitDetail("FAILURE_TYPE_RESOURCES_FAILED", &statusCode, "boom")
+	require.NoError(t, AddAllocationExitStatus(ctx, aIn))
+
+	res, err = AllocationByID(ctx, aIn.AllocationID)
+	require.NoError(t, err)
+	require.Equal(t, aIn, res)
+
+	var detail string
+	require.NoError(t, Bun().NewRaw("SELECT exit_detail::text FROM allocations WHERE allocation_id = ?",
+		aIn.AllocationID).Scan(ctx, &detail))
+	require.JSONEq(t,
+		`{"failure_type": "FAILURE_TYPE_RESOURCES_FAILED", "exit_code": 1, "message": "boom"}`, detail)
+}
+
+func TestGetTaskAllocationExitFields(t *testing.T) {
+	ctx := context.Background()
+	pgDB, closeDB := MustResolveTestPostgres(t)
+	defer closeDB()
+	MustMigrateTestPostgres(t, pgDB, MigrationsFromDB)
+
+	db := SingleDB()
+
+	tIn := RequireMockTask(t, db, nil)
+	running := &model.Allocation{
+		AllocationID: model.AllocationID(fmt.Sprintf("%s.0", tIn.TaskID)),
+		TaskID:       tIn.TaskID,
+		Slots:        2,
+		ResourcePool: "default",
+		StartTime:    ptrs.Ptr(time.Now().UTC().Truncate(time.Millisecond)),
+		State:        ptrs.Ptr(model.AllocationStateRunning),
+	}
+	require.NoError(t, AddAllocation(ctx, running))
+
+	failed := &model.Allocation{
+		AllocationID: model.AllocationID(fmt.Sprintf("%s.1", tIn.TaskID)),
+		TaskID:       tIn.TaskID,
+		Slots:        4,
+		ResourcePool: "default",
+		StartTime:    ptrs.Ptr(time.Now().UTC().Truncate(time.Millisecond)),
+		EndTime:      ptrs.Ptr(time.Now().UTC().Truncate(time.Millisecond)),
+		State:        ptrs.Ptr(model.AllocationStateTerminated),
+		ExitReason:   ptrs.Ptr("allocation failed: boom"),
+		StatusCode:   ptrs.Ptr(int32(137)),
+		ExitClass:    ptrs.Ptr(model.ExitClassWorkloadFailed),
+		ExitDetail: model.NewExitDetail(
+			"FAILURE_TYPE_RESOURCES_FAILED", ptrs.Ptr(int32(137)), "container failed"),
+	}
+	require.NoError(t, AddAllocation(ctx, failed))
+	require.NoError(t, AddAllocationExitStatus(ctx, failed))
+
+	tOut := &taskv1.Task{}
+	require.NoError(t, db.QueryProto("get_task", tOut, tIn.TaskID))
+	require.Len(t, tOut.Allocations, 2)
+	byID := map[string]*taskv1.Allocation{}
+	for _, a := range tOut.Allocations {
+		byID[a.AllocationId] = a
+	}
+
+	r := byID[string(running.AllocationID)]
+	require.NotNil(t, r)
+	require.Equal(t, int32(2), r.Slots)
+	require.Nil(t, r.ExitReason)
+	require.Nil(t, r.StatusCode)
+	require.Equal(t, taskv1.ExitClass_EXIT_CLASS_UNSPECIFIED, r.ExitClass)
+	require.Nil(t, r.ExitDetail)
+
+	f := byID[string(failed.AllocationID)]
+	require.NotNil(t, f)
+	require.Equal(t, int32(4), f.Slots)
+	require.Equal(t, "allocation failed: boom", f.GetExitReason())
+	require.Equal(t, int32(137), f.GetStatusCode())
+	require.Equal(t, taskv1.ExitClass_EXIT_CLASS_WORKLOAD_FAILED, f.ExitClass)
+	require.Equal(t, map[string]any{
+		"failure_type": "FAILURE_TYPE_RESOURCES_FAILED",
+		"exit_code":    float64(137),
+		"message":      "container failed",
+	}, f.ExitDetail.AsMap())
+}
+
+func TestAllocationExitClassMigration(t *testing.T) {
+	ctx := context.Background()
+	pgDB, closeDB := MustResolveTestPostgres(t)
+	defer closeDB()
+	MustMigrateTestPostgres(t, pgDB, MigrationsFromDB)
+
+	db := SingleDB()
+
+	columns := func(q interface {
+		QueryRowxContext(context.Context, string, ...any) *sqlx.Row
+	},
+	) string {
+		var cols string
+		require.NoError(t, q.QueryRowxContext(ctx, `SELECT COALESCE(string_agg(
+			column_name || ' ' || data_type, ', ' ORDER BY column_name), '')
+			FROM information_schema.columns
+			WHERE table_name = 'allocations' AND column_name IN ('exit_class', 'exit_detail')`,
+		).Scan(&cols))
+		return cols
+	}
+	require.Equal(t, "exit_class text, exit_detail jsonb", columns(db.sql))
+
+	// Running the down migration through the migration runner would drop the columns under
+	// other tests sharing this database, so apply it in a transaction and roll it back.
+	down, err := os.ReadFile(
+		"../../static/migrations/20260930000000_add-allocation-exit-class.tx.down.sql")
+	require.NoError(t, err)
+	tx, err := db.sql.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, tx.Rollback()) }()
+
+	_, err = tx.ExecContext(ctx, string(down))
+	require.NoError(t, err)
+	require.Empty(t, columns(tx))
+
+	up, err := os.ReadFile(
+		"../../static/migrations/20260930000000_add-allocation-exit-class.tx.up.sql")
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, string(up))
+	require.NoError(t, err)
+	require.Equal(t, "exit_class text, exit_detail jsonb", columns(tx))
 }
 
 func TestCompleteAllocation(t *testing.T) {
@@ -663,6 +789,70 @@ func TestCloseOpenAllocations(t *testing.T) {
 	a1, err = AllocationByID(ctx, a1In.AllocationID)
 	require.NoError(t, err)
 	require.NotNil(t, a1.EndTime)
+}
+
+func TestCloseOpenAllocationsExitClass(t *testing.T) {
+	ctx := context.Background()
+	pgDB, closeDB := MustResolveTestPostgres(t)
+	defer closeDB()
+	MustMigrateTestPostgres(t, pgDB, MigrationsFromDB)
+
+	db := SingleDB()
+	_, err := db.GetOrCreateClusterID("")
+	require.NoError(t, err)
+	require.NoError(t, db.UpdateClusterHeartBeat(time.Now().UTC().Truncate(time.Millisecond)))
+
+	addOpen := func(started bool, class *model.ExitClass) *model.Allocation {
+		tIn := RequireMockTask(t, db, nil)
+		a := &model.Allocation{
+			AllocationID: model.AllocationID(fmt.Sprintf("%s.0", tIn.TaskID)),
+			TaskID:       tIn.TaskID,
+			ResourcePool: "default",
+			State:        ptrs.Ptr(model.AllocationStateRunning),
+			ExitClass:    class,
+		}
+		if started {
+			a.StartTime = ptrs.Ptr(time.Now().UTC().Truncate(time.Millisecond))
+		}
+		require.NoError(t, AddAllocation(ctx, a))
+		require.NoError(t, AddAllocationExitStatus(ctx, a))
+		return a
+	}
+	started := addOpen(true, nil)
+	neverStarted := addOpen(false, nil)
+	classified := addOpen(true, ptrs.Ptr(model.ExitClassNone))
+	restoring := addOpen(true, nil)
+
+	require.NoError(t, CloseOpenAllocations(ctx, []model.AllocationID{restoring.AllocationID}))
+
+	get := func(a *model.Allocation) *model.Allocation {
+		res, err := AllocationByID(ctx, a.AllocationID)
+		require.NoError(t, err)
+		return res
+	}
+
+	res := get(started)
+	require.NotNil(t, res.EndTime)
+	require.Equal(t, ptrs.Ptr(model.ExitClassInfrastructureFailed), res.ExitClass)
+	require.Equal(t, &model.ExitDetail{
+		Message: "the allocation was open when the master restarted",
+	}, res.ExitDetail)
+
+	// The backfill gives it a start time, but it never started, so it stays unclassified.
+	res = get(neverStarted)
+	require.NotNil(t, res.EndTime)
+	require.NotNil(t, res.StartTime)
+	require.Nil(t, res.ExitClass)
+	require.Nil(t, res.ExitDetail)
+
+	res = get(classified)
+	require.NotNil(t, res.EndTime)
+	require.Equal(t, ptrs.Ptr(model.ExitClassNone), res.ExitClass)
+	require.Nil(t, res.ExitDetail)
+
+	res = get(restoring)
+	require.Nil(t, res.EndTime)
+	require.Nil(t, res.ExitClass)
 }
 
 func TestTaskLogsFlow(t *testing.T) {

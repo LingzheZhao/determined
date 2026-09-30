@@ -27,7 +27,12 @@ SELECT
                         WHEN state IN ('PENDING', 'ASSIGNED') THEN 'STATE_QUEUED'
                         ELSE 'STATE_' || state
                     END
-                ) AS state
+                ) AS state,
+                slots,
+                exit_reason,
+                status_code,
+                'EXIT_CLASS_' || exit_class AS exit_class,
+                exit_detail
             FROM allocations
             WHERE allocations.task_id = t.task_id
         ) allo

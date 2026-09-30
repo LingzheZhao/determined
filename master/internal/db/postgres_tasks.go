@@ -197,7 +197,7 @@ func AddAllocation(ctx context.Context, a *model.Allocation) error {
 // AddAllocationExitStatus adds the allocation exit status to the allocations table.
 func AddAllocationExitStatus(ctx context.Context, a *model.Allocation) error {
 	if _, err := Bun().NewUpdate().Model(a).
-		Column("exit_reason", "exit_error", "status_code").
+		Column("exit_reason", "exit_error", "status_code", "exit_class", "exit_detail").
 		Where("allocation_id = ?", a.AllocationID).Exec(ctx); err != nil {
 		return fmt.Errorf("adding allocation exit status to db: %w", err)
 	}
@@ -311,12 +311,6 @@ func UpdateAllocationProxyAddress(ctx context.Context, a model.Allocation) error
 // CloseOpenAllocations finds all allocations that were open when the master crashed
 // and adds an end time.
 func CloseOpenAllocations(ctx context.Context, exclude []model.AllocationID) error {
-	if _, err := Bun().NewRaw(`UPDATE allocations SET start_time = cluster_heartbeat FROM cluster_id
-	WHERE start_time is NULL`).Exec(ctx); err != nil {
-		return errors.Wrap(err,
-			"setting start time to cluster heartbeat when it's assigned to zero value")
-	}
-
 	excludedFilter := ""
 	if len(exclude) > 0 {
 		excludeStr := make([]string, 0, len(exclude))
@@ -324,6 +318,24 @@ func CloseOpenAllocations(ctx context.Context, exclude []model.AllocationID) err
 			excludeStr = append(excludeStr, v.String())
 		}
 		excludedFilter = strings.Join(excludeStr, ",")
+	}
+
+	// Classify before the start time backfill below, which erases whether an allocation started.
+	// An allocation that started failed with the master; one that never started stays
+	// unclassified, and a class already recorded by the allocation is kept.
+	if _, err := Bun().NewRaw(`UPDATE allocations SET exit_class = ?, exit_detail = ?
+	WHERE end_time IS NULL AND start_time IS NOT NULL AND exit_class IS NULL
+	AND (? = '' OR allocation_id NOT IN (SELECT unnest(string_to_array(?, ','))))`,
+		model.ExitClassInfrastructureFailed,
+		model.NewExitDetail("", nil, "the allocation was open when the master restarted"),
+		excludedFilter, excludedFilter).Exec(ctx); err != nil {
+		return errors.Wrap(err, "classifying open allocations")
+	}
+
+	if _, err := Bun().NewRaw(`UPDATE allocations SET start_time = cluster_heartbeat FROM cluster_id
+	WHERE start_time is NULL`).Exec(ctx); err != nil {
+		return errors.Wrap(err,
+			"setting start time to cluster heartbeat when it's assigned to zero value")
 	}
 
 	if _, err := Bun().NewRaw(` UPDATE allocations 

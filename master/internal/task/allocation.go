@@ -31,6 +31,7 @@ import (
 	"github.com/determined-ai/determined/master/pkg/ptrs"
 	"github.com/determined-ai/determined/master/pkg/syncx/waitgroupx"
 	"github.com/determined-ai/determined/master/pkg/tasks"
+	"github.com/determined-ai/determined/proto/pkg/taskv1"
 )
 
 const killCooldown = 15 * time.Second
@@ -556,18 +557,18 @@ func (a *allocation) Cleanup() {
 	if a.exitErr == nil {
 		a.exitErr = errors.New("unknown error occurred")
 	}
-	exitReason := a.exitErr.Error()
-	a.SetExitStatus(exitReason, a.exitErr, ptrs.Ptr(int32(-1)))
+	status := exitStatus{reason: a.exitErr.Error(), severity: logrus.ErrorLevel, err: a.exitErr}
+	status.class, status.detail = classifyExitErr(a.exitErr)
+	a.SetExitStatus(status.reason, status.err, ptrs.Ptr(int32(-1)))
 
-	a.finalize(exitReason, false, logrus.ErrorLevel, a.exitErr)
+	a.finalize(status)
 }
 
-func (a *allocation) finalize(
-	exitReason string,
-	userRequestedStop bool,
-	severity logrus.Level,
-	exitErr error,
-) {
+func (a *allocation) finalize(status exitStatus) {
+	// Record the class before purging the restorable resources, which classification may read.
+	a.model.ExitClass = &status.class
+	a.model.ExitDetail = status.detail
+
 	a.clearResourceMetrics()
 	defer a.rm.Release(sproto.ResourcesReleased{
 		AllocationID: a.req.AllocationID,
@@ -584,11 +585,18 @@ func (a *allocation) finalize(
 	a.purgeRestorableResources()
 	a.markResourcesReleased()
 
-	a.exited = &AllocationExited{UserRequestedStop: userRequestedStop, Err: exitErr, FinalState: a.state()}
-	a.SetExitStatus(exitReason, exitErr, nil)
-	log := fmt.Sprintf("%s was terminated: %s", a.req.Name, exitReason)
-	a.syslog.Log(severity, log)
-	a.sendTaskLog(&model.TaskLog{Level: ptrs.Ptr(model.TaskLogLevelFromLogrus(severity)), Log: log})
+	a.exited = &AllocationExited{
+		UserRequestedStop: status.userRequestedStop,
+		Err:               status.err,
+		FinalState:        a.state(),
+	}
+	a.SetExitStatus(status.reason, status.err, nil)
+	log := fmt.Sprintf("%s was terminated: %s", a.req.Name, status.reason)
+	a.syslog.Log(status.severity, log)
+	a.sendTaskLog(&model.TaskLog{
+		Level: ptrs.Ptr(model.TaskLogLevelFromLogrus(status.severity)),
+		Log:   log,
+	})
 }
 
 // resourcesAllocated handles receiving resources from the resource manager. Note: it makes a single
@@ -918,7 +926,7 @@ func (a *allocation) restoreResourceFailure(msg *sproto.ResourcesFailedError) {
 		a.syslog.WithError(err).Error("failed to mark allocation completed")
 	}
 
-	a.crash(msg)
+	a.crash(*msg)
 }
 
 // releaseResources prompts the allocate to release resources.
@@ -1188,45 +1196,139 @@ func (a *allocation) terminated(reason string) {
 	a.finalize(a.calculateExitStatus(reason))
 }
 
-func (a *allocation) calculateExitStatus(reason string) (
-	exitReason string,
-	userRequestedStop bool,
-	severity logrus.Level,
-	exitErr error,
-) {
+// exitStatus describes how an allocation ended.
+type exitStatus struct {
+	reason            string
+	userRequestedStop bool
+	severity          logrus.Level
+	// err is the error reported to the allocation's owner, if any.
+	err error
+	// class is the outcome of the exit and detail describes the failure behind it, if any.
+	class  model.ExitClass
+	detail *model.ExitDetail
+}
+
+// calculateExitStatus decides how the allocation ended. It is total: it classifies every exit,
+// including failure types it does not know, instead of panicking.
+func (a *allocation) calculateExitStatus(reason string) exitStatus {
 	switch {
 	case a.killedWhileRunning:
-		return fmt.Sprintf("allocation killed after %s", reason), false, logrus.InfoLevel, nil
+		// A kill with a recorded error is the master stopping the allocation because of that
+		// error; otherwise someone asked for the kill and nothing failed.
+		status := exitStatus{
+			reason:   fmt.Sprintf("allocation killed after %s", reason),
+			severity: logrus.InfoLevel,
+		}
+		status.class, status.detail = classifyExitErr(a.exitErr)
+		return status
 	case a.req.Preemption.Preemptible && preemptible.Acknowledged(a.req.AllocationID.String()):
-		return fmt.Sprintf("allocation preempted after %s", reason), false, logrus.InfoLevel, nil
+		return exitStatus{
+			reason:   fmt.Sprintf("allocation preempted after %s", reason),
+			severity: logrus.InfoLevel,
+			class:    model.ExitClassNone,
+		}
 	case a.exitErr == nil && len(a.resources.exited()) > 0:
-		return fmt.Sprintf("allocation stopped early after %s", reason), true, logrus.InfoLevel, nil
+		return exitStatus{
+			reason:            fmt.Sprintf("allocation stopped early after %s", reason),
+			userRequestedStop: true,
+			severity:          logrus.InfoLevel,
+			class:             model.ExitClassNone,
+		}
 	case a.exitErr != nil:
+		status := exitStatus{severity: logrus.ErrorLevel, err: a.exitErr}
+		status.class, status.detail = classifyExitErr(a.exitErr)
 		switch err := a.exitErr.(type) {
 		case sproto.ResourcesFailedError:
 			switch err.FailureType {
 			case sproto.ResourcesFailed, sproto.TaskError:
 				if a.killedDaemonsGracefully {
-					return "allocation terminated daemon processes as part of normal exit", false, logrus.InfoLevel, nil
+					return exitStatus{
+						reason:   "allocation terminated daemon processes as part of normal exit",
+						severity: logrus.InfoLevel,
+						class:    model.ExitClassNone,
+					}
 				}
-				return fmt.Sprintf("allocation failed: %s", err), false, logrus.ErrorLevel, err
-			case sproto.AgentError, sproto.AgentFailed:
-				return fmt.Sprintf("allocation failed due to agent failure: %s", err), false, logrus.ErrorLevel, err
+				status.reason = fmt.Sprintf("allocation failed: %s", err)
+			case sproto.AgentError, sproto.AgentFailed, sproto.UnknownError:
+				status.reason = fmt.Sprintf("allocation failed due to agent failure: %s", err)
 			case sproto.TaskAborted, sproto.ResourcesAborted:
-				return fmt.Sprintf("allocation aborted: %s", err.FailureType), false, logrus.InfoLevel, err
+				status.reason = fmt.Sprintf("allocation aborted: %s", err.FailureType)
+				status.severity = logrus.InfoLevel
 			case sproto.RestoreError:
-				return fmt.Sprintf("allocation failed due to restore error: %s", err), false, logrus.ErrorLevel, err
+				status.reason = fmt.Sprintf("allocation failed due to restore error: %s", err)
+			case sproto.ResourcesMissing:
+				status.reason = fmt.Sprintf("allocation failed due to missing resources: %s", err)
+			case sproto.PlacementUnsatisfied:
+				status.reason = fmt.Sprintf("allocation could not be placed: %s", err)
+			case sproto.PreflightFailed:
+				status.reason = fmt.Sprintf("allocation failed node preflight: %s", err)
 			default:
-				panic(fmt.Errorf("unexpected allocation failure: %w", err))
+				a.syslog.WithError(err).Error("allocation failed with an unexpected failure type")
+				status.reason = fmt.Sprintf("allocation failed: %s", err)
 			}
 		default:
-			return fmt.Sprintf("allocation handler crashed due to error: %s", err), false, logrus.ErrorLevel, err
+			status.reason = fmt.Sprintf("allocation handler crashed due to error: %s", err)
 		}
+		return status
 	case len(a.resources) == 0:
-		return fmt.Sprintf("allocation aborted after %s", reason), false, logrus.InfoLevel, nil
+		return exitStatus{
+			reason:   fmt.Sprintf("allocation aborted after %s", reason),
+			severity: logrus.InfoLevel,
+			class:    model.ExitClassNone,
+		}
 	default:
-		// If we ever exit without a reason and we have no exited resources, something has gone wrong.
-		panic("allocation exited early without a valid reason")
+		// We exited without a reason while resources exist and none exited: this is a bug.
+		err := errors.Errorf("allocation exited early without a valid reason after %s", reason)
+		a.syslog.WithError(err).Error("allocation exited in an unexpected state")
+		status := exitStatus{reason: err.Error(), severity: logrus.ErrorLevel, err: err}
+		status.class, status.detail = classifyExitErr(err)
+		return status
+	}
+}
+
+// failureExitClass classifies a resources failure type. It is total: a type it does not list is
+// an infrastructure failure, and known is false.
+func failureExitClass(failureType sproto.FailureType) (class model.ExitClass, known bool) {
+	switch failureType {
+	case sproto.TaskAborted, sproto.ResourcesAborted:
+		return model.ExitClassNone, true
+	case sproto.PlacementUnsatisfied:
+		return model.ExitClassPlacementUnsatisfied, true
+	case sproto.PreflightFailed:
+		return model.ExitClassNodePreflightFailed, true
+	case sproto.ResourcesFailed, sproto.TaskError:
+		// Until the master records when a workload starts, it cannot tell a failure during
+		// initialization from one after it.
+		return model.ExitClassWorkloadFailed, true
+	case sproto.AgentError, sproto.AgentFailed, sproto.UnknownError, sproto.RestoreError,
+		sproto.ResourcesMissing:
+		return model.ExitClassInfrastructureFailed, true
+	default:
+		return model.ExitClassInfrastructureFailed, false
+	}
+}
+
+// classifyExitErr returns the class and detail of an exit caused by err. No error is no failure;
+// an error other than a resources failure is a master-side failure.
+func classifyExitErr(err error) (model.ExitClass, *model.ExitDetail) {
+	switch err := err.(type) {
+	case nil:
+		return model.ExitClassNone, nil
+	case sproto.ResourcesFailedError:
+		class, _ := failureExitClass(err.FailureType)
+		var exitCode *int32
+		if err.ExitCode != nil {
+			exitCode = ptrs.Ptr(int32(*err.ExitCode))
+		}
+		failureType := err.FailureType.Proto()
+		message := err.ErrMsg
+		if failureType == taskv1.FailureType_FAILURE_TYPE_UNSPECIFIED {
+			// Keep the unrecognized failure type, which the proto name drops.
+			message = err.Error()
+		}
+		return class, model.NewExitDetail(failureType.String(), exitCode, message)
+	default:
+		return model.ExitClassInfrastructureFailed, model.NewExitDetail("", nil, err.Error())
 	}
 }
 

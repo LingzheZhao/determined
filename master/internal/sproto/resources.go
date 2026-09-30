@@ -150,6 +150,10 @@ func FromContainerStopped(cs *aproto.ContainerStopped) *ResourcesStopped {
 			ErrMsg:      f.ErrMsg,
 			ExitCode:    FromContainerExitCode(f.ExitCode),
 		}
+		if rs.Failure.FailureType == UnknownError {
+			// Keep the agent's own failure type, which UnknownError drops.
+			rs.Failure.ErrMsg = fmt.Sprintf("%s: %s", f.FailureType, f.ErrMsg)
+		}
 	}
 	return rs
 }
@@ -246,7 +250,8 @@ func FromContainerExitCode(c *aproto.ExitCode) *ExitCode {
 }
 
 // FailureType denotes the type of failure that resulted in the container stopping.
-// Each FailureType must be handled by ./internal/task/allocation.go.
+// Each FailureType must be classified by ./internal/task/allocation.go; a type it does not list
+// is an infrastructure failure.
 type FailureType string
 
 const (
@@ -274,8 +279,15 @@ const (
 	// RestoreError denotes a failure to restore a running allocation on master blip.
 	RestoreError FailureType = "RM failed to restore the allocation"
 
+	// PlacementUnsatisfied denotes that the scheduler could not place the resources as requested.
+	PlacementUnsatisfied FailureType = "scheduler could not place the resources as requested"
+
+	// PreflightFailed denotes that a node rejected the resources in a check before starting the
+	// container.
+	PreflightFailed FailureType = "node rejected the resources in a preflight check"
+
 	// UnknownError denotes an internal error that did not map to a know failure type.
-	UnknownError = "unknown agent failure: %s"
+	UnknownError FailureType = "unknown agent failure"
 )
 
 // Proto returns the proto representation of the device type.
@@ -297,6 +309,10 @@ func (f FailureType) Proto() taskv1.FailureType {
 		return taskv1.FailureType_FAILURE_TYPE_AGENT_ERROR
 	case RestoreError:
 		return taskv1.FailureType_FAILURE_TYPE_RESTORE_ERROR
+	case PlacementUnsatisfied:
+		return taskv1.FailureType_FAILURE_TYPE_PLACEMENT_UNSATISFIED
+	case PreflightFailed:
+		return taskv1.FailureType_FAILURE_TYPE_PREFLIGHT_FAILED
 	case UnknownError:
 		return taskv1.FailureType_FAILURE_TYPE_UNKNOWN_ERROR
 	default:
@@ -324,8 +340,10 @@ func FromContainerFailureType(t aproto.FailureType) FailureType {
 		return AgentError
 	case aproto.RestoreError:
 		return RestoreError
+	case aproto.PreflightFailed:
+		return PreflightFailed
 	default:
-		return FailureType(fmt.Sprintf(UnknownError, t))
+		return UnknownError
 	}
 }
 

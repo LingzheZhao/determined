@@ -145,6 +145,9 @@ type Allocation struct {
 	ExitReason   *string `db:"exit_reason" bun:"exit_reason"`
 	ExitErr      *string `db:"exit_error" bun:"exit_error"`
 	StatusCode   *int32  `db:"status_code" bun:"status_code"`
+	// ExitClass and ExitDetail describe how the allocation ended. Both are nil until it exits.
+	ExitClass  *ExitClass  `db:"exit_class" bun:"exit_class"`
+	ExitDetail *ExitDetail `db:"exit_detail" bun:"exit_detail,type:jsonb"`
 }
 
 // AllocationWorkspaceRecord is the model for persisting the workspace and experiment
@@ -327,6 +330,8 @@ func (a Allocation) Proto() *taskv1.Allocation {
 		Slots:        int32(a.Slots),
 		ExitReason:   a.ExitReason,
 		StatusCode:   a.StatusCode,
+		ExitClass:    a.ExitClass.Proto(),
+		ExitDetail:   a.ExitDetail.Proto(),
 	}
 }
 

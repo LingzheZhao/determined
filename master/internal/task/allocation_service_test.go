@@ -46,7 +46,23 @@ func TestRestoreFailed(t *testing.T) {
 		FailureType: sproto.RestoreError,
 		ErrMsg:      "things weren't there",
 	})
-	requireTerminated(t, id, exitFuture)
+	exit := requireTerminated(t, id, exitFuture)
+
+	// The failure is classified by its type, not reported as a handler crash.
+	restoreErr := sproto.ResourcesFailedError{
+		FailureType: sproto.RestoreError,
+		ErrMsg:      "things weren't there",
+	}
+	require.Equal(t, restoreErr, exit.Err)
+	persisted, err := db.AllocationByID(context.TODO(), id)
+	require.NoError(t, err)
+	require.Equal(t, "allocation failed due to restore error: "+restoreErr.Error(),
+		*persisted.ExitReason)
+	require.Equal(t, ptrs.Ptr(model.ExitClassInfrastructureFailed), persisted.ExitClass)
+	require.Equal(t, &model.ExitDetail{
+		FailureType: "FAILURE_TYPE_RESTORE_ERROR",
+		Message:     "things weren't there",
+	}, persisted.ExitDetail)
 }
 
 func TestInvalidResourcesRequest(t *testing.T) {

@@ -4,6 +4,7 @@
 package task
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/determined-ai/determined/master/pkg/etc"
 	detLogger "github.com/determined-ai/determined/master/pkg/logger"
 	"github.com/determined-ai/determined/master/pkg/model"
+	"github.com/determined-ai/determined/master/pkg/ptrs"
 	"github.com/determined-ai/determined/master/pkg/syncx/queue"
 	"github.com/determined-ai/determined/master/pkg/tasks"
 )
@@ -36,33 +38,49 @@ func (m mockTaskSpecifier) ToTaskSpec() (t tasks.TaskSpec) {
 }
 
 func TestAllocation(t *testing.T) {
+	containerFailed := sproto.ResourcesFailedError{
+		FailureType: sproto.ResourcesFailed,
+		ErrMsg:      "container failed with non-zero exit code: 2",
+		ExitCode:    ptrs.Ptr(sproto.ExitCode(2)),
+	}
 	cases := []struct {
-		name  string
-		err   *sproto.ResourcesFailedError
-		acked bool
-		exit  *AllocationExited
+		name       string
+		err        *sproto.ResourcesFailedError
+		acked      bool
+		exit       *AllocationExited
+		exitClass  model.ExitClass
+		exitDetail *model.ExitDetail
 	}{
 		{
-			name:  "happy path",
-			acked: true,
-			exit:  &AllocationExited{},
+			name:      "happy path",
+			acked:     true,
+			exit:      &AllocationExited{},
+			exitClass: model.ExitClassNone,
 		},
 		{
-			name:  "user requested stop",
-			acked: false,
-			exit:  &AllocationExited{UserRequestedStop: true},
+			name:      "user requested stop",
+			acked:     false,
+			exit:      &AllocationExited{UserRequestedStop: true},
+			exitClass: model.ExitClassNone,
 		},
 		{
-			name:  "container failed",
-			acked: false,
-			err:   &sproto.ResourcesFailedError{FailureType: sproto.ResourcesFailed},
-			exit:  &AllocationExited{Err: sproto.ResourcesFailedError{FailureType: sproto.ResourcesFailed}},
+			name:      "container failed",
+			acked:     false,
+			err:       &containerFailed,
+			exit:      &AllocationExited{Err: containerFailed},
+			exitClass: model.ExitClassWorkloadFailed,
+			exitDetail: &model.ExitDetail{
+				FailureType: "FAILURE_TYPE_RESOURCES_FAILED",
+				ExitCode:    ptrs.Ptr(int32(2)),
+				Message:     "container failed with non-zero exit code: 2",
+			},
 		},
 		{
-			name:  "container failed, but acked preemption",
-			acked: true,
-			err:   &sproto.ResourcesFailedError{FailureType: sproto.ResourcesFailed},
-			exit:  &AllocationExited{},
+			name:      "container failed, but acked preemption",
+			acked:     true,
+			err:       &containerFailed,
+			exit:      &AllocationExited{},
+			exitClass: model.ExitClassNone,
 		},
 	}
 
@@ -166,9 +184,16 @@ func TestAllocation(t *testing.T) {
 				}
 				a.HandleRMEvent(&containerStateChanged)
 			}
+			require.NotNil(t, a.exited)
 			require.Equal(t, tc.exit.Err, a.exited.Err)
 			require.Equal(t, tc.exit.UserRequestedStop, a.exited.UserRequestedStop)
-			require.NotNil(t, a.exited)
+
+			// SetExitStatus persisted the class and detail with the exit reason.
+			persisted, err := db.AllocationByID(context.TODO(), a.model.AllocationID)
+			require.NoError(t, err)
+			require.NotNil(t, persisted.ExitReason)
+			require.Equal(t, &tc.exitClass, persisted.ExitClass)
+			require.Equal(t, tc.exitDetail, persisted.ExitDetail)
 		})
 	}
 }

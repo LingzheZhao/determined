@@ -7,6 +7,35 @@
 ###############
 
 **************
+ Version 0.41
+**************
+
+Version 0.41.0
+==============
+
+**Release Date:** Unreleased
+
+**New Features**
+
+-  API: ``GetTask`` reports how each allocation ended. ``exit_class`` is ``NONE`` for an
+   allocation that did not fail, or a failure class such as ``WORKLOAD_FAILED`` or
+   ``INFRASTRUCTURE_FAILED``, and ``exit_detail`` holds the failure type, container exit code,
+   and message. An allocation that had started when the master restarted is
+   ``INFRASTRUCTURE_FAILED``. Allocations that ended before the upgrade, or that had not started
+   when the master restarted, have no class. ``GetTask`` also returns each allocation's
+   ``slots``, ``exit_reason``, and ``status_code``, which it previously left empty.
+
+**Bug Fixes**
+
+-  Tasks: An allocation whose resources go missing, or that fails with a failure type the master
+   does not recognize, such as one from a newer agent, now fails as an infrastructure failure
+   instead of crashing its handler.
+
+-  Tasks: A failure to restore an allocation after a master restart is now reported as a restore
+   error instead of a handler crash, and, like agent failures, no longer counts against a trial's
+   ``max_restarts``.
+
+**************
  Version 0.40
 **************
 

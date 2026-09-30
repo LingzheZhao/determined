@@ -6,6 +6,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 
+	"github.com/determined-ai/determined/master/pkg/ptrs"
 	"github.com/determined-ai/determined/proto/pkg/taskv1"
 )
 
@@ -43,5 +44,15 @@ func TestAllocationProto(t *testing.T) {
 		ExitReason:   nil,
 		StatusCode:   nil,
 	}
+	require.Equal(t, expected, a.Proto())
+
+	a.ExitReason = ptrs.Ptr("allocation failed")
+	a.StatusCode = ptrs.Ptr(int32(2))
+	a.ExitClass = ptrs.Ptr(ExitClassWorkloadFailed)
+	a.ExitDetail = NewExitDetail("FAILURE_TYPE_RESOURCES_FAILED", ptrs.Ptr(int32(2)), "boom")
+	expected.ExitReason = a.ExitReason
+	expected.StatusCode = a.StatusCode
+	expected.ExitClass = taskv1.ExitClass_EXIT_CLASS_WORKLOAD_FAILED
+	expected.ExitDetail = a.ExitDetail.Proto()
 	require.Equal(t, expected, a.Proto())
 }

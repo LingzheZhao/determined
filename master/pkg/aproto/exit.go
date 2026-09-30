@@ -118,4 +118,7 @@ const (
 
 	// AgentError denotes that the agent failed to launch the container.
 	AgentError FailureType = "agent failed to launch the container"
+
+	// PreflightFailed denotes that the agent rejected the container in a check before creating it.
+	PreflightFailed FailureType = "agent rejected the container in a preflight check"
 )
