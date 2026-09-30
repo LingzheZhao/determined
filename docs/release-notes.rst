@@ -35,6 +35,8 @@ Version 0.41.0
    error instead of a handler crash, and, like agent failures, no longer counts against a trial's
    ``max_restarts``.
 
+-  Tasks: Access checks for generic tasks now use the task's workspace instead of workspace 0.
+
 **************
  Version 0.40
 **************

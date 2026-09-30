@@ -45,8 +45,11 @@ type TaskMetadata struct {
 // Returns db.ErrNotFound if a command with given taskID does not exist.
 func IdentifyTask(ctx context.Context, taskID model.TaskID) (TaskMetadata, error) {
 	metadata := TaskMetadata{}
+	// A generic task stores an empty generic_command_spec, whose workspace is 0, beside its
+	// generic_task_spec, so the generic task spec is read first.
 	if err := db.Bun().NewSelect().Model(&metadata).
-		ColumnExpr("generic_command_spec->'Metadata'->'workspace_id' AS workspace_id").
+		ColumnExpr(`COALESCE(generic_task_spec->'WorkspaceID',
+			generic_command_spec->'Metadata'->'workspace_id') AS workspace_id`).
 		ColumnExpr("generic_command_spec->>'TaskType' as task_type").
 		ColumnExpr("generic_command_spec->'Metadata'->'experiment_ids' as experiment_ids").
 		ColumnExpr("generic_command_spec->'Metadata'->'trial_ids' as trial_ids").

@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,7 @@ import (
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/pkg/etc"
 	"github.com/determined-ai/determined/master/pkg/model"
+	"github.com/determined-ai/determined/master/pkg/tasks"
 )
 
 func TestMain(m *testing.M) {
@@ -87,6 +89,23 @@ func TestIdentifyTask(t *testing.T) {
 		ExperimentIDs: []int32{int32(expIDs[0]), int32(expIDs[1])},
 		TrialIDs:      []int32{int32(trialIDs[0]), int32(trialIDs[1])},
 	}, meta)
+
+	// Generic task, stored as the generic task API stores it: with an empty generic command
+	// spec, whose workspace is 0, beside the generic task spec.
+	genericTask := db.RequireMockTask(t, pgDB, &user.ID)
+	genericAlloc := db.RequireMockAllocation(t, pgDB, genericTask.TaskID)
+	_, err = db.Bun().NewInsert().Model(&CommandSnapshot{
+		TaskID:             genericTask.TaskID,
+		RegisteredTime:     time.Now().UTC(),
+		AllocationID:       genericAlloc.AllocationID,
+		GenericCommandSpec: tasks.GenericCommandSpec{},
+		GenericTaskSpec:    &tasks.GenericTaskSpec{WorkspaceID: 7},
+	}).Exec(ctx)
+	require.NoError(t, err)
+
+	meta, err = IdentifyTask(ctx, genericTask.TaskID)
+	require.NoError(t, err)
+	require.Equal(t, model.AccessScopeID(7), meta.WorkspaceID)
 
 	// Experiment task.
 	// This always is not found and is probably a footgun from function name / comment.
