@@ -10,7 +10,6 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -22,18 +21,14 @@ import (
 	"github.com/determined-ai/determined/master/internal/command"
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/grpcutil"
-	"github.com/determined-ai/determined/master/internal/job/jobservice"
 	"github.com/determined-ai/determined/master/internal/project"
 	"github.com/determined-ai/determined/master/internal/rbac/audit"
 	"github.com/determined-ai/determined/master/internal/rm"
-	"github.com/determined-ai/determined/master/internal/rm/tasklist"
-	"github.com/determined-ai/determined/master/internal/sproto"
 	"github.com/determined-ai/determined/master/internal/submission"
 	"github.com/determined-ai/determined/master/internal/task"
 	"github.com/determined-ai/determined/master/internal/user"
 	"github.com/determined-ai/determined/master/pkg/check"
 	pkgCommand "github.com/determined-ai/determined/master/pkg/command"
-	"github.com/determined-ai/determined/master/pkg/logger"
 	"github.com/determined-ai/determined/master/pkg/model"
 	"github.com/determined-ai/determined/master/pkg/ptrs"
 	"github.com/determined-ai/determined/master/pkg/tasks"
@@ -245,10 +240,8 @@ func (a *apiServer) CreateGenericTask(
 		Commit: func(ctx context.Context, tx bun.Tx) error {
 			return t.commitTx(ctx, tx, s, req, userModel)
 		},
-		Start: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.CreateGenericTaskResponse, error) {
-			if err := t.start(ctx, a.m); err != nil {
-				return nil, err
-			}
+		Dispatch: a.m.dispatchGenericTask,
+		Respond: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.CreateGenericTaskResponse, error) {
 			return &apiv1.CreateGenericTaskResponse{
 				TaskId:     string(t.taskID),
 				Warnings:   pkgCommand.LaunchWarningToProto(t.warnings),
@@ -418,74 +411,6 @@ func (t *preparedGenericTask) commitTx(
 			GenericTaskSpec:    t.spec,
 		},
 	})
-}
-
-// start starts a committed generic task. If the start fails, the task is ended so that it does not
-// stay open.
-func (t *preparedGenericTask) start(ctx context.Context, m *Master) error {
-	logCtx := logger.Context{
-		"job-id":    t.jobID,
-		"task-id":   t.taskID,
-		"task-type": model.TaskTypeGeneric,
-	}
-	priorityChange := func(priority int) error {
-		return nil
-	}
-	if err := tasklist.GroupPriorityChangeRegistry.Add(t.jobID, priorityChange); err != nil {
-		t.failStart(ctx, err)
-		return err
-	}
-
-	onAllocationExit := getGenericTaskOnAllocationExit(ctx, t.taskID, t.allocationID, t.jobID, logCtx)
-	isSingleNode := t.spec.GenericTaskConfig.Resources.IsSingleNode() != nil &&
-		*t.spec.GenericTaskConfig.Resources.IsSingleNode()
-	err := task.DefaultService.StartAllocation(logCtx, sproto.AllocateRequest{
-		AllocationID:      t.allocationID,
-		TaskID:            t.taskID,
-		JobID:             t.jobID,
-		JobSubmissionTime: t.startTime,
-		IsUserVisible:     true,
-		Name:              fmt.Sprintf("Generic Task %s", t.taskID),
-
-		SlotsNeeded:  *t.spec.GenericTaskConfig.Resources.Slots(),
-		ResourcePool: t.spec.GenericTaskConfig.Resources.ResourcePool(),
-		FittingRequirements: sproto.FittingRequirements{
-			SingleAgent: isSingleNode,
-		},
-
-		Restore:   false,
-		Persisted: true,
-	}, m.db, m.rm, t.spec, onAllocationExit)
-	if err != nil {
-		t.failStart(ctx, err)
-		return err
-	}
-
-	jobservice.DefaultService.RegisterJob(t.jobID, t.spec)
-	if err := task.KillIfCancelRequested(ctx, t.jobID, t.allocationID); err != nil {
-		logrus.WithField("task-id", t.taskID).WithError(err).
-			Error("checking whether a started generic task was asked to stop")
-	}
-	return nil
-}
-
-// failStart ends a committed generic task whose start failed, so that it reads as ended rather
-// than open, and releases what the task held.
-func (t *preparedGenericTask) failStart(ctx context.Context, cause error) {
-	syslog := logrus.WithField("component", "genericTask").WithField("task-id", t.taskID)
-	if _, ok := tasklist.GroupPriorityChangeRegistry.Load(t.jobID); ok {
-		if err := tasklist.GroupPriorityChangeRegistry.Delete(t.jobID); err != nil {
-			syslog.WithError(err).Error("deleting group priority change registry")
-		}
-	}
-	if err := db.FailTaskStart(
-		ctx, t.taskID, t.allocationID, ptrs.Ptr(model.TaskStateError), cause,
-	); err != nil {
-		syslog.WithError(err).Error("ending a generic task that failed to start")
-	}
-	if err := user.DeleteSessionByToken(ctx, t.spec.Base.UserSessionToken); err != nil {
-		syslog.WithError(err).Error("deleting the user session of a generic task that failed to start")
-	}
 }
 
 func (a *apiServer) GetTaskChildren(

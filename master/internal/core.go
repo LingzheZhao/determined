@@ -1365,6 +1365,9 @@ func (m *Master) Run(ctx context.Context, gRPCLogInitDone chan struct{}) error {
 	if err = m.closeOpenAllocations(ctx); err != nil {
 		return err
 	}
+	// Everything committed before the restart was restored; from here, the sweep starts what a
+	// lost start left committed.
+	go m.sweepSubmissions(ctx)
 
 	if err = db.EndAllTaskStats(ctx); err != nil {
 		return err

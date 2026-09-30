@@ -8,6 +8,7 @@ import (
 	"github.com/determined-ai/determined/proto/pkg/trialv1"
 
 	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slices"
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -56,7 +57,7 @@ func (as *allocationService) StartAllocation(
 	defer as.mu.Unlock()
 
 	if as.allocations[req.AllocationID] != nil {
-		return fmt.Errorf("allocation with ID %s already exists", req.AllocationID)
+		return fmt.Errorf("allocation with ID %s: %w", req.AllocationID, ErrAllocationRegistered)
 	}
 
 	ref, err := newAllocation(logCtx, req, db, rm, specifier)
@@ -78,6 +79,11 @@ func (as *allocationService) StartAllocation(
 		as.syslog.Info("allocation cleaned up and removed from cache")
 	}()
 	return nil
+}
+
+// IsRegistered reports whether an allocation is registered with the default allocation service.
+func IsRegistered(id model.AllocationID) bool {
+	return slices.Contains(DefaultService.GetAllAllocationIDs(), id)
 }
 
 // AwaitTermination waits unilt the given allocation has stopped.

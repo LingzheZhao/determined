@@ -79,12 +79,7 @@ func (m *Master) restoreGenericTask(ctx context.Context, snapshot *command.Comma
 		}
 		return
 	case command.RestoreStopQueued:
-		state := endedGenericTaskState(taskState, cancelRequested, snapshot.Allocation)
-		if err := db.EndQueuedTask(
-			ctx, taskID, allocationID, &state, command.StopQueuedReason,
-		); err != nil {
-			syslog.WithError(err).Error("ending a queued generic task that was asked to stop")
-		}
+		endQueuedGenericTask(ctx, snapshot, taskState, cancelRequested)
 		return
 	case command.RestoreRequeue:
 		// The resource manager may have recorded resources for the allocation before the
@@ -101,6 +96,21 @@ func (m *Master) restoreGenericTask(ctx context.Context, snapshot *command.Comma
 
 	if err := m.startRestoredGenericTask(ctx, snapshot, restore); err != nil {
 		fail(err)
+	}
+}
+
+// endQueuedGenericTask ends a generic task that was asked to stop or pause before its allocation
+// was placed, instead of requesting the allocation.
+func endQueuedGenericTask(
+	ctx context.Context, snapshot *command.CommandSnapshot, taskState model.TaskState,
+	cancelRequested bool,
+) {
+	state := endedGenericTaskState(taskState, cancelRequested, snapshot.Allocation)
+	if err := db.EndQueuedTask(
+		ctx, snapshot.TaskID, snapshot.AllocationID, &state, command.StopQueuedReason,
+	); err != nil {
+		log.WithField("task-id", snapshot.TaskID).WithError(err).
+			Error("ending a queued generic task that was asked to stop")
 	}
 }
 

@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -92,9 +93,59 @@ func (cs *CommandService) RestoreAllCommands(
 	return nil
 }
 
+// Dispatch starts the attempt that command_state names for the committed command or shell of a
+// job. It does nothing if the task has ended, or the attempt has ended, is registered with the
+// allocation service, or was placed, which only a restore continues. A job that was asked to stop
+// before its attempt was placed ends instead, as it does in a restore. The caller serializes the
+// dispatches of a job through submission.Dispatch.
+func (cs *CommandService) Dispatch(ctx context.Context, jobID model.JobID) error {
+	snapshot, err := liveCommandSnapshot(ctx, jobID)
+	if err != nil || snapshot == nil || task.IsRegistered(snapshot.AllocationID) {
+		return err
+	}
+	// An allocation leaves the allocation service only after it records its end, so a read after
+	// the check sees an end that the check missed.
+	attempt := snapshot.AllocationID
+	if snapshot, err = liveCommandSnapshot(ctx, jobID); err != nil || snapshot == nil ||
+		snapshot.AllocationID != attempt {
+		return err
+	}
+
+	cmd := commandFromSnapshot(cs.db, cs.rm, snapshot)
+	switch DecideRestore(&snapshot.Allocation, snapshot.Task.Job.CancelRequestedAt != nil) {
+	case RestoreRequeue:
+		// An allocation that something else registered in the meantime is running.
+		if err := cs.StartCommand(cmd); err != nil && !errors.Is(err, task.ErrAllocationRegistered) {
+			return err
+		}
+	case RestoreStopQueued:
+		cmd.endQueued(ctx)
+	case RestoreEnded, RestorePlaced:
+		// An ended attempt is its exit handler's to finish, and a placed one is restored only when
+		// the master starts.
+	}
+	return nil
+}
+
+// liveCommandSnapshot returns the command_state of the command or shell of a job, with its
+// attempt, if its task has not ended.
+func liveCommandSnapshot(ctx context.Context, jobID model.JobID) (*CommandSnapshot, error) {
+	var snapshots []CommandSnapshot
+	if err := SelectLiveSnapshots(&snapshots).
+		Where("command_snapshot.generic_task_spec IS NULL").
+		Where("task.job_id = ?", jobID).
+		Scan(ctx); err != nil {
+		return nil, fmt.Errorf("reading the command of job %s: %w", jobID, err)
+	}
+	if len(snapshots) == 0 || snapshots[0].Task.Job == nil {
+		return nil, nil
+	}
+	return &snapshots[0], nil
+}
+
 // NewGenericCommand returns a new NTSC command for a launch request. The caller persists it with
 // PersistTx in its commit transaction, together with its job row, and then starts it with
-// StartCommand.
+// StartCommand or Dispatch.
 func (cs *CommandService) NewGenericCommand(
 	taskType model.TaskType,
 	jobType model.JobType,
@@ -110,13 +161,28 @@ func (cs *CommandService) StartCommand(cmd *Command) error {
 	defer cs.mu.Unlock()
 
 	if err := cmd.Start(context.TODO()); err != nil {
-		cmd.fail(context.TODO(), "the allocation failed to start", err)
+		// Another instance of the allocation runs, and its record is not this start's to end.
+		if !errors.Is(err, task.ErrAllocationRegistered) {
+			cmd.fail(context.TODO(), "the allocation failed to start", err)
+		}
 		return err
 	}
 
 	// Add it to the registry.
 	cs.commands[cmd.taskID] = cmd
 	return nil
+}
+
+// Current returns the registered command of cmd's task, which a dispatch may have started from
+// command_state rather than from cmd, or cmd if none is registered.
+func (cs *CommandService) Current(cmd *Command) *Command {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	if registered, ok := cs.commands[cmd.taskID]; ok {
+		return registered
+	}
+	return cmd
 }
 
 // persistNewCommand commits a new command with its job row.

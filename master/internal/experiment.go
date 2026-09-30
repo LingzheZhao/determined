@@ -292,7 +292,11 @@ func killExperimentIfCancelRequested(e experiment.Experiment, experimentID int, 
 }
 
 func (e *internalExperiment) register() error {
-	return experiment.ExperimentRegistry.Add(e.ID, e)
+	if err := experiment.ExperimentRegistry.Add(e.ID, e); err != nil {
+		return err
+	}
+	registeredExperiments.Store(e.ID, struct{}{})
+	return nil
 }
 
 func (e *internalExperiment) unregister() {

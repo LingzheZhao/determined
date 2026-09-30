@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
@@ -301,7 +303,7 @@ func TestRunDryRun(t *testing.T) {
 			t.Error("a dry run must not commit")
 			return fmt.Errorf("committed a dry run")
 		},
-		Start: unexpected[*testResponse](t, "start"),
+		Respond: unexpected[*testResponse](t, "respond"),
 	})
 	require.NoError(t, err)
 	require.True(t, prepared)
@@ -322,12 +324,59 @@ func TestRunPlanChanged(t *testing.T) {
 			t.Error("a changed plan must fail before parsing")
 			return fmt.Errorf("parsed a changed plan")
 		},
-		DryRun: unexpected[*testResponse](t, "dry run"),
-		Start:  unexpected[*testResponse](t, "start"),
+		DryRun:  unexpected[*testResponse](t, "dry run"),
+		Respond: unexpected[*testResponse](t, "respond"),
 	})
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 	require.True(t, strings.HasPrefix(status.Convert(err).Message(), "plan_changed:"))
 	require.Contains(t, status.Convert(err).Message(), s.digest)
+}
+
+func TestDispatchSerializesAJob(t *testing.T) {
+	jobs := []model.JobID{model.NewJobID(), model.NewJobID()}
+	var mu sync.Mutex
+	running := map[model.JobID]int{}
+	most := map[model.JobID]int{}
+	start := func(ctx context.Context, jobID model.JobID) error {
+		mu.Lock()
+		running[jobID]++
+		if running[jobID] > most[jobID] {
+			most[jobID] = running[jobID]
+		}
+		mu.Unlock()
+		time.Sleep(time.Millisecond)
+		mu.Lock()
+		running[jobID]--
+		mu.Unlock()
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		for _, jobID := range jobs {
+			wg.Add(1)
+			go func(jobID model.JobID) {
+				defer wg.Done()
+				require.NoError(t, Dispatch(context.Background(), jobID, start))
+			}(jobID)
+		}
+	}
+	wg.Wait()
+	for _, jobID := range jobs {
+		require.Equal(t, 1, most[jobID], "dispatches of one job never overlap")
+	}
+
+	jobLocks.Lock()
+	defer jobLocks.Unlock()
+	require.Empty(t, jobLocks.held, "released job locks are forgotten")
+}
+
+func TestDispatchIsDetached(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.NoError(t, Dispatch(ctx, model.NewJobID(), func(ctx context.Context, _ model.JobID) error {
+		return ctx.Err()
+	}))
 }
 
 func TestTemplateContentIsInTheDigest(t *testing.T) {

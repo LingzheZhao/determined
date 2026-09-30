@@ -411,12 +411,10 @@ func (a *apiServer) LaunchCommand(
 				model.TaskTypeCommand, model.JobTypeCommand, launchReq)
 			return commitCommandTx(ctx, tx, s, cmd, user)
 		},
-		Start: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.LaunchCommandResponse, error) {
-			if err := command.DefaultCmdService.StartCommand(cmd); err != nil {
-				return nil, err
-			}
+		Dispatch: command.DefaultCmdService.Dispatch,
+		Respond: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.LaunchCommandResponse, error) {
 			return &apiv1.LaunchCommandResponse{
-				Command:    cmd.ToV1Command(),
+				Command:    command.DefaultCmdService.Current(cmd).ToV1Command(),
 				Config:     protoutils.ToStruct(launchReq.Spec.Config),
 				Warnings:   pkgCommand.LaunchWarningToProto(launchWarnings),
 				Submission: result,

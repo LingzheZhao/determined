@@ -123,12 +123,7 @@ func (c *Command) restore(ctx context.Context, snapshot *CommandSnapshot) bool {
 		c.releaseSessions(ctx)
 		return false
 	case RestoreStopQueued:
-		if err := internaldb.EndQueuedTask(
-			ctx, c.taskID, c.allocationID, nil, StopQueuedReason,
-		); err != nil {
-			c.syslog.WithError(err).Error("ending a queued command that was asked to stop")
-		}
-		c.releaseSessions(ctx)
+		c.endQueued(ctx)
 		return false
 	case RestoreRequeue:
 		// The resource manager may have recorded resources for the allocation before the
@@ -152,6 +147,17 @@ func (c *Command) restore(ctx context.Context, snapshot *CommandSnapshot) bool {
 		return false
 	}
 	return true
+}
+
+// endQueued ends a command that was asked to stop before its allocation was placed, instead of
+// requesting the allocation.
+func (c *Command) endQueued(ctx context.Context) {
+	if err := internaldb.EndQueuedTask(
+		ctx, c.taskID, c.allocationID, nil, StopQueuedReason,
+	); err != nil {
+		c.syslog.WithError(err).Error("ending a queued command that was asked to stop")
+	}
+	c.releaseSessions(ctx)
 }
 
 // newCommand returns a new command for a launch request. Nothing is persisted until the commit

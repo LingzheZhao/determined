@@ -13,6 +13,8 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/pkg/model"
@@ -69,7 +71,8 @@ func TestRunKeyRaceReplaysTheWinner(t *testing.T) {
 				<-release
 				return nil
 			},
-			Start: func(_ context.Context, result *apiv1.SubmitResult) (*testResponse, error) {
+			Dispatch: func(context.Context, model.JobID) error { return nil },
+			Respond: func(_ context.Context, result *apiv1.SubmitResult) (*testResponse, error) {
 				return &testResponse{result: result}, nil
 			},
 		})
@@ -92,7 +95,8 @@ func TestRunKeyRaceReplaysTheWinner(t *testing.T) {
 			loserWroteMore = true
 			return nil
 		},
-		Start: unexpected[*testResponse](t, "start"),
+		Dispatch: func(context.Context, model.JobID) error { return nil },
+		Respond:  unexpected[*testResponse](t, "respond"),
 	})
 	<-done
 	require.NoError(t, winnerErr)
@@ -144,4 +148,101 @@ func TestInsertJobTxKeyInUseIsOnlyTheKeyIndex(t *testing.T) {
 	require.Nil(t, stored.IdempotencyKey)
 	require.Nil(t, stored.RequestDigest)
 	require.Equal(t, model.AdmissionQueue, stored.Admission)
+}
+
+// unknownCommitHandler is a handler that commits a command job and records what Run dispatched.
+func unknownCommitHandler(
+	t *testing.T, s *Submission, owner model.UserID, dispatched *[]model.JobID,
+) Handler[*testResponse] {
+	return Handler[*testResponse]{
+		AuthorizeReplay: func(context.Context, *model.Job) error { return nil },
+		Replayed:        func(result *apiv1.SubmitResult) *testResponse { return &testResponse{result: result} },
+		Prepare:         func(context.Context) error { return nil },
+		Commit: func(ctx context.Context, tx bun.Tx) error {
+			return s.InsertJobTx(ctx, tx, commandJob(owner))
+		},
+		Dispatch: func(ctx context.Context, jobID model.JobID) error {
+			require.NoError(t, ctx.Err(), "a dispatch runs detached from the request")
+			*dispatched = append(*dispatched, jobID)
+			return nil
+		},
+		Respond: func(_ context.Context, result *apiv1.SubmitResult) (*testResponse, error) {
+			return &testResponse{result: result}, nil
+		},
+	}
+}
+
+func TestRunUnknownCommit(t *testing.T) {
+	ctx := context.Background()
+	owner := db.RequireMockUser(t, db.SingleDB()).ID
+	lost := errors.New("connection lost during COMMIT")
+	newSubmission := func(key string) *Submission {
+		s, err := NewCommand(owner, &apiv1.LaunchCommandRequest{
+			Submit: &apiv1.SubmitOptions{IdempotencyKey: key},
+		}, nil)
+		require.NoError(t, err)
+		return s
+	}
+	deleteJob := func(ctx context.Context, jobID model.JobID) {
+		_, err := db.Bun().NewDelete().Table("jobs").Where("job_id = ?", jobID).Exec(ctx)
+		require.NoError(t, err)
+	}
+
+	t.Run("the job was committed", func(t *testing.T) {
+		defer SetAfterCommitHook(func(context.Context) error { return lost })()
+		s := newSubmission(uuid.NewString())
+		var dispatched []model.JobID
+		resp, err := Run(ctx, s, unknownCommitHandler(t, s, owner, &dispatched))
+		require.NoError(t, err)
+		require.False(t, resp.result.Replayed)
+		require.Equal(t, s.jobID.String(), resp.result.JobId)
+		require.Equal(t, []model.JobID{s.jobID}, dispatched, "the handler dispatches its job")
+	})
+
+	t.Run("the job was not committed", func(t *testing.T) {
+		for _, key := range []string{"", uuid.NewString()} {
+			s := newSubmission(key)
+			remove := SetAfterCommitHook(func(ctx context.Context) error {
+				// As if the commit had rolled back.
+				deleteJob(ctx, s.jobID)
+				return lost
+			})
+			var dispatched []model.JobID
+			_, err := Run(ctx, s, unknownCommitHandler(t, s, owner, &dispatched))
+			remove()
+			require.Equal(t, codes.Unavailable, status.Code(err), "key %q", key)
+			require.Empty(t, dispatched)
+		}
+	})
+
+	t.Run("another submit of the key committed", func(t *testing.T) {
+		key := uuid.NewString()
+		s := newSubmission(key)
+		winner := newSubmission(key)
+		remove := SetAfterCommitHook(func(ctx context.Context) error {
+			deleteJob(ctx, s.jobID)
+			require.NoError(t, winner.InsertJobTx(ctx, db.Bun(), commandJob(owner)))
+			return lost
+		})
+		var dispatched []model.JobID
+		resp, err := Run(ctx, s, unknownCommitHandler(t, s, owner, &dispatched))
+		remove()
+		require.NoError(t, err)
+		require.True(t, resp.result.Replayed)
+		require.Equal(t, winner.jobID.String(), resp.result.JobId)
+		require.Equal(t, []model.JobID{winner.jobID}, dispatched, "a replay dispatches its job")
+	})
+
+	t.Run("the client disconnects after the commit", func(t *testing.T) {
+		reqCtx, cancel := context.WithCancel(ctx)
+		defer SetAfterCommitHook(func(context.Context) error {
+			cancel()
+			return nil
+		})()
+		s := newSubmission(uuid.NewString())
+		var dispatched []model.JobID
+		_, err := Run(reqCtx, s, unknownCommitHandler(t, s, owner, &dispatched))
+		require.NoError(t, err)
+		require.Equal(t, []model.JobID{s.jobID}, dispatched)
+	})
 }

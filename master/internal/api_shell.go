@@ -248,12 +248,10 @@ func (a *apiServer) LaunchShell(
 				model.TaskTypeShell, model.JobTypeShell, launchReq)
 			return commitCommandTx(ctx, tx, s, cmd, user)
 		},
-		Start: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.LaunchShellResponse, error) {
-			if err := command.DefaultCmdService.StartCommand(cmd); err != nil {
-				return nil, err
-			}
+		Dispatch: command.DefaultCmdService.Dispatch,
+		Respond: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.LaunchShellResponse, error) {
 			return &apiv1.LaunchShellResponse{
-				Shell:      cmd.ToV1Shell(),
+				Shell:      command.DefaultCmdService.Current(cmd).ToV1Shell(),
 				Config:     protoutils.ToStruct(launchReq.Spec.Config),
 				Warnings:   pkgCommand.LaunchWarningToProto(launchWarnings),
 				Submission: result,

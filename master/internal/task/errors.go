@@ -1,11 +1,16 @@
 package task
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/determined-ai/determined/master/internal/sproto"
 	"github.com/determined-ai/determined/master/pkg/cproto"
 )
+
+// ErrAllocationRegistered is returned when an allocation is started while an allocation with its
+// ID is registered, so that one allocation ID never has two runtime instances.
+var ErrAllocationRegistered = errors.New("an allocation with the ID is already registered")
 
 // TimeoutExceededError is return, with a bit of detail, when a timeout is exceeded.
 type TimeoutExceededError struct {

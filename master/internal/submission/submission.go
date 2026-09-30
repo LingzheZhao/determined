@@ -1,7 +1,7 @@
 // Package submission implements the order that the managed creates (LaunchCommand, LaunchShell,
 // CreateGenericTask, and CreateExperiment) follow: digest the request, replay a job submitted
 // under the same idempotency key, check the plan's digest, parse, return a dry run, commit the job
-// in one transaction, and start it.
+// in one transaction, and dispatch it.
 package submission
 
 import (
@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgconn"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"github.com/uptrace/bun"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -180,9 +181,15 @@ type Handler[R any] struct {
 	// job row through InsertJobTx before anything else, so a key in use aborts it before it writes
 	// more.
 	Commit func(ctx context.Context, tx bun.Tx) error
-	// Start starts the committed job and builds the response. result is nil when the request had
-	// no submit options.
-	Start func(ctx context.Context, result *apiv1.SubmitResult) (R, error)
+	// Dispatch starts a committed job of the create's kind from what the database holds; see
+	// Dispatch for what it must and must not start. A replay passes its job to it.
+	Dispatch StartFunc
+	// Start is Dispatch for the job that this request committed, which it may start from what the
+	// handler holds in memory. nil uses Dispatch.
+	Start StartFunc
+	// Respond builds the response once the committed job was dispatched. result is nil when the
+	// request had no submit options.
+	Respond func(ctx context.Context, result *apiv1.SubmitResult) (R, error)
 }
 
 // Run takes a submission through the handler order.
@@ -207,10 +214,10 @@ func Run[R any](ctx context.Context, s *Submission, h Handler[R]) (R, error) {
 		return h.DryRun(ctx, s.result())
 	}
 
-	err := db.Bun().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		return h.Commit(ctx, tx)
-	})
-	if errors.Is(err, errKeyInUse) {
+	var unknown *commitUnknownError
+	switch err := commit(ctx, h.Commit); {
+	case err == nil:
+	case errors.Is(err, errKeyInUse):
 		// The unique index, not a lock, decides between concurrent submits of one key; the
 		// loser rolled back everything it wrote and returns the winner's job.
 		if resp, replayed, err := replay(ctx, s, h); replayed || err != nil {
@@ -218,11 +225,59 @@ func Run[R any](ctx context.Context, s *Submission, h Handler[R]) (R, error) {
 		}
 		return zero, status.Errorf(codes.Aborted,
 			"idempotency key %q was committed concurrently; retry the request", s.key)
-	} else if err != nil {
+	case errors.As(err, &unknown):
+		// The job may have been committed, so nothing is cleaned up: whether it exists decides.
+		if resp, replayed, err := recoverUnknownCommit(ctx, s, h, unknown); replayed || err != nil {
+			return resp, err
+		}
+	default:
 		return zero, err
 	}
 
-	return h.Start(ctx, s.result())
+	// A create that commits no job through InsertJobTx, such as an unmanaged experiment, has
+	// nothing to dispatch.
+	if s.jobID != "" {
+		start := h.Start
+		if start == nil {
+			start = h.Dispatch
+		}
+		if err := Dispatch(ctx, s.jobID, start); err != nil {
+			return zero, err
+		}
+	}
+	return h.Respond(ctx, s.result())
+}
+
+// recoverUnknownCommit looks up the job of a commit whose outcome is unknown, such as one whose
+// connection was lost during COMMIT. If the job exists, replayed is false and the handler goes on
+// to dispatch it. Otherwise another submit of the key may have committed, which is replayed, and
+// without either the request fails with a retryable UNAVAILABLE.
+func recoverUnknownCommit[R any](
+	ctx context.Context, s *Submission, h Handler[R], unknown *commitUnknownError,
+) (resp R, replayed bool, err error) {
+	// The request's context may be what failed the commit, and must not fail the lookup too.
+	ctx = context.WithoutCancel(ctx)
+	unavailable := func(cause error) (R, bool, error) {
+		log.WithError(cause).WithField("job-id", s.jobID).
+			Warn("the commit of a submission may not have completed")
+		return resp, false, status.Errorf(codes.Unavailable,
+			"the commit of the submission may not have completed (%s); retry the request", unknown)
+	}
+
+	if s.jobID == "" {
+		return unavailable(unknown)
+	}
+	exists, err := db.Bun().NewSelect().Table("jobs").Where("job_id = ?", s.jobID).Exists(ctx)
+	switch {
+	case err != nil:
+		return unavailable(err)
+	case exists:
+		return resp, false, nil
+	}
+	if resp, replayed, err := replay(ctx, s, h); replayed || err != nil {
+		return resp, replayed, err
+	}
+	return unavailable(unknown)
 }
 
 // InsertJobTx inserts the job row of the submission in the commit transaction, recording its key,
@@ -285,6 +340,13 @@ func replay[R any](ctx context.Context, s *Submission, h Handler[R]) (resp R, re
 	}
 	if err := h.AuthorizeReplay(ctx, job); err != nil {
 		return resp, true, err
+	}
+	// A job whose start was lost, such as with the response to its commit, starts here. A start
+	// that fails ends the job, so the replay still returns it.
+	if h.Dispatch != nil {
+		if err := Dispatch(ctx, job.JobID, h.Dispatch); err != nil {
+			log.WithError(err).WithField("job-id", job.JobID).Error("dispatching a replayed job")
+		}
 	}
 	return h.Replayed(&apiv1.SubmitResult{
 		JobId:         job.JobID.String(),

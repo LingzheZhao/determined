@@ -38,7 +38,6 @@ import (
 	"github.com/determined-ai/determined/master/internal/job/jobservice"
 	"github.com/determined-ai/determined/master/internal/prom"
 	"github.com/determined-ai/determined/master/internal/rm"
-	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/sproto"
 	"github.com/determined-ai/determined/master/internal/submission"
 	"github.com/determined-ai/determined/master/internal/telemetry"
@@ -1490,6 +1489,10 @@ func (a *apiServer) ContinueExperiment(
 		return nil, status.Errorf(codes.Internal, "failed to create experiment: %s", err)
 	}
 
+	// The experiment reads as unstarted from its revival until its start registers it, so no
+	// dispatch may start it in between.
+	unlock := submission.LockJob(dbExp.JobID)
+	defer unlock()
 	err = db.Bun().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		// Lock experiment state.
 		var expState model.State
@@ -1656,16 +1659,16 @@ func (a *apiServer) CreateExperiment(
 					ctx, tx, p.dbExp, p.modelDef, p.activeConfig, user)
 				return err
 			}
-			return p.commitTx(ctx, tx, s, req.Activate, user)
+			return p.commitTx(ctx, tx, s, req.Activate)
 		},
-		Start: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.CreateExperimentResponse, error) {
+		Dispatch: a.m.dispatchExperiment,
+		Start: func(ctx context.Context, jobID model.JobID) error {
+			return a.dispatchCreatedExperiment(ctx, jobID, p, user, req.Activate)
+		},
+		Respond: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.CreateExperimentResponse, error) {
 			if unmanagedResp != nil {
 				return unmanagedResp, nil
 			}
-			if err := a.startExperiment(p, req.Activate); err != nil {
-				return nil, err
-			}
-
 			protoExp, err := a.getExperiment(ctx, *user, p.dbExp.ID)
 			if err != nil {
 				return nil, err
@@ -1777,9 +1780,9 @@ func (a *apiServer) prepareExperiment(
 
 // commitTx is the commit transaction of CreateExperiment. An activated experiment is committed
 // ACTIVE, so a crash before it starts leaves an experiment that restore starts, not a paused one.
-// The user session is minted in the transaction, so a rollback leaves no session behind.
+// The experiment's user session is minted only when it starts, as in a restore.
 func (p *preparedExperiment) commitTx(
-	ctx context.Context, tx bun.Tx, s *submission.Submission, activate bool, owner *model.User,
+	ctx context.Context, tx bun.Tx, s *submission.Submission, activate bool,
 ) error {
 	if activate {
 		p.dbExp.State = model.ActiveState
@@ -1791,24 +1794,22 @@ func (p *preparedExperiment) commitTx(
 	}); err != nil {
 		return err
 	}
-	if err := db.InsertExperimentTx(
-		ctx, tx, p.dbExp, p.modelDef, p.plan.activeConfig, false,
-	); err != nil {
-		return err
-	}
-
-	token, err := getTaskSessionTokenTx(ctx, tx, owner)
-	if err != nil {
-		return err
-	}
-	p.taskSpec.UserSessionToken = token
-	return nil
+	return db.InsertExperimentTx(ctx, tx, p.dbExp, p.modelDef, p.plan.activeConfig, false)
 }
 
 // startExperiment starts a committed experiment. If the start fails, the experiment is marked
 // ERROR so that it does not stay open.
-func (a *apiServer) startExperiment(p *preparedExperiment, activate bool) error {
+func (a *apiServer) startExperiment(
+	ctx context.Context, p *preparedExperiment, owner *model.User, activate bool,
+) error {
 	telemetry.ReportExperimentCreated(p.dbExp.ID, p.plan.activeConfig)
+
+	token, err := getTaskSessionToken(ctx, owner)
+	if err != nil {
+		a.failExperimentStart(p, err)
+		return errors.Wrapf(err, "unable to create user session inside task")
+	}
+	p.taskSpec.UserSessionToken = token
 
 	e, err := p.plan.build(a.m, p.dbExp, p.taskSpec)
 	if err != nil {
@@ -1841,28 +1842,13 @@ func (a *apiServer) startExperiment(p *preparedExperiment, activate bool) error 
 // failExperimentStart marks a committed experiment whose start failed ERROR, unless the failed
 // start already ended it, and releases what the experiment held.
 func (a *apiServer) failExperimentStart(p *preparedExperiment, cause error) {
-	syslog := log.WithField("experiment-id", p.dbExp.ID).WithError(cause)
-	syslog.Error("experiment failed to start")
-
-	exp, err := db.ExperimentByID(context.TODO(), p.dbExp.ID)
-	if err != nil {
-		syslog.WithError(err).Error("reading an experiment that failed to start")
-	} else if !model.TerminalStates[exp.State] {
-		if err := a.m.db.TerminateExperimentInRestart(exp.ID, model.ErrorState); err != nil {
-			syslog.WithError(err).Error("marking an experiment that failed to start as errored")
-		}
-		exp.State = model.ErrorState
-		telemetry.ReportExperimentStateChanged(a.m.db, exp)
+	a.m.endFailedExperimentStart(p.dbExp.ID, p.dbExp.JobID, cause)
+	if p.taskSpec.UserSessionToken == "" {
+		return
 	}
-
-	if _, ok := tasklist.GroupPriorityChangeRegistry.Load(p.dbExp.JobID); ok {
-		if err := tasklist.GroupPriorityChangeRegistry.Delete(p.dbExp.JobID); err != nil {
-			syslog.WithError(err).Error("deleting group priority change registry")
-		}
-	}
-	jobservice.DefaultService.UnregisterJob(p.dbExp.JobID)
 	if err := user.DeleteSessionByToken(context.TODO(), p.taskSpec.UserSessionToken); err != nil {
-		syslog.WithError(err).Error("deleting the user session of an experiment that failed to start")
+		log.WithField("experiment-id", p.dbExp.ID).WithError(err).
+			Error("deleting the user session of an experiment that failed to start")
 	}
 }
 
