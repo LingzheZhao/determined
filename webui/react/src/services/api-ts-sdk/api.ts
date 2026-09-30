@@ -1285,6 +1285,18 @@ export interface V1Allocation {
      * @memberof V1Allocation
      */
     statusCode?: number;
+    /**
+     * The outcome class of the allocation's exit. Unspecified while the allocation runs, if it ended before exit classes were recorded, or if the master restarted before it started.
+     * @type {V1ExitClass}
+     * @memberof V1Allocation
+     */
+    exitClass?: V1ExitClass;
+    /**
+     * Structured detail about the exit: failure_type, exit_code, and message. Unset when the allocation has not exited or recorded no detail.
+     * @type {any}
+     * @memberof V1Allocation
+     */
+    exitDetail?: any;
 }
 /**
  * Arguments to an all gather.
@@ -2975,6 +2987,21 @@ export const V1EntityType = {
 } as const
 export type V1EntityType = ValueOf<typeof V1EntityType>
 /**
+ * The outcome class of an allocation's exit. It records how the allocation ended, not who asked it to stop.   - EXIT_CLASS_UNSPECIFIED: The allocation has not exited, ended before exit classes were recorded, or never started.  - EXIT_CLASS_NONE: The allocation did not fail: it completed, stopped early, was preempted or killed, or was aborted before it started.  - EXIT_CLASS_PLACEMENT_UNSATISFIED: The scheduler could not place the allocation as requested.  - EXIT_CLASS_NODE_PREFLIGHT_FAILED: A node rejected the allocation before starting its containers.  - EXIT_CLASS_WORKLOAD_INITIALIZATION_FAILED: The workload failed before it finished initializing.  - EXIT_CLASS_WORKLOAD_FAILED: The workload failed after it started.  - EXIT_CLASS_INFRASTRUCTURE_FAILED: An agent, the connection to it, the master, or the resource manager failed.
+ * @export
+ * @enum {string}
+ */
+export const V1ExitClass = {
+    UNSPECIFIED: 'EXIT_CLASS_UNSPECIFIED',
+    NONE: 'EXIT_CLASS_NONE',
+    PLACEMENTUNSATISFIED: 'EXIT_CLASS_PLACEMENT_UNSATISFIED',
+    NODEPREFLIGHTFAILED: 'EXIT_CLASS_NODE_PREFLIGHT_FAILED',
+    WORKLOADINITIALIZATIONFAILED: 'EXIT_CLASS_WORKLOAD_INITIALIZATION_FAILED',
+    WORKLOADFAILED: 'EXIT_CLASS_WORKLOAD_FAILED',
+    INFRASTRUCTUREFAILED: 'EXIT_CLASS_INFRASTRUCTURE_FAILED',
+} as const
+export type V1ExitClass = ValueOf<typeof V1ExitClass>
+/**
  * Experiment is a collection of one or more trials that are exploring a user-defined hyperparameter space.
  * @export
  * @interface V1Experiment
@@ -3266,7 +3293,7 @@ export interface V1ExpMetricNamesResponse {
     metricNames?: Array<V1MetricIdentifier>;
 }
 /**
- * The failure type of a resource.   - FAILURE_TYPE_UNSPECIFIED: UNSPECIFIED denotes an error that is not defined below.  - FAILURE_TYPE_RESOURCES_FAILED: ResourcesFailed denotes that the container ran but failed with a non-zero exit code.  - FAILURE_TYPE_RESOURCES_ABORTED: ResourcesAborted denotes the container was canceled before it was started.  - FAILURE_TYPE_RESOURCES_MISSING: ResourcesMissing denotes the resources were missing when the master asked about it.  - FAILURE_TYPE_TASK_ABORTED: TaskAborted denotes that the task was canceled before it was started.  - FAILURE_TYPE_TASK_ERROR: TaskError denotes that the task failed without an associated exit code.  - FAILURE_TYPE_AGENT_FAILED: AgentFailed denotes that the agent failed while the container was running.  - FAILURE_TYPE_AGENT_ERROR: AgentError denotes that the agent failed to launch the container.  - FAILURE_TYPE_RESTORE_ERROR: RestoreError denotes a failure to restore a running allocation on master blip.  - FAILURE_TYPE_UNKNOWN_ERROR: UnknownError denotes an internal error that did not map to a know failure type.
+ * The failure type of a resource.   - FAILURE_TYPE_UNSPECIFIED: UNSPECIFIED denotes an error that is not defined below.  - FAILURE_TYPE_RESOURCES_FAILED: ResourcesFailed denotes that the container ran but failed with a non-zero exit code.  - FAILURE_TYPE_RESOURCES_ABORTED: ResourcesAborted denotes the container was canceled before it was started.  - FAILURE_TYPE_RESOURCES_MISSING: ResourcesMissing denotes the resources were missing when the master asked about it.  - FAILURE_TYPE_TASK_ABORTED: TaskAborted denotes that the task was canceled before it was started.  - FAILURE_TYPE_TASK_ERROR: TaskError denotes that the task failed without an associated exit code.  - FAILURE_TYPE_AGENT_FAILED: AgentFailed denotes that the agent failed while the container was running.  - FAILURE_TYPE_AGENT_ERROR: AgentError denotes that the agent failed to launch the container.  - FAILURE_TYPE_RESTORE_ERROR: RestoreError denotes a failure to restore a running allocation on master blip.  - FAILURE_TYPE_UNKNOWN_ERROR: UnknownError denotes an internal error that did not map to a know failure type.  - FAILURE_TYPE_PLACEMENT_UNSATISFIED: PlacementUnsatisfied denotes that the scheduler could not place the resources as requested.  - FAILURE_TYPE_PREFLIGHT_FAILED: PreflightFailed denotes that a node rejected the resources in a check before starting the container.
  * @export
  * @enum {string}
  */
@@ -3281,6 +3308,8 @@ export const V1FailureType = {
     AGENTERROR: 'FAILURE_TYPE_AGENT_ERROR',
     RESTOREERROR: 'FAILURE_TYPE_RESTORE_ERROR',
     UNKNOWNERROR: 'FAILURE_TYPE_UNKNOWN_ERROR',
+    PLACEMENTUNSATISFIED: 'FAILURE_TYPE_PLACEMENT_UNSATISFIED',
+    PREFLIGHTFAILED: 'FAILURE_TYPE_PREFLIGHT_FAILED',
 } as const
 export type V1FailureType = ValueOf<typeof V1FailureType>
 /**

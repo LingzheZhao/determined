@@ -3,6 +3,7 @@ syntax = "proto3";
 package determined.task.v1;
 option go_package = "github.com/determined-ai/determined/proto/pkg/taskv1";
 
+import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "protoc-gen-swagger/options/annotations.proto";
 import "determined/device/v1/device.proto";
@@ -96,6 +97,35 @@ message Allocation {
   optional string exit_reason = 8;
   // The status code the allocation exits with.
   optional int32 status_code = 9;
+  // The outcome class of the allocation's exit. Unspecified while the
+  // allocation runs, if it ended before exit classes were recorded, or if the
+  // master restarted before it started.
+  ExitClass exit_class = 10;
+  // Structured detail about the exit: failure_type, exit_code, and message.
+  // Unset when the allocation has not exited or recorded no detail.
+  google.protobuf.Struct exit_detail = 11;
+}
+
+// The outcome class of an allocation's exit. It records how the allocation
+// ended, not who asked it to stop.
+enum ExitClass {
+  // The allocation has not exited, ended before exit classes were recorded,
+  // or never started.
+  EXIT_CLASS_UNSPECIFIED = 0;
+  // The allocation did not fail: it completed, stopped early, was preempted
+  // or killed, or was aborted before it started.
+  EXIT_CLASS_NONE = 1;
+  // The scheduler could not place the allocation as requested.
+  EXIT_CLASS_PLACEMENT_UNSATISFIED = 2;
+  // A node rejected the allocation before starting its containers.
+  EXIT_CLASS_NODE_PREFLIGHT_FAILED = 3;
+  // The workload failed before it finished initializing.
+  EXIT_CLASS_WORKLOAD_INITIALIZATION_FAILED = 4;
+  // The workload failed after it started.
+  EXIT_CLASS_WORKLOAD_FAILED = 5;
+  // An agent, the connection to it, the master, or the resource manager
+  // failed.
+  EXIT_CLASS_INFRASTRUCTURE_FAILED = 6;
 }
 
 // Task is the model for a task in the database.
@@ -187,6 +217,14 @@ enum FailureType {
   // UnknownError denotes an internal error that did not map to a know failure
   // type.
   FAILURE_TYPE_UNKNOWN_ERROR = 9;
+
+  // PlacementUnsatisfied denotes that the scheduler could not place the
+  // resources as requested.
+  FAILURE_TYPE_PLACEMENT_UNSATISFIED = 10;
+
+  // PreflightFailed denotes that a node rejected the resources in a check
+  // before starting the container.
+  FAILURE_TYPE_PREFLIGHT_FAILED = 11;
 }
 
 // ResourcesFailure contains information about restored resources' failure.

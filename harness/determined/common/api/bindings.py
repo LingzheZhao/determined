@@ -1305,6 +1305,8 @@ class v1AggregateQueueStats(Printable):
 class v1Allocation(Printable):
     """Allocation tracks a specific instance of a Task."""
     endTime: "typing.Optional[str]" = None
+    exitClass: "typing.Optional[v1ExitClass]" = None
+    exitDetail: "typing.Optional[typing.Dict[str, typing.Any]]" = None
     exitReason: "typing.Optional[str]" = None
     isReady: "typing.Optional[bool]" = None
     startTime: "typing.Optional[str]" = None
@@ -1318,6 +1320,8 @@ class v1Allocation(Printable):
         state: "taskv1State",
         taskId: str,
         endTime: "typing.Union[str, None, Unset]" = _unset,
+        exitClass: "typing.Union[v1ExitClass, None, Unset]" = _unset,
+        exitDetail: "typing.Union[typing.Dict[str, typing.Any], None, Unset]" = _unset,
         exitReason: "typing.Union[str, None, Unset]" = _unset,
         isReady: "typing.Union[bool, None, Unset]" = _unset,
         startTime: "typing.Union[str, None, Unset]" = _unset,
@@ -1329,6 +1333,10 @@ class v1Allocation(Printable):
         self.taskId = taskId
         if not isinstance(endTime, Unset):
             self.endTime = endTime
+        if not isinstance(exitClass, Unset):
+            self.exitClass = exitClass
+        if not isinstance(exitDetail, Unset):
+            self.exitDetail = exitDetail
         if not isinstance(exitReason, Unset):
             self.exitReason = exitReason
         if not isinstance(isReady, Unset):
@@ -1348,6 +1356,10 @@ class v1Allocation(Printable):
         }
         if "endTime" in obj:
             kwargs["endTime"] = obj["endTime"]
+        if "exitClass" in obj:
+            kwargs["exitClass"] = v1ExitClass(obj["exitClass"]) if obj["exitClass"] is not None else None
+        if "exitDetail" in obj:
+            kwargs["exitDetail"] = obj["exitDetail"]
         if "exitReason" in obj:
             kwargs["exitReason"] = obj["exitReason"]
         if "isReady" in obj:
@@ -1367,6 +1379,10 @@ class v1Allocation(Printable):
         }
         if not omit_unset or "endTime" in vars(self):
             out["endTime"] = self.endTime
+        if not omit_unset or "exitClass" in vars(self):
+            out["exitClass"] = None if self.exitClass is None else self.exitClass.value
+        if not omit_unset or "exitDetail" in vars(self):
+            out["exitDetail"] = self.exitDetail
         if not omit_unset or "exitReason" in vars(self):
             out["exitReason"] = self.exitReason
         if not omit_unset or "isReady" in vars(self):
@@ -3695,6 +3711,28 @@ class v1EntityType(DetEnum):
     UNSPECIFIED = "ENTITY_TYPE_UNSPECIFIED"
     PROJECT = "ENTITY_TYPE_PROJECT"
 
+class v1ExitClass(DetEnum):
+    """The outcome class of an allocation's exit. It records how the allocation
+    ended, not who asked it to stop.
+    - EXIT_CLASS_UNSPECIFIED: The allocation has not exited, ended before exit classes were recorded,
+    or never started.
+    - EXIT_CLASS_NONE: The allocation did not fail: it completed, stopped early, was preempted
+    or killed, or was aborted before it started.
+    - EXIT_CLASS_PLACEMENT_UNSATISFIED: The scheduler could not place the allocation as requested.
+    - EXIT_CLASS_NODE_PREFLIGHT_FAILED: A node rejected the allocation before starting its containers.
+    - EXIT_CLASS_WORKLOAD_INITIALIZATION_FAILED: The workload failed before it finished initializing.
+    - EXIT_CLASS_WORKLOAD_FAILED: The workload failed after it started.
+    - EXIT_CLASS_INFRASTRUCTURE_FAILED: An agent, the connection to it, the master, or the resource manager
+    failed.
+    """
+    UNSPECIFIED = "EXIT_CLASS_UNSPECIFIED"
+    NONE = "EXIT_CLASS_NONE"
+    PLACEMENT_UNSATISFIED = "EXIT_CLASS_PLACEMENT_UNSATISFIED"
+    NODE_PREFLIGHT_FAILED = "EXIT_CLASS_NODE_PREFLIGHT_FAILED"
+    WORKLOAD_INITIALIZATION_FAILED = "EXIT_CLASS_WORKLOAD_INITIALIZATION_FAILED"
+    WORKLOAD_FAILED = "EXIT_CLASS_WORKLOAD_FAILED"
+    INFRASTRUCTURE_FAILED = "EXIT_CLASS_INFRASTRUCTURE_FAILED"
+
 class v1ExpMetricNamesResponse(Printable):
     """Response to ExpMetricNamesRequest."""
     metricNames: "typing.Optional[typing.Sequence[v1MetricIdentifier]]" = None
@@ -4070,6 +4108,10 @@ class v1FailureType(DetEnum):
     blip.
     - FAILURE_TYPE_UNKNOWN_ERROR: UnknownError denotes an internal error that did not map to a know failure
     type.
+    - FAILURE_TYPE_PLACEMENT_UNSATISFIED: PlacementUnsatisfied denotes that the scheduler could not place the
+    resources as requested.
+    - FAILURE_TYPE_PREFLIGHT_FAILED: PreflightFailed denotes that a node rejected the resources in a check
+    before starting the container.
     """
     UNSPECIFIED = "FAILURE_TYPE_UNSPECIFIED"
     RESOURCES_FAILED = "FAILURE_TYPE_RESOURCES_FAILED"
@@ -4081,6 +4123,8 @@ class v1FailureType(DetEnum):
     AGENT_ERROR = "FAILURE_TYPE_AGENT_ERROR"
     RESTORE_ERROR = "FAILURE_TYPE_RESTORE_ERROR"
     UNKNOWN_ERROR = "FAILURE_TYPE_UNKNOWN_ERROR"
+    PLACEMENT_UNSATISFIED = "FAILURE_TYPE_PLACEMENT_UNSATISFIED"
+    PREFLIGHT_FAILED = "FAILURE_TYPE_PREFLIGHT_FAILED"
 
 class v1File(Printable):
     """File is a Unix file."""
