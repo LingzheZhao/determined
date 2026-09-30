@@ -51,7 +51,8 @@ func SetDefaultService(cs *CommandService) {
 	DefaultCmdService = cs
 }
 
-// RestoreAllCommands restores all terminated commands whose end time isn't set.
+// RestoreAllCommands restores every command, notebook, shell, and TensorBoard whose task has not
+// ended, from the persisted state of the allocation that its command_state names.
 func (cs *CommandService) RestoreAllCommands(
 	ctx context.Context,
 ) error {
@@ -59,13 +60,7 @@ func (cs *CommandService) RestoreAllCommands(
 	defer cs.mu.Unlock()
 
 	snapshots := []CommandSnapshot{}
-	err := db.Bun().NewSelect().Model(&snapshots).
-		Relation("Allocation").
-		Relation("Task").
-		Relation("Task.Job").
-		Where("allocation.end_time IS NULL").
-		Where("allocation.state != ?", model.AllocationStateTerminated).
-		Where("task.task_id = command_snapshot.task_id").
+	err := SelectLiveSnapshots(&snapshots).
 		Where("command_snapshot.generic_task_spec IS NULL").
 		Scan(ctx)
 	if err != nil {
@@ -74,9 +69,20 @@ func (cs *CommandService) RestoreAllCommands(
 	}
 
 	for i := range snapshots {
-		cmd, err := commandFromSnapshot(cs.db, cs.rm, &snapshots[i])
-		if err != nil {
-			cs.syslog.Errorf("failed to restore from snapshot: %s", err)
+		snapshot := &snapshots[i]
+		if snapshot.Task.Job == nil {
+			err := fmt.Errorf("task %s has no job", snapshot.TaskID)
+			cs.syslog.WithError(err).Error("failed to restore from snapshot")
+			if err := db.FailTaskAllocation(
+				ctx, snapshot.TaskID, snapshot.AllocationID, nil, RestoreFailedReason, err,
+			); err != nil {
+				cs.syslog.WithError(err).Error("ending a command that failed to restore")
+			}
+			continue
+		}
+
+		cmd := commandFromSnapshot(cs.db, cs.rm, snapshot)
+		if !cmd.restore(ctx, snapshot) {
 			continue
 		}
 		// Restore to the command service registry.
@@ -104,7 +110,7 @@ func (cs *CommandService) StartCommand(cmd *Command) error {
 	defer cs.mu.Unlock()
 
 	if err := cmd.Start(context.TODO()); err != nil {
-		cmd.failStart(err)
+		cmd.fail(context.TODO(), "the allocation failed to start", err)
 		return err
 	}
 

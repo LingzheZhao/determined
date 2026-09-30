@@ -13,6 +13,7 @@ import (
 	"github.com/uptrace/bun"
 	"golang.org/x/exp/slices"
 
+	"github.com/determined-ai/determined/master/internal/command"
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/sproto"
@@ -260,7 +261,7 @@ func (a *apiServer) runGenericTaskResume(ctx context.Context, plan []genericTask
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
-			if err == nil && allocation.EndTime == nil {
+			if err == nil && command.DecideRestore(&allocation, false) != command.RestoreEnded {
 				var t model.Task
 				if err := db.Bun().NewSelect().Model(&t).Where("task_id = ?", member.TaskID).Scan(ctx); err != nil {
 					return err
@@ -272,7 +273,7 @@ func (a *apiServer) runGenericTaskResume(ctx context.Context, plan []genericTask
 				if spec == nil || t.JobID == nil {
 					return fmt.Errorf("missing task %s spec or job", member.TaskID)
 				}
-				if err := a.startGenericTaskResumeAllocation(ctx, member, t, spec, true); err != nil {
+				if err := a.startGenericTaskResumeAllocation(ctx, member, t, spec, &allocation); err != nil {
 					return err
 				}
 				if err := task.DefaultService.Signal(member.NewAllocationID, task.KillAllocation, "resume canceled by user"); err != nil {
@@ -309,7 +310,7 @@ func (a *apiServer) runGenericTaskResume(ctx context.Context, plan []genericTask
 		if oldID != member.OldAllocationID.String() && oldID != member.NewAllocationID.String() {
 			return fmt.Errorf("task %s allocation changed while resuming", member.TaskID)
 		}
-		if allocationErr == nil && allocation.EndTime != nil {
+		if allocationErr == nil && command.DecideRestore(&allocation, false) == command.RestoreEnded {
 			if err := persistGenericTaskSpec(ctx, member.TaskID, *spec, member.NewAllocationID); err != nil {
 				return err
 			}
@@ -344,7 +345,11 @@ func (a *apiServer) runGenericTaskResume(ctx context.Context, plan []genericTask
 		}
 		live := slices.Contains(task.DefaultService.GetAllAllocationIDs(), member.NewAllocationID)
 		if !live {
-			if err := a.startGenericTaskResumeAllocation(ctx, member, t, spec, allocationErr == nil); err != nil {
+			var existing *model.Allocation
+			if allocationErr == nil {
+				existing = &allocation
+			}
+			if err := a.startGenericTaskResumeAllocation(ctx, member, t, spec, existing); err != nil {
 				return err
 			}
 		}
@@ -362,9 +367,24 @@ func (a *apiServer) runGenericTaskResume(ctx context.Context, plan []genericTask
 	return cleanupGenericTaskResume(ctx, plan[0].RootTaskID, plan[0].OperationID)
 }
 
+// startGenericTaskResumeAllocation starts the new allocation of a resume member. An allocation
+// that an earlier try already started, before a restart or a failure, continues by its persisted
+// state, as restore does: a never-placed one is requested again, and a placed one is restored.
 func (a *apiServer) startGenericTaskResumeAllocation(
-	ctx context.Context, member genericTaskResume, t model.Task, spec *tasks.GenericTaskSpec, restore bool,
+	ctx context.Context, member genericTaskResume, t model.Task, spec *tasks.GenericTaskSpec,
+	existing *model.Allocation,
 ) error {
+	restore, persisted := false, false
+	if existing != nil {
+		if command.DecideRestore(existing, false) == command.RestoreRequeue {
+			if err := db.PurgeAllocationResources(ctx, db.Bun(), member.NewAllocationID); err != nil {
+				return err
+			}
+			persisted = true
+		} else {
+			restore = true
+		}
+	}
 	logCtx := logger.Context{"job-id": t.JobID, "task-id": t.TaskID, "task-type": model.TaskTypeGeneric}
 	singleNode := spec.GenericTaskConfig.Resources.IsSingleNode() != nil && *spec.GenericTaskConfig.Resources.IsSingleNode()
 	now := time.Now().UTC()
@@ -377,7 +397,7 @@ func (a *apiServer) startGenericTaskResumeAllocation(
 		FittingRequirements: sproto.FittingRequirements{SingleAgent: singleNode},
 		Preemption: sproto.PreemptionConfig{Preemptible: true,
 			TimeoutDuration: time.Duration(spec.GenericTaskConfig.PreemptionTimeout) * time.Second},
-		Restore: restore,
+		Restore: restore, Persisted: persisted,
 	}, a.m.db, a.m.rm, spec,
 		getGenericTaskOnAllocationExit(context.WithoutCancel(ctx), member.TaskID, member.NewAllocationID, *t.JobID, logCtx))
 }
@@ -386,19 +406,14 @@ func reconcileEndedGenericTaskResume(ctx context.Context, t model.Task, allocati
 	if t.State == nil || genericTaskTerminal(*t.State) {
 		return nil
 	}
-	state := model.TaskStateCompleted
-	switch {
-	case *t.State == model.TaskStateStoppingCanceled:
-		state = model.TaskStateCanceled
-	case allocation.ExitErr != nil:
-		state = model.TaskStateError
-	case *t.State == model.TaskStateStoppingPaused:
-		state = model.TaskStatePaused
-	case *t.State == model.TaskStateStoppingError:
-		state = model.TaskStateError
+	// An allocation that ended before it started may not have an end time yet.
+	endTime := time.Now().UTC()
+	if allocation.EndTime != nil {
+		endTime = *allocation.EndTime
 	}
-	_, err := db.Bun().NewUpdate().Table("tasks").Set("task_state = ?", state).
-		Set("end_time = ?", allocation.EndTime).Where("task_id = ?", t.TaskID).
+	_, err := db.Bun().NewUpdate().Table("tasks").
+		Set("task_state = ?", endedGenericTaskState(*t.State, false, allocation)).
+		Set("end_time = ?", endTime).Where("task_id = ?", t.TaskID).
 		Where("task_state = ?", *t.State).Exec(ctx)
 	return err
 }

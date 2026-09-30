@@ -62,7 +62,7 @@ type Command struct {
 	allocationID     model.AllocationID
 	lastState        task.AllocationState
 	exitStatus       *task.AllocationExited
-	restored         bool
+	restored         bool   // Restored through the resource manager instead of requested.
 	contextDirectory []byte // Don't rely on this being set outsides of PreStart non restore case.
 
 	logCtx logger.Context
@@ -75,11 +75,13 @@ type CreateGeneric struct {
 	Spec             *tasks.GenericCommandSpec
 }
 
+// commandFromSnapshot returns the command of a snapshot whose task has a job, with the allocation
+// that the snapshot names. It is not started.
 func commandFromSnapshot(
 	db *internaldb.PgDB,
 	rm rm.ResourceManager,
 	snapshot *CommandSnapshot,
-) (*Command, error) {
+) *Command {
 	taskID := snapshot.TaskID
 	taskType := snapshot.Task.TaskType
 	jobID := snapshot.Task.Job.JobID
@@ -90,7 +92,7 @@ func commandFromSnapshot(
 		"task-type": taskType,
 	}
 
-	cmd := &Command{
+	return &Command{
 		db:                 db,
 		rm:                 rm,
 		registeredTime:     snapshot.RegisteredTime,
@@ -99,12 +101,57 @@ func commandFromSnapshot(
 		taskType:           taskType,
 		jobType:            snapshot.Task.Job.JobType,
 		jobID:              jobID,
-		allocationID:       model.AllocationID(fmt.Sprintf("%s.%d", taskID, 1)),
-		restored:           true,
+		allocationID:       snapshot.AllocationID,
 		logCtx:             logCtx,
 		syslog:             logrus.WithFields(logrus.Fields{"component": "command"}).WithFields(logCtx.Fields()),
 	}
-	return cmd, cmd.Start(context.TODO())
+}
+
+// restore continues a command whose task has not ended, from the persisted state of the
+// allocation that its snapshot names, and reports whether the command is running again.
+func (c *Command) restore(ctx context.Context, snapshot *CommandSnapshot) bool {
+	stopRequested := snapshot.Task.Job.CancelRequestedAt != nil
+	switch action := DecideRestore(&snapshot.Allocation, stopRequested); action {
+	case RestoreEnded:
+		endTime := time.Now().UTC()
+		if snapshot.Allocation.EndTime != nil {
+			endTime = *snapshot.Allocation.EndTime
+		}
+		if err := internaldb.EndLiveTask(ctx, c.taskID, endTime, nil); err != nil {
+			c.syslog.WithError(err).Error("ending a command whose allocation ended")
+		}
+		c.releaseSessions(ctx)
+		return false
+	case RestoreStopQueued:
+		if err := internaldb.EndQueuedTask(
+			ctx, c.taskID, c.allocationID, nil, StopQueuedReason,
+		); err != nil {
+			c.syslog.WithError(err).Error("ending a queued command that was asked to stop")
+		}
+		c.releaseSessions(ctx)
+		return false
+	case RestoreRequeue:
+		// The resource manager may have recorded resources for the allocation before the
+		// allocation received them; they were never launched, and a new placement replaces them.
+		if err := internaldb.PurgeAllocationResources(
+			ctx, internaldb.Bun(), c.allocationID,
+		); err != nil {
+			c.fail(ctx, RestoreFailedReason, err)
+			return false
+		}
+		c.restored = false
+	case RestorePlaced:
+		c.restored = true
+	default:
+		panic(fmt.Sprintf("unexpected restore action %d", action))
+	}
+
+	if err := c.Start(ctx); err != nil {
+		c.syslog.WithError(err).Error("failed to restore command")
+		c.fail(ctx, RestoreFailedReason, err)
+		return false
+	}
+	return true
 }
 
 // newCommand returns a new command for a launch request. Nothing is persisted until the commit
@@ -185,8 +232,10 @@ func (c *Command) PersistTx(ctx context.Context, tx bun.IDB) error {
 	return nil
 }
 
-// Start starts the command & its respective allocation. A new command must already be persisted
-// by PersistTx; a restored command is persisted again once it starts.
+// Start starts the command & its respective allocation, which must already be persisted: by
+// PersistTx for a new command, or before a restart. A command restored through the resource
+// manager is persisted again once it starts; any other command requests its persisted PENDING
+// allocation.
 func (c *Command) Start(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -248,21 +297,32 @@ func (c *Command) Start(ctx context.Context) error {
 	return nil
 }
 
-// failStart ends a new command whose start failed after it was committed, so that it reads as
-// ended rather than open, and releases what the command held.
-func (c *Command) failStart(cause error) {
+// fail ends a committed command whose allocation failed to start or to restore, so that it reads
+// as ended rather than open, and releases what the command held.
+func (c *Command) fail(ctx context.Context, reason string, cause error) {
 	if _, ok := tasklist.GroupPriorityChangeRegistry.Load(c.jobID); ok {
 		if err := tasklist.GroupPriorityChangeRegistry.Delete(c.jobID); err != nil {
 			c.syslog.WithError(err).Error("deleting command from GroupPriorityChangeRegistry")
 		}
 	}
-	if err := internaldb.FailTaskStart(
-		context.TODO(), c.taskID, c.allocationID, nil, cause,
+	if err := internaldb.FailTaskAllocation(
+		ctx, c.taskID, c.allocationID, nil, reason, cause,
 	); err != nil {
-		c.syslog.WithError(err).Error("ending a command that failed to start")
+		c.syslog.WithError(err).Error("ending a command whose allocation failed")
 	}
-	if err := user.DeleteSessionByToken(context.TODO(), c.Base.UserSessionToken); err != nil {
-		c.syslog.WithError(err).Error("deleting the user session of a command that failed to start")
+	c.releaseSessions(ctx)
+}
+
+// releaseSessions deletes the sessions that an ended command held.
+func (c *Command) releaseSessions(ctx context.Context) {
+	if err := user.DeleteSessionByToken(ctx, c.Base.UserSessionToken); err != nil {
+		c.syslog.WithError(err).Errorf("failure to delete user session for task: %v", c.taskID)
+	}
+	if c.TaskType == model.TaskTypeNotebook {
+		if err := internaldb.DeleteNotebookSessionByTask(ctx, c.taskID); err != nil {
+			c.syslog.WithError(err).Errorf(
+				"failure to delete notebook session for task: %v", c.taskID)
+		}
 	}
 }
 
@@ -290,16 +350,7 @@ func (c *Command) OnExit(ae *task.AllocationExited) {
 	if err := internaldb.CompleteTask(context.TODO(), c.taskID, time.Now().UTC()); err != nil {
 		c.syslog.WithError(err).Error("marking task complete")
 	}
-	if err := user.DeleteSessionByToken(context.TODO(), c.GenericCommandSpec.Base.UserSessionToken); err != nil {
-		c.syslog.WithError(err).Errorf(
-			"failure to delete user session for task: %v", c.taskID)
-	}
-	if c.TaskType == model.TaskTypeNotebook {
-		if err := internaldb.DeleteNotebookSessionByTask(context.TODO(), c.taskID); err != nil {
-			c.syslog.WithError(err).Errorf(
-				"failure to delete notebook session for task: %v", c.taskID)
-		}
-	}
+	c.releaseSessions(context.TODO())
 
 	go func() {
 		time.Sleep(terminatedDuration)

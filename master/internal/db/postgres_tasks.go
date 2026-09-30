@@ -190,13 +190,26 @@ func FailTaskStart(
 	ctx context.Context, taskID model.TaskID, allocationID model.AllocationID,
 	taskState *model.TaskState, cause error,
 ) error {
+	return FailTaskAllocation(
+		ctx, taskID, allocationID, taskState, "the allocation failed to start", cause,
+	)
+}
+
+// FailTaskAllocation ends a task whose open allocation failed in the master, such as in a start or
+// a restore, so that the task reads as ended rather than open. In one transaction, it closes the
+// allocation as INFRASTRUCTURE_FAILED with reason and sets the task's end time, and its state when
+// taskState is set.
+func FailTaskAllocation(
+	ctx context.Context, taskID model.TaskID, allocationID model.AllocationID,
+	taskState *model.TaskState, reason string, cause error,
+) error {
 	now := time.Now().UTC()
 	return Bun().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.NewUpdate().Table("allocations").
 			Set("state = ?", model.AllocationStateTerminated).
 			Set("start_time = COALESCE(start_time, ?)", now).
 			Set("end_time = ?", now).
-			Set("exit_reason = ?", "the allocation failed to start").
+			Set("exit_reason = ?", reason).
 			Set("exit_error = ?", cause.Error()).
 			Set("exit_class = ?", model.ExitClassInfrastructureFailed).
 			Set("exit_detail = ?", model.NewExitDetail("", nil, cause.Error())).
@@ -205,16 +218,69 @@ func FailTaskStart(
 			Exec(ctx); err != nil {
 			return fmt.Errorf("closing allocation %s: %w", allocationID, err)
 		}
-
-		q := tx.NewUpdate().Table("tasks").Set("end_time = ?", now)
-		if taskState != nil {
-			q = q.Set("task_state = ?", *taskState)
-		}
-		if _, err := q.Where("task_id = ?", taskID).Where("end_time IS NULL").Exec(ctx); err != nil {
-			return fmt.Errorf("ending task %s: %w", taskID, err)
-		}
-		return nil
+		return endLiveTaskTx(ctx, tx, taskID, now, taskState)
 	})
+}
+
+// EndQueuedTask ends a task instead of requesting its never-placed allocation again. In one
+// transaction, it deletes the resources recorded for the allocation, closes it as not failed with
+// reason, and sets the task's end time, and its state when taskState is set.
+func EndQueuedTask(
+	ctx context.Context, taskID model.TaskID, allocationID model.AllocationID,
+	taskState *model.TaskState, reason string,
+) error {
+	now := time.Now().UTC()
+	return Bun().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := PurgeAllocationResources(ctx, tx, allocationID); err != nil {
+			return err
+		}
+		if _, err := tx.NewUpdate().Table("allocations").
+			Set("state = ?", model.AllocationStateTerminated).
+			Set("start_time = COALESCE(start_time, ?)", now).
+			Set("end_time = ?", now).
+			Set("exit_reason = ?", reason).
+			Set("exit_class = ?", model.ExitClassNone).
+			Set("exit_detail = ?", model.NewExitDetail("", nil, reason)).
+			Where("allocation_id = ?", allocationID).
+			Where("end_time IS NULL").
+			Exec(ctx); err != nil {
+			return fmt.Errorf("closing allocation %s: %w", allocationID, err)
+		}
+		return endLiveTaskTx(ctx, tx, taskID, now, taskState)
+	})
+}
+
+// EndLiveTask sets the end time of a task that has not ended, and its state when taskState is set.
+func EndLiveTask(
+	ctx context.Context, taskID model.TaskID, endTime time.Time, taskState *model.TaskState,
+) error {
+	return endLiveTaskTx(ctx, Bun(), taskID, endTime, taskState)
+}
+
+func endLiveTaskTx(
+	ctx context.Context, idb bun.IDB, taskID model.TaskID, endTime time.Time,
+	taskState *model.TaskState,
+) error {
+	q := idb.NewUpdate().Table("tasks").Set("end_time = ?", endTime)
+	if taskState != nil {
+		q = q.Set("task_state = ?", *taskState)
+	}
+	if _, err := q.Where("task_id = ?", taskID).Where("end_time IS NULL").Exec(ctx); err != nil {
+		return fmt.Errorf("ending task %s: %w", taskID, err)
+	}
+	return nil
+}
+
+// PurgeAllocationResources deletes the resources that the resource manager recorded for an
+// allocation and, through the cascade, the agent resource manager's records of their containers.
+func PurgeAllocationResources(
+	ctx context.Context, idb bun.IDB, allocationID model.AllocationID,
+) error {
+	if _, err := idb.NewDelete().Table("allocation_resources").
+		Where("allocation_id = ?", allocationID).Exec(ctx); err != nil {
+		return fmt.Errorf("deleting the resources of allocation %s: %w", allocationID, err)
+	}
+	return nil
 }
 
 // AddAllocation upserts the existence of an allocation. Allocation IDs may conflict in the event
