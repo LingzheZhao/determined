@@ -215,13 +215,22 @@ func (a *agent) startTaskContainer(msg sproto.StartTaskContainer) {
 		WithFields(msg.LogContext.Fields()).
 		WithField("container-id", msg.StartContainer.Container.ID).
 		WithField("slots", len(msg.StartContainer.Container.Devices))
-	log.Infof("starting container")
 
-	a.socket.Outbox <- aproto.AgentMessage{StartContainer: &msg.StartContainer}
-
+	// The launch is recorded before the agent is told, so that a restarted master can reattach
+	// every container that may exist. A container whose launch is not recorded is never started.
 	if err := a.agentState.startContainer(msg); err != nil {
-		log.WithError(err).Error("failed to update agent state")
+		log.WithError(err).Error("failed to record the container launch, not starting it")
+		stopped := aproto.ContainerError(aproto.AgentError, err)
+		rmevents.Publish(msg.AllocationID, &sproto.ResourcesStateChanged{
+			ResourcesID:      sproto.FromContainerID(msg.StartContainer.Container.ID),
+			ResourcesState:   sproto.Terminated,
+			ResourcesStopped: sproto.FromContainerStopped(&stopped),
+		})
+		return
 	}
+
+	log.Infof("starting container")
+	a.socket.Outbox <- aproto.AgentMessage{StartContainer: &msg.StartContainer}
 }
 
 func (a *agent) KillTaskContainer(msg sproto.KillTaskContainer) {
@@ -825,6 +834,11 @@ func (a *agent) handleContainersReattached(agentStarted *aproto.AgentStarted) er
 				"reattached container %s has changed state: %s to %s",
 				cid, a.agentState.containerState[cid].State,
 				containerRestored.Container.State)
+			// The container is killed because it could not be restored, which is a failure, not a
+			// stop that anyone asked for.
+			containerRestored.Failure = aproto.NewContainerFailure(aproto.RestoreError, fmt.Errorf(
+				"container changed state from %s to %s while the master was away",
+				a.agentState.containerState[cid].State, containerRestored.Container.State))
 			doomed[cid] = containerRestored
 			continue
 		}

@@ -334,43 +334,50 @@ func (a *agentState) containerStateChanged(msg aproto.ContainerStateChanged) {
 	}
 }
 
+// startContainer records the launch of a container: it assigns the container its slots and
+// allocation, and persists them together with the container's launch state. The agent must be told
+// to start the container only after this succeeds, so that a restarted master knows every
+// container that may exist. If the launch cannot be recorded, the state is left as it was.
 func (a *agentState) startContainer(msg sproto.StartTaskContainer) error {
-	inner := func(deviceId device.ID) error {
-		s, ok := a.slotStates[deviceId]
-		if !ok {
-			return errors.New("can't find slot")
-		}
-
+	container := msg.StartContainer.Container
+	slots := make([]*slot, 0, len(container.Devices))
+	for _, d := range container.Devices {
+		s, ok := a.slotStates[d.ID]
+		var err error
+		switch {
+		case !ok:
+			err = errors.New("can't find slot")
 		// TODO(ilia): Potential race condition if slot is disabled in-between scheduling?
-		if !s.enabled.enabled() {
-			return errors.New("container allocated but slot is not enabled")
+		case !s.enabled.enabled():
+			err = errors.New("container allocated but slot is not enabled")
+		case s.containerID != nil:
+			err = errors.New("container already allocated to slot")
 		}
-		if s.containerID != nil {
-			return errors.New("container already allocated to slot")
-		}
-
-		s.containerID = &msg.StartContainer.Container.ID
-		a.containerState[msg.StartContainer.Container.ID] = &msg.StartContainer.Container
-
-		return nil
-	}
-
-	for _, d := range msg.StartContainer.Container.Devices {
-		if err := inner(d.ID); err != nil {
+		if err != nil {
 			return errors.Wrapf(err, "bad startContainer on device: %d (%s)", d.ID, a.string())
 		}
+		slots = append(slots, s)
 	}
 
-	a.containerAllocation[msg.Container.ID] = msg.AllocationID
-
-	if err := a.persist(); err != nil {
-		a.syslog.WithError(err).Warnf("startContainer persist failure")
+	previous, allocated := a.containerState[container.ID]
+	for _, s := range slots {
+		s.containerID = &container.ID
 	}
+	a.containerState[container.ID] = &container
+	a.containerAllocation[container.ID] = msg.AllocationID
 
-	if err := updateContainerState(&msg.StartContainer.Container); err != nil {
-		a.syslog.WithError(err).Warnf("startContainer failed to update container state")
+	if err := a.persistLaunch(&container); err != nil {
+		for _, s := range slots {
+			s.containerID = nil
+		}
+		if allocated {
+			a.containerState[container.ID] = previous
+		} else {
+			delete(a.containerState, container.ID)
+		}
+		delete(a.containerAllocation, container.ID)
+		return errors.Wrapf(err, "recording the launch of container %s", container.ID)
 	}
-
 	return nil
 }
 
@@ -504,12 +511,27 @@ func (a *agentState) snapshot() *agentSnapshot {
 }
 
 func (a *agentState) persist() error {
+	return a.persistTx(context.TODO(), db.Bun())
+}
+
+func (a *agentState) persistTx(ctx context.Context, idb bun.IDB) error {
 	snapshot := a.snapshot()
-	_, err := db.Bun().NewInsert().Model(snapshot).
+	_, err := idb.NewInsert().Model(snapshot).
 		On("CONFLICT (uuid) DO UPDATE").
 		On("CONFLICT (agent_id) DO UPDATE").
-		Exec(context.TODO())
+		Exec(ctx)
 	return err
+}
+
+// persistLaunch persists the agent snapshot, which lists a launched container, and the container's
+// launch state in one transaction.
+func (a *agentState) persistLaunch(c *cproto.Container) error {
+	return db.Bun().RunInTx(context.TODO(), nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := a.persistTx(ctx, tx); err != nil {
+			return err
+		}
+		return updateContainerStateTx(ctx, tx, c)
+	})
 }
 
 func (a *agentState) delete() error {
@@ -671,12 +693,16 @@ func clearAgentStates(agentIds []aproto.ID) error {
 }
 
 func updateContainerState(c *cproto.Container) error {
+	return updateContainerStateTx(context.TODO(), db.Bun(), c)
+}
+
+func updateContainerStateTx(ctx context.Context, idb bun.IDB, c *cproto.Container) error {
 	snapshot := newContainerSnapshot(c)
-	_, err := db.Bun().NewUpdate().
+	_, err := idb.NewUpdate().
 		Model(&snapshot).
 		Where("container_id = ?", snapshot.ID).
 		Column("state", "devices").
-		Exec(context.TODO())
+		Exec(ctx)
 
 	return err
 }

@@ -203,6 +203,11 @@ func (rp *resourcePool) restoreResources(
 		if !ok {
 			return fmt.Errorf("can't find restorable agent %s", cs.AgentID)
 		}
+		// A launch is recorded before the agent is told to start the container, so a container
+		// without one was never started, and no agent would report it.
+		if cs.State == cproto.Unknown {
+			return fmt.Errorf("container %s has no recorded launch", cs.ID)
+		}
 
 		cr := containerResources{
 			req:         req,
