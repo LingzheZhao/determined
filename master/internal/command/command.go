@@ -347,7 +347,7 @@ func (c *Command) OnExit(ae *task.AllocationExited) {
 
 	c.exitStatus = ae
 
-	if err := internaldb.CompleteTask(context.TODO(), c.taskID, time.Now().UTC()); err != nil {
+	if err := internaldb.EndLiveTask(context.TODO(), c.taskID, time.Now().UTC(), nil); err != nil {
 		c.syslog.WithError(err).Error("marking task complete")
 	}
 	c.releaseSessions(context.TODO())

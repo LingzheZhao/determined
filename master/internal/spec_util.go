@@ -159,29 +159,13 @@ func getGenericTaskOnAllocationExit(
 				syslog.WithError(err).Error("finishing canceled task resume")
 			}
 		}()
-		if ae.Err != nil {
-			err := db.SetErrorState(taskID, time.Now().UTC())
-			if err != nil {
-				syslog.WithError(err).Error("setting task to error state")
-			}
-			if err := tasklist.GroupPriorityChangeRegistry.Delete(jobID); err != nil {
-				syslog.WithError(err).Error("deleting group priority change registry")
-			}
-			return
-		}
-		isPaused, err := db.IsPaused(ctx, taskID)
+		state, err := db.EndGenericTask(
+			context.WithoutCancel(ctx), taskID, ae.Err != nil, time.Now().UTC(),
+		)
 		if err != nil {
-			syslog.WithError(err).Error("checking if a task is paused")
-		}
-		if isPaused {
-			err = db.SetPausedState(taskID, time.Now().UTC())
-			if err != nil {
-				syslog.WithError(err).Error("setting task to paused state")
-			}
+			syslog.WithError(err).Error("ending generic task")
+		} else if state == model.TaskStatePaused {
 			return
-		}
-		if err := db.CompleteGenericTask(taskID, time.Now().UTC()); err != nil {
-			syslog.WithError(err).Error("marking generic task complete")
 		}
 		if err := tasklist.GroupPriorityChangeRegistry.Delete(jobID); err != nil {
 			syslog.WithError(err).Error("deleting group priority change registry")

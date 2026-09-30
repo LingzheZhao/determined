@@ -104,26 +104,6 @@ func CompleteTask(ctx context.Context, tID model.TaskID, endTime time.Time) erro
 	return nil
 }
 
-// CompleteGenericTask persists the completion of a task of type GENERIC.
-func CompleteGenericTask(tID model.TaskID, endTime time.Time) error {
-	err := CompleteTask(context.Background(), tID, endTime)
-	if err != nil {
-		return err
-	}
-	_, err = Bun().
-		NewRaw(`UPDATE tasks
-				SET task_state = (
-	    		CASE WHEN task_state = ? THEN ?::task_state
-	    		ELSE ?::task_state END)
-				WHERE task_id = ?
-	    `, model.TaskStateStoppingCanceled, model.TaskStateCanceled, model.TaskStateCompleted, tID).
-		Exec(context.Background())
-	if err != nil {
-		return errors.Wrap(err, "completing task")
-	}
-	return nil
-}
-
 // KillGenericTask persists the termination of a task of type GENERIC.
 func KillGenericTask(tID model.TaskID, endTime time.Time) error {
 	err := CompleteTask(context.Background(), tID, endTime)
@@ -155,32 +135,55 @@ func SetPausedState(taskID model.TaskID, endTime time.Time) error {
 	return nil
 }
 
-// IsPaused returns true if given task is in paused/pausing state.
-func IsPaused(ctx context.Context, tID model.TaskID) (bool, error) {
-	count, err := Bun().NewSelect().Table("tasks").
-		Where("task_id = ?", tID).
-		WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
-			return q.Where("task_state = ?", model.TaskStateStoppingPaused).
-				WhereOr("task_state = ?", model.TaskStatePaused)
-		}).Count(context.Background())
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
+// EndGenericTask records the exit decision of a generic task whose allocation exited, and returns
+// the state it decided. It holds the lock of the task's job, as a cancel does, so a task asked to
+// stop before its exit ends CANCELED, and one asked after its exit keeps its state. Otherwise a
+// failed allocation ends the task ERROR, a pause leaves it PAUSED, and any other exit COMPLETED.
+func EndGenericTask(
+	ctx context.Context, taskID model.TaskID, failed bool, endTime time.Time,
+) (model.TaskState, error) {
+	var state model.TaskState
+	err := Bun().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockTaskJobTx(ctx, tx, taskID); err != nil {
+			return err
+		}
+		var current struct {
+			State           *model.TaskState `bun:"task_state"`
+			CancelRequested bool             `bun:"cancel_requested"`
+		}
+		if err := tx.NewSelect().Table("tasks").
+			ColumnExpr("tasks.task_state").
+			ColumnExpr("jobs.cancel_requested_at IS NOT NULL AS cancel_requested").
+			Join("LEFT JOIN jobs ON jobs.job_id = tasks.job_id").
+			Where("tasks.task_id = ?", taskID).
+			Scan(ctx, &current); err != nil {
+			return fmt.Errorf("reading generic task %s: %w", taskID, err)
+		}
+		state = genericTaskExitState(current.State, current.CancelRequested, failed)
+		if _, err := tx.NewUpdate().Table("tasks").
+			Set("task_state = ?", state).
+			Set("end_time = ?", endTime).
+			Where("task_id = ?", taskID).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("ending generic task %s: %w", taskID, err)
+		}
+		return nil
+	})
+	return state, err
 }
 
-// SetErrorState sets given task to a ERROR state.
-func SetErrorState(taskID model.TaskID, endTime time.Time) error {
-	_, err := Bun().NewUpdate().
-		Table("tasks").
-		Set("task_state = ?", model.TaskStateError).
-		Set("end_time = ?", endTime).
-		Where("task_id = ?", taskID).
-		Exec(context.Background())
-	if err != nil {
-		return errors.Wrap(err, "setting error task state")
+func genericTaskExitState(state *model.TaskState, cancelRequested, failed bool) model.TaskState {
+	switch {
+	case cancelRequested || state != nil && *state == model.TaskStateStoppingCanceled:
+		return model.TaskStateCanceled
+	case failed:
+		return model.TaskStateError
+	case state != nil &&
+		(*state == model.TaskStatePaused || *state == model.TaskStateStoppingPaused):
+		return model.TaskStatePaused
+	default:
+		return model.TaskStateCompleted
 	}
-	return nil
 }
 
 // FailTaskStart ends a task whose committed first allocation failed to start in-process, so that
@@ -205,6 +208,9 @@ func FailTaskAllocation(
 ) error {
 	now := time.Now().UTC()
 	return Bun().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockTaskJobTx(ctx, tx, taskID); err != nil {
+			return err
+		}
 		if _, err := tx.NewUpdate().Table("allocations").
 			Set("state = ?", model.AllocationStateTerminated).
 			Set("start_time = COALESCE(start_time, ?)", now).
@@ -231,6 +237,9 @@ func EndQueuedTask(
 ) error {
 	now := time.Now().UTC()
 	return Bun().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockTaskJobTx(ctx, tx, taskID); err != nil {
+			return err
+		}
 		if err := PurgeAllocationResources(ctx, tx, allocationID); err != nil {
 			return err
 		}
@@ -251,12 +260,20 @@ func EndQueuedTask(
 }
 
 // EndLiveTask sets the end time of a task that has not ended, and its state when taskState is set.
+// Like every decision that ends a task, it holds the lock of the task's job, which a cancel takes
+// too: a cancel that commits first is seen as a stop, and one that commits later sees the end.
 func EndLiveTask(
 	ctx context.Context, taskID model.TaskID, endTime time.Time, taskState *model.TaskState,
 ) error {
-	return endLiveTaskTx(ctx, Bun(), taskID, endTime, taskState)
+	return Bun().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockTaskJobTx(ctx, tx, taskID); err != nil {
+			return err
+		}
+		return endLiveTaskTx(ctx, tx, taskID, endTime, taskState)
+	})
 }
 
+// endLiveTaskTx ends a task in a transaction that already holds the lock of the task's job.
 func endLiveTaskTx(
 	ctx context.Context, idb bun.IDB, taskID model.TaskID, endTime time.Time,
 	taskState *model.TaskState,
