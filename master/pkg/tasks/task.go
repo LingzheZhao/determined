@@ -264,14 +264,8 @@ func (t *TaskSpec) LogShipperWrappedEntrypoint() []string {
 
 // ToDockerSpec converts a task spec to a docker container spec.
 func (t *TaskSpec) ToDockerSpec() cproto.Spec {
-	e := t.EnvVars()
-	// The agent resource manager is the only one that builds docker specs; the others set the
-	// cluster ID themselves.
-	if t.ClusterID != "" {
-		e["DET_CLUSTER_ID"] = t.ClusterID
-	}
 	var envVars []string
-	for k, v := range e {
+	for k, v := range t.EnvVars() {
 		envVars = append(envVars, fmt.Sprintf("%s=%s", k, v))
 	}
 

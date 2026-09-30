@@ -131,6 +131,6 @@ message LaunchCommandResponse {
   // If the requested slots exceeded the current max available.
   repeated LaunchWarning warnings = 3;
   // The result of the submission, set when the request has submit options. A
-  // replay sets only this field.
+  // replay leaves the other fields empty and sets this field.
   SubmitResult submission = 4;
 }

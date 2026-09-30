@@ -2411,7 +2411,7 @@ export interface V1CreateExperimentResponse {
      */
     warnings?: Array<V1LaunchWarning>;
     /**
-     * The result of the submission, set when the request has submit options. A replay sets only this field.
+     * The result of the submission, set when the request has submit options. A replay leaves the other fields empty and sets this field.
      * @type {V1SubmitResult}
      * @memberof V1CreateExperimentResponse
      */
@@ -2491,7 +2491,7 @@ export interface V1CreateGenericTaskResponse {
      */
     warnings?: Array<V1LaunchWarning>;
     /**
-     * The result of the submission, set when the request has submit options. A replay sets only this field.
+     * The result of the submission, set when the request has submit options. A replay leaves the other fields empty and sets this field.
      * @type {V1SubmitResult}
      * @memberof V1CreateGenericTaskResponse
      */
@@ -6024,7 +6024,7 @@ export interface V1LaunchCommandResponse {
      */
     warnings?: Array<V1LaunchWarning>;
     /**
-     * The result of the submission, set when the request has submit options. A replay sets only this field.
+     * The result of the submission, set when the request has submit options. A replay leaves the other fields empty and sets this field.
      * @type {V1SubmitResult}
      * @memberof V1LaunchCommandResponse
      */
@@ -6160,7 +6160,7 @@ export interface V1LaunchShellResponse {
      */
     warnings?: Array<V1LaunchWarning>;
     /**
-     * The result of the submission, set when the request has submit options. A replay sets only this field.
+     * The result of the submission, set when the request has submit options. A replay leaves the other fields empty and sets this field.
      * @type {V1SubmitResult}
      * @memberof V1LaunchShellResponse
      */
@@ -11443,6 +11443,12 @@ export interface V1SubmitResult {
      * @memberof V1SubmitResult
      */
     outcome?: V1AdmissionOutcome;
+    /**
+     * The resolved config of the job, set only on a dry run, with secrets stripped.
+     * @type {any}
+     * @memberof V1SubmitResult
+     */
+    effectiveConfig?: any;
 }
 /**
  * Project Table type.   - TABLE_TYPE_UNSPECIFIED: Unspecified table type.  - TABLE_TYPE_EXPERIMENT: experiment table.  - TABLE_TYPE_RUN: run table.

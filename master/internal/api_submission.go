@@ -14,6 +14,7 @@ import (
 	"github.com/determined-ai/determined/master/internal/api/apiutils"
 	"github.com/determined-ai/determined/master/internal/authz"
 	"github.com/determined-ai/determined/master/internal/command"
+	"github.com/determined-ai/determined/master/internal/config"
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/experiment"
 	"github.com/determined-ai/determined/master/internal/grpcutil"
@@ -23,6 +24,7 @@ import (
 	"github.com/determined-ai/determined/master/pkg/model"
 	"github.com/determined-ai/determined/master/pkg/ptrs"
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
+	"github.com/determined-ai/determined/proto/pkg/rbacv1"
 	"github.com/determined-ai/determined/proto/pkg/taskv1"
 )
 
@@ -91,12 +93,16 @@ func (a *apiServer) GetSubmission(
 	if err != nil {
 		return nil, err
 	}
-	record, err := readableSubmission(ctx, *curUser, model.JobID(req.JobId))
+	admin, err := submissionAdmin(ctx, *curUser)
+	if err != nil {
+		return nil, err
+	}
+	record, err := readableSubmission(ctx, *curUser, admin, model.JobID(req.JobId))
 	if err != nil {
 		return nil, err
 	}
 	return &apiv1.GetSubmissionResponse{
-		Submission: record.Proto(showsSubmissionIdentity(*curUser, record)),
+		Submission: record.Proto(showsSubmissionIdentity(*curUser, admin, record)),
 	}, nil
 }
 
@@ -111,6 +117,10 @@ func (a *apiServer) ListSubmissions(
 	}
 	if _, ok := apiv1.SubmissionState_name[int32(req.State)]; !ok {
 		return nil, status.Errorf(codes.InvalidArgument, "unknown state %v", req.State)
+	}
+	admin, err := submissionAdmin(ctx, *curUser)
+	if err != nil {
+		return nil, err
 	}
 	limit := int(req.Limit)
 	switch {
@@ -131,7 +141,7 @@ func (a *apiServer) ListSubmissions(
 	}
 	records, next, err := submission.List(ctx, filter, req.PageToken, limit,
 		func(ctx context.Context, r *submission.Record) (bool, error) {
-			return canReadSubmission(ctx, *curUser, r)
+			return canReadSubmission(ctx, *curUser, admin, r)
 		})
 	if err != nil {
 		return nil, err
@@ -142,7 +152,7 @@ func (a *apiServer) ListSubmissions(
 		NextPageToken: next,
 	}
 	for _, r := range records {
-		resp.Submissions = append(resp.Submissions, r.Proto(showsSubmissionIdentity(*curUser, r)))
+		resp.Submissions = append(resp.Submissions, r.Proto(showsSubmissionIdentity(*curUser, admin, r)))
 	}
 	return resp, nil
 }
@@ -162,8 +172,12 @@ func (a *apiServer) CancelSubmission(
 	if err != nil {
 		return nil, err
 	}
+	admin, err := submissionAdmin(ctx, *curUser)
+	if err != nil {
+		return nil, err
+	}
 	jobID := model.JobID(req.JobId)
-	record, err := readableSubmission(ctx, *curUser, jobID)
+	record, err := readableSubmission(ctx, *curUser, admin, jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -186,14 +200,14 @@ func (a *apiServer) CancelSubmission(
 		return nil, err
 	}
 	return &apiv1.CancelSubmissionResponse{
-		Submission: record.Proto(showsSubmissionIdentity(*curUser, record)),
+		Submission: record.Proto(showsSubmissionIdentity(*curUser, admin, record)),
 	}, nil
 }
 
 // readableSubmission returns a job of a managed-create kind that the caller may read. Any other
 // job is not found.
 func readableSubmission(
-	ctx context.Context, curUser model.User, jobID model.JobID,
+	ctx context.Context, curUser model.User, admin bool, jobID model.JobID,
 ) (*submission.Record, error) {
 	notFound := api.NotFoundErrs("submission", jobID.String(), true)
 	record, err := submission.Get(ctx, jobID)
@@ -202,7 +216,7 @@ func readableSubmission(
 	} else if err != nil {
 		return nil, err
 	}
-	switch ok, err := canReadSubmission(ctx, curUser, record); {
+	switch ok, err := canReadSubmission(ctx, curUser, admin, record); {
 	case err != nil:
 		return nil, err
 	case !ok:
@@ -213,7 +227,9 @@ func readableSubmission(
 
 // canReadSubmission applies the read authorization of the job's kind. A deleted experiment has no
 // experiment left to authorize against, so only its owner and admins may read it.
-func canReadSubmission(ctx context.Context, curUser model.User, r *submission.Record) (bool, error) {
+func canReadSubmission(
+	ctx context.Context, curUser model.User, admin bool, r *submission.Record,
+) (bool, error) {
 	var err error
 	switch {
 	case r.JobType == model.JobTypeExperiment && r.ExperimentID != nil:
@@ -230,7 +246,7 @@ func canReadSubmission(ctx context.Context, curUser model.User, r *submission.Re
 		err = command.AuthZProvider.Get().CanGetNSC(
 			audit.SupplyEntityID(ctx, r.TaskID.String()), curUser, workspaceID)
 	default:
-		return ownsSubmission(curUser, r), nil
+		return ownsSubmission(curUser, admin, r), nil
 	}
 	if authz.IsPermissionDenied(err) {
 		return false, nil
@@ -238,14 +254,30 @@ func canReadSubmission(ctx context.Context, curUser model.User, r *submission.Re
 	return err == nil, err
 }
 
-func ownsSubmission(curUser model.User, r *submission.Record) bool {
-	return curUser.Admin || r.OwnerID != nil && *r.OwnerID == curUser.ID
+// submissionAdmin reports whether the caller is an admin under the active authorization: the
+// admin flag under basic authorization and under permissive, which enforces basic, and a global
+// ADMINISTRATE_USER permission, as ClusterAdmin holds, under RBAC, where the flag has no effect.
+func submissionAdmin(ctx context.Context, curUser model.User) (bool, error) {
+	if !config.GetAuthZConfig().IsRBACEnabled() {
+		return curUser.Admin, nil
+	}
+	err := db.DoesPermissionMatch(ctx, curUser.ID, nil,
+		rbacv1.PermissionType_PERMISSION_TYPE_ADMINISTRATE_USER)
+	if authz.IsPermissionDenied(err) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// ownsSubmission reports whether the caller owns a job or is an admin, as submissionAdmin decides.
+func ownsSubmission(curUser model.User, admin bool, r *submission.Record) bool {
+	return admin || r.OwnerID != nil && *r.OwnerID == curUser.ID
 }
 
 // showsSubmissionIdentity reports whether the caller sees a job's idempotency key and request
 // digest: only its owner and admins do.
-func showsSubmissionIdentity(curUser model.User, r *submission.Record) bool {
-	return ownsSubmission(curUser, r)
+func showsSubmissionIdentity(curUser model.User, admin bool, r *submission.Record) bool {
+	return ownsSubmission(curUser, admin, r)
 }
 
 // cancelNTSC cancels a command or shell, authorizing the caller from the database. It is the path
@@ -342,7 +374,11 @@ func ntscSubmission(
 	} else if err != nil {
 		return nil, err
 	}
-	record, err := readableSubmission(ctx, curUser, *row.JobID)
+	admin, err := submissionAdmin(ctx, curUser)
+	if err != nil {
+		return nil, err
+	}
+	record, err := readableSubmission(ctx, curUser, admin, *row.JobID)
 	if status.Code(err) == codes.NotFound {
 		return nil, notFound
 	}

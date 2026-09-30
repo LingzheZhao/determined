@@ -23,8 +23,9 @@ import (
 )
 
 // Protocol is the submission protocol version that GetMaster reports. Clients refuse masters
-// below the version they need, so it rises only once a whole phase of the protocol is in place.
-const Protocol = 0
+// below the version they need. It is 1 once exit classes and the submission ledger are in place;
+// each later capability raises it when it lands.
+const Protocol = 1
 
 const (
 	maxKeyLength = 128
@@ -169,7 +170,8 @@ func (s *Submission) Template() *model.Template {
 type Handler[R any] struct {
 	// AuthorizeReplay checks that the caller may still read a job it submitted earlier.
 	AuthorizeReplay func(ctx context.Context, job *model.Job) error
-	// Replayed builds the response that replays a job, which carries only the submission result.
+	// Replayed builds the response that replays a job, which carries its data only in the
+	// submission result. Message fields that clients decode as required are set, but empty.
 	Replayed func(result *apiv1.SubmitResult) R
 	// Prepare parses, merges, and authorizes the request and applies config policy. It has no
 	// side effects: no row, session, key, or registry entry.

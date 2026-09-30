@@ -2,16 +2,19 @@ package internal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/uptrace/bun"
 	"golang.org/x/exp/slices"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/determined-ai/determined/master/internal/db"
+	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/task"
 	"github.com/determined-ai/determined/master/pkg/model"
 )
@@ -45,23 +48,35 @@ func cancelGenericTaskTree(ctx context.Context, members []model.Task) error {
 	members = filterTasksByState(members, []model.TaskState{
 		model.TaskStateCanceled, model.TaskStateCompleted,
 	})
-	signal, err := cancelGenericTaskMembers(ctx, members)
+	signal, ended, err := cancelGenericTaskMembers(ctx, members)
 	if err != nil {
 		return err
 	}
-	// An allocation that is not registered yet reads the cancel when it starts.
+	// No exit handler runs for a member the transaction ended, such as a paused task, which kept
+	// its entry for the unpause.
+	for _, jobID := range ended {
+		if _, ok := tasklist.GroupPriorityChangeRegistry.Load(jobID); ok {
+			if err := tasklist.GroupPriorityChangeRegistry.Delete(jobID); err != nil {
+				log.WithError(err).WithField("job-id", jobID).
+					Error("deleting a canceled generic task from the group priority change registry")
+			}
+		}
+	}
+	// The cancel has committed, so every member is signaled whatever happens to the others. An
+	// allocation that is not registered yet reads the cancel when it starts, and one that exited
+	// since the snapshot read it as it exited.
 	live := task.DefaultService.GetAllAllocationIDs()
+	var errs []error
 	for _, allocationID := range signal {
 		if !slices.Contains(live, allocationID) {
 			continue
 		}
-		if err := task.DefaultService.Signal(
-			allocationID, task.KillAllocation, "user requested task kill",
-		); err != nil {
-			return err
+		err := task.DefaultService.Signal(allocationID, task.KillAllocation, "user requested task kill")
+		if err != nil && status.Code(err) != codes.NotFound {
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // genericTaskMember is a member of a canceled generic task tree as the cancel transaction reads it.
@@ -85,9 +100,12 @@ func (m *genericTaskMember) live() bool {
 }
 
 // cancelGenericTaskMembers records the cancel of the live members of a generic task tree in one
-// transaction and returns the allocations to signal after it commits. A member whose allocation
-// has ended and that no resume is starting, such as a paused task, ends CANCELED here.
-func cancelGenericTaskMembers(ctx context.Context, members []model.Task) ([]model.AllocationID, error) {
+// transaction and returns the allocations to signal after it commits, and the jobs of the members
+// it ended. A member whose allocation has ended and that no resume is starting, such as a paused
+// task, ends CANCELED here.
+func cancelGenericTaskMembers(
+	ctx context.Context, members []model.Task,
+) (signal []model.AllocationID, ended []model.JobID, err error) {
 	ids := make([]model.TaskID, 0, len(members))
 	var jobIDs []model.JobID
 	for _, m := range members {
@@ -97,14 +115,14 @@ func cancelGenericTaskMembers(ctx context.Context, members []model.Task) ([]mode
 		}
 	}
 	if len(ids) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	sort.Slice(jobIDs, func(i, j int) bool { return jobIDs[i] < jobIDs[j] })
 
 	var rows []genericTaskResume
 	if err := db.Bun().NewSelect().Model(&rows).
 		Where("task_id IN (?) OR root_task_id IN (?)", bun.In(ids), bun.In(ids)).Scan(ctx); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	live := task.DefaultService.GetAllAllocationIDs()
 	started := make(map[model.TaskID]bool, len(rows))
@@ -116,13 +134,13 @@ func cancelGenericTaskMembers(ctx context.Context, members []model.Task) ([]mode
 		exists, err := db.Bun().NewSelect().Table("allocations").
 			Where("allocation_id = ?", row.NewAllocationID).Exists(ctx)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		started[row.TaskID] = exists
 	}
 
-	var signal []model.AllocationID
-	err := db.Bun().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	err = db.Bun().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		signal, ended = nil, nil
 		// The jobs are locked before any task, in one order, as the exit decision locks them.
 		if len(jobIDs) > 0 {
 			if _, err := tx.NewRaw(`SELECT job_id FROM jobs WHERE job_id IN (?)
@@ -182,7 +200,8 @@ func cancelGenericTaskMembers(ctx context.Context, members []model.Task) ([]mode
 		now := time.Now().UTC()
 		resuming := make(map[model.TaskID]bool, len(rows))
 		for _, row := range rows {
-			if m, ok := byID[row.TaskID]; !ok || m.State == nil || genericTaskTerminal(*m.State) {
+			m, ok := byID[row.TaskID]
+			if !ok || m.State == nil || genericTaskTerminal(*m.State) {
 				if _, err := tx.NewUpdate().Table("generic_task_resume").Set("completed = TRUE").
 					Where("task_id = ?", row.TaskID).Exec(ctx); err != nil {
 					return err
@@ -200,6 +219,9 @@ func cancelGenericTaskMembers(ctx context.Context, members []model.Task) ([]mode
 					Set("task_state = ?", model.TaskStateCanceled).Set("end_time = ?", now).
 					Where("task_id = ?", row.TaskID).Exec(ctx); err != nil {
 					return err
+				}
+				if m.JobID != nil {
+					ended = append(ended, *m.JobID)
 				}
 				continue
 			}
@@ -220,19 +242,22 @@ func cancelGenericTaskMembers(ctx context.Context, members []model.Task) ([]mode
 					Where("task_id = ?", id).Exec(ctx); err != nil {
 					return err
 				}
+				if m.JobID != nil {
+					ended = append(ended, *m.JobID)
+				}
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, row := range rows {
 		if err := cleanupGenericTaskResume(ctx, row.RootTaskID, row.OperationID); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return signal, nil
+	return signal, ended, nil
 }
 
 func resumeTaskIDs(rows []genericTaskResume) []model.TaskID {

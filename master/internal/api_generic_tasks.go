@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/determined-ai/determined/master/pkg/check"
 	pkgCommand "github.com/determined-ai/determined/master/pkg/command"
 	"github.com/determined-ai/determined/master/pkg/model"
+	"github.com/determined-ai/determined/master/pkg/protoutils"
 	"github.com/determined-ai/determined/master/pkg/ptrs"
 	"github.com/determined-ai/determined/master/pkg/tasks"
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
@@ -232,6 +234,9 @@ func (a *apiServer) CreateGenericTask(
 			return err
 		},
 		DryRun: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.CreateGenericTaskResponse, error) {
+			if result != nil {
+				result.EffectiveConfig = protoutils.ToStruct(json.RawMessage(t.configJSON))
+			}
 			return &apiv1.CreateGenericTaskResponse{
 				Warnings:   pkgCommand.LaunchWarningToProto(t.warnings),
 				Submission: result,

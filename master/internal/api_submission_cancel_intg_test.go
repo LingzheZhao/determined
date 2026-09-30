@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -22,12 +23,14 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gopkg.in/guregu/null.v3"
 
+	apiPkg "github.com/determined-ai/determined/master/internal/api"
 	authz2 "github.com/determined-ai/determined/master/internal/authz"
 	"github.com/determined-ai/determined/master/internal/command"
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/experiment"
 	"github.com/determined-ai/determined/master/internal/mocks"
 	"github.com/determined-ai/determined/master/internal/rm/rmevents"
+	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/sproto"
 	"github.com/determined-ai/determined/master/internal/submission"
 	"github.com/determined-ai/determined/master/internal/task"
@@ -246,21 +249,26 @@ func TestCancelThenCrashBeforeKill(t *testing.T) {
 	_ = placedTask
 }
 
+// commitEndedCommand commits a command whose only allocation exited without failing, so that
+// ending its task is the exit decision that completes it.
+func commitEndedCommand(
+	ctx context.Context, t *testing.T, api *apiServer, owner model.User,
+) (model.TaskID, model.JobID) {
+	_, taskID, jobID := commitCommand(ctx, t, api, owner, false)
+	now := time.Now().UTC()
+	_, err := db.Bun().NewUpdate().Table("allocations").
+		Set("state = ?", model.AllocationStateTerminated).
+		Set("start_time = ?", now).Set("end_time = ?", now).
+		Set("exit_class = ?", model.ExitClassNone).
+		Where("task_id = ?", taskID).Exec(ctx)
+	require.NoError(t, err)
+	return taskID, jobID
+}
+
 func TestCancelRacesCompletion(t *testing.T) {
 	api, curUser, ctx := setupSubmissionTest(t, releasingRM(subscribe))
-
-	// commitEnded commits a command whose only allocation exited without failing, so that ending
-	// its task is the exit decision that completes it.
 	commitEnded := func() (model.TaskID, model.JobID) {
-		_, taskID, jobID := commitCommand(ctx, t, api, curUser, false)
-		now := time.Now().UTC()
-		_, err := db.Bun().NewUpdate().Table("allocations").
-			Set("state = ?", model.AllocationStateTerminated).
-			Set("start_time = ?", now).Set("end_time = ?", now).
-			Set("exit_class = ?", model.ExitClassNone).
-			Where("task_id = ?", taskID).Exec(ctx)
-		require.NoError(t, err)
-		return taskID, jobID
+		return commitEndedCommand(ctx, t, api, curUser)
 	}
 	endTask := func(taskID model.TaskID) {
 		require.NoError(t, db.EndLiveTask(context.Background(), taskID, time.Now().UTC(), nil))
@@ -315,6 +323,59 @@ func TestCancelRacesCompletion(t *testing.T) {
 		}, state)
 		require.Equal(t, requested, state == apiv1.SubmissionState_SUBMISSION_STATE_CANCELED)
 	}
+}
+
+// slowCancelFlag makes the write of a job's first cancel request sleep, holding the cancel's
+// transaction open, until the test ends.
+func slowCancelFlag(t *testing.T, jobID model.JobID) {
+	ctx := context.Background()
+	name := "slow_cancel_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	_, err := db.Bun().ExecContext(ctx, fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger AS $$
+BEGIN PERFORM pg_sleep(0.5); RETURN NEW; END; $$ LANGUAGE plpgsql`, name))
+	require.NoError(t, err)
+	_, err = db.Bun().ExecContext(ctx, fmt.Sprintf(`CREATE TRIGGER %[1]s BEFORE UPDATE ON jobs
+FOR EACH ROW WHEN (NEW.job_id = '%[2]s' AND NEW.cancel_requested_at IS NOT NULL
+	AND OLD.cancel_requested_at IS NULL) EXECUTE FUNCTION %[1]s()`, name, jobID))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, err := db.Bun().ExecContext(ctx, fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON jobs", name))
+		require.NoError(t, err)
+		_, err = db.Bun().ExecContext(ctx, fmt.Sprintf("DROP FUNCTION IF EXISTS %s()", name))
+		require.NoError(t, err)
+	})
+}
+
+// TestCancelHoldsTheJobLockAgainstAnEnd pins the job row lock that a cancel and the decision that
+// ends a task both take. The cancel has read the task as live and is writing its request when the
+// end runs: the end must wait for the cancel to commit and then read as a cancel. Without the lock
+// the end commits first and the late request turns a completed job into a canceled one.
+func TestCancelHoldsTheJobLockAgainstAnEnd(t *testing.T) {
+	api, curUser, ctx := setupSubmissionTest(t, releasingRM(subscribe))
+	taskID, jobID := commitEndedCommand(ctx, t, api, curUser)
+	slowCancelFlag(t, jobID)
+
+	canceled := make(chan error, 1)
+	go func() {
+		_, err := api.CancelSubmission(ctx, &apiv1.CancelSubmissionRequest{JobId: jobID.String()})
+		canceled <- err
+	}()
+	require.Eventually(t, func() bool {
+		var sleeping int
+		require.NoError(t, db.Bun().NewRaw(`SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event = 'PgSleep'
+				AND query ILIKE '%UPDATE%jobs%' AND query LIKE '%' || ? || '%'`, jobID).
+			Scan(context.Background(), &sleeping))
+		return sleeping > 0
+	}, 10*time.Second, 5*time.Millisecond, "the cancel never reached its request's write")
+
+	require.NoError(t, db.EndLiveTask(context.Background(), taskID, time.Now().UTC(), nil))
+	flagAtEnd := cancelRequestedAt(ctx, t, jobID) != nil
+	require.NoError(t, <-canceled)
+
+	// The job is canceled exactly when the request committed before the end.
+	require.Equal(t, flagAtEnd, getSubmission(ctx, t, api, jobID).State ==
+		apiv1.SubmissionState_SUBMISSION_STATE_CANCELED)
+	require.Equal(t, flagAtEnd, cancelRequestedAt(ctx, t, jobID) != nil)
 }
 
 func TestFailedRestoreReadsFailed(t *testing.T) {
@@ -974,4 +1035,189 @@ func TestResumeNeverContinuesCanceledTask(t *testing.T) {
 	require.Equal(t, command.StopQueuedReason, *closed.ExitReason)
 	require.Equal(t, apiv1.SubmissionState_SUBMISSION_STATE_CANCELED,
 		getSubmission(ctx, t, api, jobID).State)
+}
+
+// cancelAfterCommit cancels the job that a create commits under key right after its commit, before
+// the create dispatches it. The returned function removes the hook and returns the cancel's error.
+func cancelAfterCommit(ctx context.Context, api *apiServer, key string) (done func() error) {
+	var cancelErr error
+	remove := submission.SetAfterCommitHook(func(context.Context) error {
+		cancelErr = cancelByKey(ctx, api, key)
+		return nil // an error would take the branch of a commit whose outcome is unknown
+	})
+	return func() error {
+		remove()
+		return cancelErr
+	}
+}
+
+func cancelByKey(ctx context.Context, api *apiServer, key string) error {
+	var jobID model.JobID
+	if err := db.Bun().NewSelect().Table("jobs").Column("job_id").
+		Where("idempotency_key = ?", key).Scan(context.Background(), &jobID); err != nil {
+		return err
+	}
+	_, err := api.CancelSubmission(ctx, &apiv1.CancelSubmissionRequest{JobId: jobID.String()})
+	return err
+}
+
+func TestLaunchReportsAJobItsDispatchEnded(t *testing.T) {
+	api, _, ctx := setupSubmissionTest(t, releasingRM(subscribe))
+
+	// A cancel between the commit and the handler's dispatch leaves nothing registered: the
+	// dispatch ends the queued task instead of starting it, and the response reads the database.
+	for _, shell := range []bool{false, true} {
+		t.Run(fmt.Sprintf("shell=%v", shell), func(t *testing.T) {
+			key := uuid.NewString()
+			done := cancelAfterCommit(ctx, api, key)
+			var state taskv1.State
+			var result *apiv1.SubmitResult
+			var taskID string
+			if shell {
+				resp, err := api.LaunchShell(ctx, &apiv1.LaunchShellRequest{
+					Config: commandConfig(t, "true"),
+					Submit: &apiv1.SubmitOptions{IdempotencyKey: key},
+				})
+				require.NoError(t, err)
+				state, result, taskID = resp.Shell.State, resp.Submission, resp.Shell.Id
+			} else {
+				resp, err := api.LaunchCommand(ctx, &apiv1.LaunchCommandRequest{
+					Config: commandConfig(t, "true"),
+					Submit: &apiv1.SubmitOptions{IdempotencyKey: key},
+				})
+				require.NoError(t, err)
+				state, result, taskID = resp.Command.State, resp.Submission, resp.Command.Id
+			}
+			require.NoError(t, done())
+
+			require.Equal(t, taskv1.State_STATE_TERMINATED, state)
+			require.Equal(t, apiv1.AdmissionOutcome_ADMISSION_OUTCOME_QUEUED, result.Outcome,
+				"the outcome is the admission's, whatever happened to the job after it")
+			require.False(t, task.IsRegistered(model.AllocationID(taskID+".1")))
+			requireSubmissionState(ctx, t, api, model.JobID(result.JobId),
+				apiv1.SubmissionState_SUBMISSION_STATE_CANCELED)
+		})
+	}
+}
+
+func TestCancelExperimentBeforeRegistration(t *testing.T) {
+	api, curUser, ctx := setupSubmissionTest(t, releasingRM(subscribe))
+
+	// Dispatched, as by a replay, the sweep, or a restart's restore, after the cancel committed.
+	expID, jobID := commitExperiment(ctx, t, api, curUser)
+	_, err := api.CancelSubmission(ctx, &apiv1.CancelSubmissionRequest{JobId: jobID.String()})
+	require.NoError(t, err)
+	require.NotNil(t, cancelRequestedAt(ctx, t, jobID))
+	require.Nil(t, registeredExperiment(expID))
+	require.NoError(t, submission.Dispatch(ctx, jobID, api.m.dispatchExperiment))
+	requireSubmissionState(ctx, t, api, jobID, apiv1.SubmissionState_SUBMISSION_STATE_CANCELED)
+
+	// Started by its handler after a cancel that came between the commit and the start.
+	key := uuid.NewString()
+	done := cancelAfterCommit(ctx, api, key)
+	resp, err := api.CreateExperiment(ctx, experimentRequest(t, key))
+	require.NoError(t, done())
+	require.NoError(t, err)
+	created := model.JobID(resp.Submission.JobId)
+	require.NotNil(t, cancelRequestedAt(ctx, t, created))
+	requireSubmissionState(ctx, t, api, created, apiv1.SubmissionState_SUBMISSION_STATE_CANCELED)
+}
+
+// exitedSignalService is an allocation service that answers a signal to one allocation as if the
+// allocation had exited just before it, and passes everything else through.
+type exitedSignalService struct {
+	task.AllocationService
+	exited model.AllocationID
+
+	mu       sync.Mutex
+	signaled []model.AllocationID
+}
+
+func (s *exitedSignalService) Signal(
+	id model.AllocationID, sig task.AllocationSignal, reason string,
+) error {
+	s.mu.Lock()
+	s.signaled = append(s.signaled, id)
+	s.mu.Unlock()
+	if id == s.exited {
+		return apiPkg.NotFoundErrs("allocation", id.String(), true)
+	}
+	return s.AllocationService.Signal(id, sig, reason)
+}
+
+func TestGenericCancelSignalsEveryMember(t *testing.T) {
+	api, _, ctx := setupSubmissionTest(t, releasingRM(subscribe))
+	root, err := api.CreateGenericTask(ctx, genericTaskRequest(uuid.NewString()))
+	require.NoError(t, err)
+	childReq := genericTaskRequest(uuid.NewString())
+	childReq.ParentId = &root.TaskId
+	child, err := api.CreateGenericTask(ctx, childReq)
+	require.NoError(t, err)
+	rootAttempt := model.AllocationID(root.TaskId + ".1")
+	childAttempt := model.AllocationID(child.TaskId + ".1")
+	require.True(t, task.IsRegistered(rootAttempt))
+	require.True(t, task.IsRegistered(childAttempt))
+
+	// The root's allocation leaves the service between the cancel's snapshot of what is
+	// registered and its signal.
+	oldService := task.DefaultService
+	t.Cleanup(func() { task.DefaultService = oldService })
+	service := &exitedSignalService{AllocationService: oldService, exited: rootAttempt}
+	task.DefaultService = service
+
+	_, err = api.KillGenericTask(ctx, &apiv1.KillGenericTaskRequest{TaskId: root.TaskId})
+	require.NoError(t, err, "the cancel committed, and an allocation that exited read it as it exited")
+	require.Contains(t, service.signaled, rootAttempt)
+	require.Contains(t, service.signaled, childAttempt)
+	childJob := model.JobID(child.Submission.JobId)
+	requireSubmissionState(ctx, t, api, childJob, apiv1.SubmissionState_SUBMISSION_STATE_CANCELED)
+
+	// The root, which this test kept running, still reads the cancel when it exits.
+	task.DefaultService = oldService
+	require.NoError(t, task.DefaultService.Signal(rootAttempt, task.KillAllocation, "test cleanup"))
+	requireSubmissionState(ctx, t, api, model.JobID(root.Submission.JobId),
+		apiv1.SubmissionState_SUBMISSION_STATE_CANCELED)
+}
+
+func TestCancelPausedGenericTaskDropsItsPriorityEntry(t *testing.T) {
+	api, curUser, ctx := setupSubmissionTest(t, releasingRM(subscribe))
+	registered := func(jobID model.JobID) bool {
+		_, ok := tasklist.GroupPriorityChangeRegistry.Load(jobID)
+		return ok
+	}
+
+	resp, err := api.CreateGenericTask(ctx, genericTaskRequest(uuid.NewString()))
+	require.NoError(t, err)
+	jobID := model.JobID(resp.Submission.JobId)
+	_, err = api.PauseGenericTask(ctx, &apiv1.PauseGenericTaskRequest{TaskId: resp.TaskId})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		taskModel, err := db.TaskByID(ctx, model.TaskID(resp.TaskId))
+		require.NoError(t, err)
+		return *taskModel.State == model.TaskStatePaused
+	}, 10*time.Second, 10*time.Millisecond)
+	require.True(t, registered(jobID), "a paused task keeps its entry for the unpause")
+
+	// Nothing runs for the paused task, so the cancel ends it, and no exit will drop its entry.
+	canceled, err := api.CancelSubmission(ctx, &apiv1.CancelSubmissionRequest{JobId: jobID.String()})
+	require.NoError(t, err)
+	require.Equal(t, apiv1.SubmissionState_SUBMISSION_STATE_CANCELED, canceled.Submission.State)
+	require.False(t, registered(jobID))
+
+	// Likewise for a task whose unpause claimed it but has not started its next allocation.
+	resumingTask, resumingJob, resumingAllocation := addLiveGenericTask(ctx, t, curUser, nil,
+		model.TaskStateActive, model.AllocationStateRunning, false)
+	pauseGenericTask(ctx, t, resumingTask, resumingAllocation)
+	members, err := api.GetTaskChildren(ctx, resumingTask, nil)
+	require.NoError(t, err)
+	plan, err := makeGenericTaskResumePlan(ctx, resumingTask, members)
+	require.NoError(t, err)
+	claimed, err := claimPausedGenericTask(ctx, resumingTask, plan[0].OldAllocationID)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, tasklist.GroupPriorityChangeRegistry.Add(resumingJob, nil))
+	canceled, err = api.CancelSubmission(ctx, &apiv1.CancelSubmissionRequest{JobId: resumingJob.String()})
+	require.NoError(t, err)
+	require.Equal(t, apiv1.SubmissionState_SUBMISSION_STATE_CANCELED, canceled.Submission.State)
+	require.False(t, registered(resumingJob))
 }

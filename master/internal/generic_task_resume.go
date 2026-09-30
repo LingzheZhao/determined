@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	log "github.com/sirupsen/logrus"
 	"github.com/uptrace/bun"
 	"golang.org/x/exp/slices"
 
@@ -352,10 +351,7 @@ func (a *apiServer) startGenericTaskResumeAllocation(
 	if err != nil {
 		return err
 	}
-	if err := task.KillIfCancelRequested(ctx, *t.JobID, member.NewAllocationID); err != nil {
-		log.WithField("task-id", t.TaskID).WithError(err).
-			Error("checking whether a resumed generic task was asked to stop")
-	}
+	task.KillIfCancelRequested(ctx, *t.JobID, member.NewAllocationID)
 	return nil
 }
 

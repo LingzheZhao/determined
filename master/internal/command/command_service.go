@@ -174,15 +174,15 @@ func (cs *CommandService) StartCommand(cmd *Command) error {
 }
 
 // Current returns the registered command of cmd's task, which a dispatch may have started from
-// command_state rather than from cmd, or cmd if none is registered.
-func (cs *CommandService) Current(cmd *Command) *Command {
+// command_state rather than from cmd, and true; or cmd and false if none is registered.
+func (cs *CommandService) Current(cmd *Command) (*Command, bool) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
 	if registered, ok := cs.commands[cmd.taskID]; ok {
-		return registered
+		return registered, true
 	}
-	return cmd
+	return cmd, false
 }
 
 // persistNewCommand commits a new command with its job row.

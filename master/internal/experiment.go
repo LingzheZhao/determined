@@ -27,6 +27,7 @@ import (
 	"github.com/determined-ai/determined/master/internal/rm/rmerrors"
 	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/sproto"
+	"github.com/determined-ai/determined/master/internal/task"
 	"github.com/determined-ai/determined/master/internal/telemetry"
 	"github.com/determined-ai/determined/master/internal/user"
 	"github.com/determined-ai/determined/master/internal/webhooks"
@@ -274,21 +275,14 @@ func (e *internalExperiment) Start() error {
 // cancel finds the experiment or this finds the request.
 func killExperimentIfCancelRequested(e experiment.Experiment, experimentID int, jobID model.JobID) {
 	syslog := log.WithField("experiment-id", experimentID)
-	requested, err := internaldb.JobCancelRequested(context.TODO(), jobID)
-	if err != nil {
-		syslog.WithError(err).Error("checking whether a started experiment was asked to stop")
-		return
-	}
-	if !requested {
-		return
-	}
-	// Killing the trials waits for their restored allocations to be reattached, which must not
-	// hold up the start.
-	go func() {
+	task.WhenCancelRequested(context.Background(), jobID, func() bool {
+		_, ok := experiment.ExperimentRegistry.Load(experimentID)
+		return ok
+	}, func() {
 		if err := e.KillExperiment(); err != nil {
 			syslog.WithError(err).Error("killing an experiment that was asked to stop")
 		}
-	}()
+	}, syslog)
 }
 
 func (e *internalExperiment) register() error {

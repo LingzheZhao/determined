@@ -2,8 +2,14 @@ package submission
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -147,31 +153,69 @@ func Get(ctx context.Context, jobID model.JobID) (*Record, error) {
 }
 
 // pageToken is the position after which a page of List starts: the last job the previous page
-// examined, whether or not it returned that job.
+// examined, whether or not it returned that job. That job may be one the caller cannot read, so
+// the token is sealed: it names no job to the caller and cannot be forged.
 type pageToken struct {
 	SubmittedAt *time.Time  `json:"t,omitempty"`
 	JobID       model.JobID `json:"j"`
 }
 
-func (p pageToken) encode() string {
+// pageTokenLabel separates the page token key from other keys derived from the same secret.
+const pageTokenLabel = "determined submission page token"
+
+// pageTokenCipher returns the cipher that seals page tokens, keyed from the master's auth token
+// key, so that sealing needs no secret of its own.
+func pageTokenCipher() (cipher.AEAD, error) {
+	keys := db.GetTokenKeys()
+	if keys == nil || len(keys.PrivateKey) == 0 {
+		return nil, errors.New("the master has no token key to seal page tokens with")
+	}
+	mac := hmac.New(sha256.New, keys.PrivateKey)
+	mac.Write([]byte(pageTokenLabel))
+	block, err := aes.NewCipher(mac.Sum(nil))
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
+func (p pageToken) encode() (string, error) {
 	b, err := json.Marshal(p)
 	if err != nil {
-		panic(fmt.Sprintf("encoding a page token: %s", err))
+		return "", fmt.Errorf("encoding a page token: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(b)
+	aead, err := pageTokenCipher()
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return "", fmt.Errorf("sealing a page token: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(aead.Seal(nonce, nonce, b, nil)), nil
 }
 
 func decodePageToken(token string) (*pageToken, error) {
 	if token == "" {
 		return nil, nil
 	}
-	b, err := base64.RawURLEncoding.DecodeString(token)
+	aead, err := pageTokenCipher()
+	if err != nil {
+		return nil, err
+	}
+	invalid := status.Error(codes.InvalidArgument, "invalid page_token")
+	sealed, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || len(sealed) < aead.NonceSize() {
+		return nil, invalid
+	}
+	nonce, sealed := sealed[:aead.NonceSize()], sealed[aead.NonceSize():]
+	b, err := aead.Open(nil, nonce, sealed, nil)
 	var p pageToken
 	if err == nil {
 		err = json.Unmarshal(b, &p)
 	}
 	if err != nil || p.JobID == "" {
-		return nil, status.Error(codes.InvalidArgument, "invalid page_token")
+		return nil, invalid
 	}
 	return &p, nil
 }
@@ -224,14 +268,16 @@ func List(
 			}
 			page = append(page, r)
 			if len(page) == limit {
-				return page, after.encode(), nil
+				next, err := after.encode()
+				return page, next, err
 			}
 		}
 		if len(records) < args.Limit {
 			return page, "", nil
 		}
 	}
-	return page, after.encode(), nil
+	next, err := after.encode()
+	return page, next, err
 }
 
 var jobTypes = map[apiv1.SubmissionKind]model.JobType{

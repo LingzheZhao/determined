@@ -3,6 +3,7 @@ syntax = "proto3";
 package determined.api.v1;
 option go_package = "github.com/determined-ai/determined/proto/pkg/apiv1";
 
+import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "protoc-gen-swagger/options/annotations.proto";
 import "determined/task/v1/task.proto";
@@ -60,6 +61,12 @@ message SubmitResult {
   string request_digest = 3;
   // The admission outcome of the job.
   AdmissionOutcome outcome = 4;
+  // Kept for the scheduling evaluation of a dry run, which is not evaluated
+  // yet.
+  reserved 5;
+  // The resolved config of the job, set only on a dry run, with secrets
+  // stripped.
+  google.protobuf.Struct effective_config = 6;
 }
 
 // The kind of job a submission created.

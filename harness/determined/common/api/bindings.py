@@ -15628,6 +15628,7 @@ class v1SubmitResult(Printable):
     """The result of submitting a managed command, shell, generic task, or
     experiment.
     """
+    effectiveConfig: "typing.Optional[typing.Dict[str, typing.Any]]" = None
     jobId: "typing.Optional[str]" = None
     outcome: "typing.Optional[v1AdmissionOutcome]" = None
     replayed: "typing.Optional[bool]" = None
@@ -15636,11 +15637,14 @@ class v1SubmitResult(Printable):
     def __init__(
         self,
         *,
+        effectiveConfig: "typing.Union[typing.Dict[str, typing.Any], None, Unset]" = _unset,
         jobId: "typing.Union[str, None, Unset]" = _unset,
         outcome: "typing.Union[v1AdmissionOutcome, None, Unset]" = _unset,
         replayed: "typing.Union[bool, None, Unset]" = _unset,
         requestDigest: "typing.Union[str, None, Unset]" = _unset,
     ):
+        if not isinstance(effectiveConfig, Unset):
+            self.effectiveConfig = effectiveConfig
         if not isinstance(jobId, Unset):
             self.jobId = jobId
         if not isinstance(outcome, Unset):
@@ -15654,6 +15658,8 @@ class v1SubmitResult(Printable):
     def from_json(cls, obj: Json) -> "v1SubmitResult":
         kwargs: "typing.Dict[str, typing.Any]" = {
         }
+        if "effectiveConfig" in obj:
+            kwargs["effectiveConfig"] = obj["effectiveConfig"]
         if "jobId" in obj:
             kwargs["jobId"] = obj["jobId"]
         if "outcome" in obj:
@@ -15667,6 +15673,8 @@ class v1SubmitResult(Printable):
     def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
         out: "typing.Dict[str, typing.Any]" = {
         }
+        if not omit_unset or "effectiveConfig" in vars(self):
+            out["effectiveConfig"] = self.effectiveConfig
         if not omit_unset or "jobId" in vars(self):
             out["jobId"] = self.jobId
         if not omit_unset or "outcome" in vars(self):

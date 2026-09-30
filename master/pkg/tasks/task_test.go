@@ -72,12 +72,11 @@ func TestTCDStartupHook(t *testing.T) {
 	require.Contains(t, string(hook.Content), "echo hi")
 }
 
-func TestJobAndClusterIDEnvVars(t *testing.T) {
+func TestJobIDEnvVar(t *testing.T) {
 	require.NoError(t, etc.SetRootPath("../../static/srv"))
 
 	//nolint:exhaustruct
 	spec := TaskSpec{
-		ClusterID:      "cluster-1",
 		JobID:          "job-1",
 		AgentUserGroup: &model.AgentUserGroup{},
 		ExtraEnvVars:   map[string]string{},
@@ -94,17 +93,11 @@ func TestJobAndClusterIDEnvVars(t *testing.T) {
 		ResourcesConfig: expconf.ResourcesConfigV0{RawDevices: expconf.DevicesConfigV0{}},
 	}
 	require.Equal(t, "job-1", spec.EnvVars()["DET_JOB_ID"])
-	// Only the agent resource manager's docker spec adds the cluster ID; the other resource
-	// managers set it themselves.
-	require.NotContains(t, spec.EnvVars(), "DET_CLUSTER_ID")
-	require.Contains(t, spec.ToDockerSpec().RunSpec.ContainerConfig.Env, "DET_CLUSTER_ID=cluster-1")
 	require.Contains(t, spec.ToDockerSpec().RunSpec.ContainerConfig.Env, "DET_JOB_ID=job-1")
 
 	spec.JobID = ""
-	spec.ClusterID = ""
 	require.NotContains(t, spec.EnvVars(), "DET_JOB_ID")
 	for _, env := range spec.ToDockerSpec().RunSpec.ContainerConfig.Env {
-		require.False(t, strings.HasPrefix(env, "DET_CLUSTER_ID="), env)
 		require.False(t, strings.HasPrefix(env, "DET_JOB_ID="), env)
 	}
 }

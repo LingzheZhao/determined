@@ -5,13 +5,17 @@ package internal
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -22,15 +26,19 @@ import (
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/job/jobservice"
 	"github.com/determined-ai/determined/master/internal/mocks"
+	"github.com/determined-ai/determined/master/internal/rbac"
 	"github.com/determined-ai/determined/master/internal/rm"
 	"github.com/determined-ai/determined/master/internal/rm/rmevents"
 	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/sproto"
+	"github.com/determined-ai/determined/master/internal/submission"
+	"github.com/determined-ai/determined/master/internal/task"
 	"github.com/determined-ai/determined/master/internal/workspace"
 	"github.com/determined-ai/determined/master/pkg/model"
 	"github.com/determined-ai/determined/master/pkg/ptrs"
 	"github.com/determined-ai/determined/master/pkg/schemas/expconf"
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
+	"github.com/determined-ai/determined/proto/pkg/rbacv1"
 	"github.com/determined-ai/determined/proto/pkg/utilv1"
 	"github.com/determined-ai/determined/proto/pkg/workspacev1"
 )
@@ -211,7 +219,7 @@ func TestLaunchCommandReplay(t *testing.T) {
 	require.True(t, second.Submission.Replayed)
 	require.Equal(t, first.Submission.JobId, second.Submission.JobId)
 	require.Equal(t, first.Submission.RequestDigest, second.Submission.RequestDigest)
-	require.Nil(t, second.Command, "a replay sets only the submission")
+	require.Zero(t, second.Command.Id, "a replay carries its data only in the submission")
 	requireSameRows(ctx, t, curUser.ID, rows)
 
 	// The same key with different content conflicts and names the job; nothing is written.
@@ -644,7 +652,7 @@ func TestCreateExperimentSubmit(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, second.Submission.Replayed)
 	require.Equal(t, first.Submission.JobId, second.Submission.JobId)
-	require.Nil(t, second.Experiment)
+	require.Zero(t, second.Experiment.Id)
 	requireSameRows(ctx, t, curUser.ID, rows)
 
 	paused, err := api.CreateExperiment(ctx, req(false))
@@ -746,6 +754,17 @@ resources:
 	require.ErrorContains(t, err, "host_path")
 	requireSameRows(ctx, t, curUser.ID, rows)
 
+	// A submit fails the same check, creates nothing, and leaves its key free.
+	key := uuid.NewString()
+	submit := func(projectID int) *apiv1.CreateExperimentRequest {
+		r := req(projectID)
+		r.Submit = &apiv1.SubmitOptions{IdempotencyKey: key}
+		return r
+	}
+	_, err = api.CreateExperiment(ctx, submit(1))
+	require.ErrorContains(t, err, "host_path")
+	requireSameRows(ctx, t, curUser.ID, rows)
+
 	// With a workspace default, the host path is inherited.
 	workspaceID, projectID := createProjectAndWorkspace(ctx, t, api)
 	_, err = api.PatchWorkspace(ctx, &apiv1.PatchWorkspaceRequest{
@@ -768,6 +787,19 @@ resources:
 	require.Equal(t, "/mnt/checkpoints", storage["host_path"])
 	require.Equal(t, "runs/checkpoints", storage["storage_path"])
 	requireSameRows(ctx, t, curUser.ID, rows)
+
+	// The committed experiment stores the inherited host path under the same key.
+	created, err := api.CreateExperiment(ctx, submit(projectID))
+	require.NoError(t, err)
+	require.False(t, created.Submission.Replayed)
+	stored, err := api.m.db.ActiveExperimentConfig(int(created.Experiment.Id))
+	require.NoError(t, err)
+	fs := stored.CheckpointStorage().RawSharedFSConfig
+	require.NotNil(t, fs)
+	require.Equal(t, "/mnt/checkpoints", fs.HostPath())
+	require.Equal(t, "runs/checkpoints", *fs.StoragePath())
+	_, err = api.KillExperiment(ctx, &apiv1.KillExperimentRequest{Id: created.Experiment.Id})
+	require.NoError(t, err)
 }
 
 func TestSubmitTemplateBindsItsContent(t *testing.T) {
@@ -863,5 +895,292 @@ func TestGetMasterSubmissionProtocol(t *testing.T) {
 	api, _, ctx := setupSubmissionTest(t, nil)
 	resp, err := api.GetMaster(ctx, &apiv1.GetMasterRequest{})
 	require.NoError(t, err)
-	require.Equal(t, int32(0), resp.SubmissionProtocol)
+	require.Equal(t, int32(1), resp.SubmissionProtocol)
+}
+
+func TestSubmitConcurrentSameKeyGenericTask(t *testing.T) {
+	api, curUser, ctx := setupSubmissionTest(t, nil)
+	rows := countSubmissionRows(ctx, t, curUser.ID)
+	key := uuid.NewString()
+
+	const submitters = 8
+	responses := make([]*apiv1.CreateGenericTaskResponse, submitters)
+	errs := make([]error, submitters)
+	var wg sync.WaitGroup
+	for i := 0; i < submitters; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			responses[i], errs[i] = api.CreateGenericTask(ctx, genericTaskRequest(key))
+		}(i)
+	}
+	wg.Wait()
+
+	created := 0
+	for i := 0; i < submitters; i++ {
+		require.NoError(t, errs[i])
+		require.Equal(t, responses[0].Submission.JobId, responses[i].Submission.JobId)
+		if !responses[i].Submission.Replayed {
+			created++
+		}
+	}
+	require.Equal(t, 1, created, "exactly one submit creates the job")
+
+	// Only the winner wrote rows, minted a session, and registered its job.
+	after := countSubmissionRows(ctx, t, curUser.ID)
+	after.registry = rows.registry
+	require.Equal(t, submissionRows{
+		Jobs:          rows.Jobs + 1,
+		Tasks:         rows.Tasks + 1,
+		Allocations:   rows.Allocations + 1,
+		CommandStates: rows.CommandStates + 1,
+		Sessions:      rows.Sessions + 1,
+		registry:      rows.registry,
+	}, after)
+	require.Equal(t, []model.JobID{model.JobID(responses[0].Submission.JobId)}, rows.registeredSince())
+}
+
+// nolint: exhaustruct
+func TestSubmitDryRunEffectiveConfig(t *testing.T) {
+	api, curUser, ctx := setupSubmissionTest(t, nil)
+	old := api.m.config.CheckpointStorage
+	t.Cleanup(func() { api.m.config.CheckpointStorage = old })
+	api.m.config.CheckpointStorage = expconf.CheckpointStorageConfig{
+		RawS3Config: &expconf.S3Config{
+			RawBucket:    ptrs.Ptr("masterbucket"),
+			RawAccessKey: ptrs.Ptr("masteraccess"),
+			RawSecretKey: ptrs.Ptr("mastersecret"),
+		},
+	}
+	rows := countSubmissionRows(ctx, t, curUser.ID)
+
+	// An experiment's checkpoint storage comes from the master, whose secrets a dry run hides.
+	exp, err := api.CreateExperiment(ctx, &apiv1.CreateExperimentRequest{
+		ModelDefinition: []*utilv1.File{{Content: []byte{1}}},
+		Config: `
+entrypoint: test
+searcher:
+  metric: loss
+  name: single
+resources:
+  resource_pool: kubernetes`,
+		ProjectId: 1,
+		Submit:    &apiv1.SubmitOptions{DryRun: true},
+	})
+	require.NoError(t, err)
+	for _, config := range []*structpb.Struct{exp.Submission.EffectiveConfig, exp.Config} {
+		storage := config.AsMap()["checkpoint_storage"].(map[string]any)
+		require.Equal(t, "masterbucket", storage["bucket"])
+		require.Equal(t, "********", storage["access_key"])
+		require.Equal(t, "********", storage["secret_key"])
+	}
+	require.Equal(t, "mastersecret", *api.m.config.CheckpointStorage.RawS3Config.RawSecretKey)
+
+	// Commands, shells, and generic tasks report their config too.
+	cmd, err := api.LaunchCommand(ctx, &apiv1.LaunchCommandRequest{
+		Config: commandConfig(t, "true"),
+		Submit: &apiv1.SubmitOptions{DryRun: true},
+	})
+	require.NoError(t, err)
+	require.Equal(t, cmd.Config.AsMap(), cmd.Submission.EffectiveConfig.AsMap())
+	shell, err := api.LaunchShell(ctx, &apiv1.LaunchShellRequest{
+		Config: commandConfig(t, "true"),
+		Submit: &apiv1.SubmitOptions{DryRun: true},
+	})
+	require.NoError(t, err)
+	require.Equal(t, shell.Config.AsMap(), shell.Submission.EffectiveConfig.AsMap())
+	req := genericTaskRequest("")
+	req.Submit.DryRun = true
+	generic, err := api.CreateGenericTask(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, []any{"sh", "-c", "true"},
+		generic.Submission.EffectiveConfig.AsMap()["entrypoint"])
+	requireSameRows(ctx, t, curUser.ID, rows)
+
+	// A submit that is not a dry run carries none.
+	launched, err := api.LaunchCommand(ctx, &apiv1.LaunchCommandRequest{
+		Config: commandConfig(t, "true"),
+		Submit: &apiv1.SubmitOptions{IdempotencyKey: uuid.NewString()},
+	})
+	require.NoError(t, err)
+	require.Nil(t, launched.Submission.EffectiveConfig)
+}
+
+func TestSubmitReplayResponsesKeepRequiredFields(t *testing.T) {
+	api, _, ctx := setupSubmissionTest(t, releasingRM(subscribe))
+	// As the gateway marshals responses.
+	marshaler := &runtime.JSONPb{EmitDefaults: true}
+	requireReplayed := func(resp any, field string) {
+		b, err := marshaler.Marshal(resp)
+		require.NoError(t, err)
+		var obj map[string]any
+		require.NoError(t, json.Unmarshal(b, &obj))
+		require.NotNil(t, obj[field], "a replay leaves %s empty, not null", field)
+		require.Equal(t, true, obj["submission"].(map[string]any)["replayed"])
+	}
+
+	cmdReq := &apiv1.LaunchCommandRequest{
+		Config: commandConfig(t, "true"),
+		Submit: &apiv1.SubmitOptions{IdempotencyKey: uuid.NewString()},
+	}
+	shellReq := &apiv1.LaunchShellRequest{
+		Config: commandConfig(t, "true"),
+		Submit: &apiv1.SubmitOptions{IdempotencyKey: uuid.NewString()},
+	}
+	genericReq := genericTaskRequest(uuid.NewString())
+	expReq := experimentRequest(t, uuid.NewString())
+	for i := 0; i < 2; i++ {
+		cmd, err := api.LaunchCommand(ctx, cmdReq)
+		require.NoError(t, err)
+		shell, err := api.LaunchShell(ctx, shellReq)
+		require.NoError(t, err)
+		generic, err := api.CreateGenericTask(ctx, genericReq)
+		require.NoError(t, err)
+		exp, err := api.CreateExperiment(ctx, expReq)
+		require.NoError(t, err)
+		if i == 0 {
+			continue
+		}
+		requireReplayed(cmd, "command")
+		requireReplayed(shell, "shell")
+		requireReplayed(generic, "taskId")
+		requireReplayed(exp, "experiment")
+		_, err = api.KillExperiment(ctx, &apiv1.KillExperimentRequest{
+			Id: int32(jobExperimentID(ctx, t, exp.Submission.JobId)),
+		})
+		require.NoError(t, err)
+	}
+}
+
+// jobExperimentID returns the ID of the experiment of a job.
+func jobExperimentID(ctx context.Context, t *testing.T, jobID string) int {
+	var id int
+	require.NoError(t, db.Bun().NewSelect().Table("experiments").Column("id").
+		Where("job_id = ?", jobID).Scan(ctx, &id))
+	return id
+}
+
+func TestListSubmissionsPageTokenNamesNoJob(t *testing.T) {
+	api, _, ctx := setupSubmissionTest(t, nil)
+	owner, _ := addUser(t, api, false)
+	_, readerCtx := addUser(t, api, false)
+
+	// More deleted experiments than a page examines, which only their owner and admins may read.
+	var jobIDs []string
+	require.NoError(t, db.Bun().NewRaw(`INSERT INTO jobs (job_id, job_type, owner_id)
+		SELECT gen_random_uuid()::text, ?, ? FROM generate_series(1, 1001) RETURNING job_id`,
+		model.JobTypeExperiment, owner.ID).Scan(ctx, &jobIDs))
+	require.Len(t, jobIDs, 1001)
+	t.Cleanup(func() {
+		_, err := db.Bun().NewDelete().Table("jobs").Where("job_id IN (?)", bun.In(jobIDs)).
+			Exec(context.Background())
+		require.NoError(t, err)
+	})
+
+	resp, err := api.ListSubmissions(readerCtx, &apiv1.ListSubmissionsRequest{
+		OwnerId: ptrs.Ptr(int32(owner.ID)), Limit: 1,
+	})
+	require.NoError(t, err)
+	require.Empty(t, resp.Submissions)
+	require.NotEmpty(t, resp.NextPageToken, "the page examined its bound of jobs")
+	sealed, err := base64.RawURLEncoding.DecodeString(resp.NextPageToken)
+	require.NoError(t, err)
+	for _, jobID := range jobIDs {
+		require.NotContains(t, resp.NextPageToken, jobID)
+		require.NotContains(t, string(sealed), jobID)
+	}
+
+	// The token still pages on, to the one job left.
+	resp, err = api.ListSubmissions(readerCtx, &apiv1.ListSubmissionsRequest{
+		OwnerId: ptrs.Ptr(int32(owner.ID)), Limit: 1, PageToken: resp.NextPageToken,
+	})
+	require.NoError(t, err)
+	require.Empty(t, resp.Submissions)
+	require.Empty(t, resp.NextPageToken)
+}
+
+// nolint: exhaustruct
+func TestSubmissionAdminUnderRBAC(t *testing.T) {
+	api, _, ctx := setupSubmissionTest(t, releasingRM(subscribe))
+
+	// Set up under basic authorization: an owner's command in the default workspace, and its
+	// deleted experiment.
+	owner, ownerCtx := addUser(t, api, false)
+	cmd, err := api.LaunchCommand(ownerCtx, &apiv1.LaunchCommandRequest{
+		Config: commandConfig(t, "true"),
+		Submit: &apiv1.SubmitOptions{IdempotencyKey: uuid.NewString()},
+	})
+	require.NoError(t, err)
+	cmdJob := model.JobID(cmd.Submission.JobId)
+	t.Cleanup(func() {
+		_ = task.DefaultService.Signal(
+			model.AllocationID(cmd.Command.Id+".1"), task.KillAllocation, "test cleanup")
+	})
+	expReq := experimentRequest(t, uuid.NewString())
+	expReq.Activate = false
+	exp, err := api.CreateExperiment(ownerCtx, expReq)
+	require.NoError(t, err)
+	deletedJob := model.JobID(exp.Submission.JobId)
+	require.NoError(t, api.m.db.DeleteExperiments(ctx, []int{int(exp.Experiment.Id)}))
+
+	// A user with the admin flag who is only a viewer of the workspace, a cluster admin without
+	// the flag, and a viewer.
+	flagged, flaggedCtx := addUser(t, api, true)
+	clusterAdmin, clusterAdminCtx := addUser(t, api, false)
+	viewer, viewerCtx := addUser(t, api, false)
+	assign := func(user model.User, roleID int32, workspaceID *int32) {
+		require.NoError(t, rbac.AddRoleAssignments(ctx, nil, []*rbacv1.UserRoleAssignment{{
+			UserId: int32(user.ID),
+			RoleAssignment: &rbacv1.RoleAssignment{
+				Role:             &rbacv1.Role{RoleId: roleID},
+				ScopeWorkspaceId: workspaceID,
+			},
+		}}))
+	}
+	const clusterAdminRole, viewerRole = 1, 4
+	defaultWorkspace := ptrs.Ptr(int32(model.DefaultWorkspaceID))
+	assign(flagged, viewerRole, defaultWorkspace)
+	assign(clusterAdmin, clusterAdminRole, nil)
+	assign(viewer, viewerRole, defaultWorkspace)
+
+	config.GetMasterConfig().Security.AuthZ = config.AuthZConfig{Type: "rbac"}
+	t.Cleanup(func() { config.GetMasterConfig().Security.AuthZ = config.AuthZConfig{Type: "basic"} })
+
+	listed := func(ctx context.Context, jobID model.JobID) bool {
+		resp, err := api.ListSubmissions(ctx, &apiv1.ListSubmissionsRequest{
+			OwnerId: ptrs.Ptr(int32(owner.ID)), Limit: submission.MaxListLimit,
+		})
+		require.NoError(t, err)
+		for _, s := range resp.Submissions {
+			if s.JobId == jobID.String() {
+				return true
+			}
+		}
+		return false
+	}
+
+	// The admin flag counts for nothing: the deleted experiment is not found or listed, and the
+	// command's key and digest are hidden.
+	for _, readerCtx := range []context.Context{flaggedCtx, viewerCtx} {
+		_, err := api.GetSubmission(readerCtx, &apiv1.GetSubmissionRequest{JobId: deletedJob.String()})
+		require.Equal(t, codes.NotFound, status.Code(err))
+		require.False(t, listed(readerCtx, deletedJob))
+		s := getSubmission(readerCtx, t, api, cmdJob)
+		require.Nil(t, s.IdempotencyKey)
+		require.Nil(t, s.RequestDigest)
+		require.True(t, listed(readerCtx, cmdJob))
+	}
+
+	// A cluster admin reads both, with their key and digest.
+	s := getSubmission(clusterAdminCtx, t, api, deletedJob)
+	require.Equal(t, apiv1.SubmissionState_SUBMISSION_STATE_DELETED, s.State)
+	require.NotNil(t, s.IdempotencyKey)
+	require.True(t, listed(clusterAdminCtx, deletedJob))
+	s = getSubmission(clusterAdminCtx, t, api, cmdJob)
+	require.NotNil(t, s.IdempotencyKey)
+	require.NotNil(t, s.RequestDigest)
+
+	// The owner still reads their deleted experiment.
+	require.Equal(t, apiv1.SubmissionState_SUBMISSION_STATE_DELETED,
+		getSubmission(ownerCtx, t, api, deletedJob).State)
 }

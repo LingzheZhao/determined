@@ -392,16 +392,20 @@ func (a *apiServer) LaunchCommand(
 			return authorizeTaskReplay(ctx, *user, job)
 		},
 		Replayed: func(result *apiv1.SubmitResult) *apiv1.LaunchCommandResponse {
-			return &apiv1.LaunchCommandResponse{Submission: result}
+			return &apiv1.LaunchCommandResponse{Command: &commandv1.Command{}, Submission: result}
 		},
 		Prepare: func(ctx context.Context) error {
 			launchReq, launchWarnings, err = a.prepareLaunchCommand(ctx, req, user, session, s.Template())
 			return err
 		},
 		DryRun: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.LaunchCommandResponse, error) {
+			config := protoutils.ToStruct(launchReq.Spec.Config)
+			if result != nil {
+				result.EffectiveConfig = config
+			}
 			return &apiv1.LaunchCommandResponse{
 				Command:    &commandv1.Command{},
-				Config:     protoutils.ToStruct(launchReq.Spec.Config),
+				Config:     config,
 				Warnings:   pkgCommand.LaunchWarningToProto(launchWarnings),
 				Submission: result,
 			}, nil
@@ -413,8 +417,17 @@ func (a *apiServer) LaunchCommand(
 		},
 		Dispatch: command.DefaultCmdService.Dispatch,
 		Respond: func(ctx context.Context, result *apiv1.SubmitResult) (*apiv1.LaunchCommandResponse, error) {
+			current, registered := command.DefaultCmdService.Current(cmd)
+			v1Cmd := current.ToV1Command()
+			// A job its dispatch did not leave registered, such as one a cancel ended before it
+			// started, reports its state from the database, as the in-memory one never started.
+			if !registered {
+				if record, err := submission.Get(ctx, cmd.Job().JobID); err == nil {
+					v1Cmd.State = ntscStateProto(record)
+				}
+			}
 			return &apiv1.LaunchCommandResponse{
-				Command:    command.DefaultCmdService.Current(cmd).ToV1Command(),
+				Command:    v1Cmd,
 				Config:     protoutils.ToStruct(launchReq.Spec.Config),
 				Warnings:   pkgCommand.LaunchWarningToProto(launchWarnings),
 				Submission: result,

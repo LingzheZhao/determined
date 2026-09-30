@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -1066,4 +1067,74 @@ func allocationSessionByID(aID model.AllocationID) (*model.AllocationSession, er
 	}
 
 	return &res, nil
+}
+
+// failTaskUpdates makes every update of the task's row fail until the test ends.
+func failTaskUpdates(t *testing.T, taskID model.TaskID) {
+	ctx := context.Background()
+	name := "fail_task_update_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	_, err := Bun().ExecContext(ctx, fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger AS $$
+BEGIN RAISE EXCEPTION 'injected task update failure'; END; $$ LANGUAGE plpgsql`, name))
+	require.NoError(t, err)
+	_, err = Bun().ExecContext(ctx, fmt.Sprintf(`CREATE TRIGGER %[1]s BEFORE UPDATE ON tasks
+FOR EACH ROW WHEN (NEW.task_id = '%[2]s') EXECUTE FUNCTION %[1]s()`, name, taskID))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, err := Bun().ExecContext(ctx, fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON tasks", name))
+		require.NoError(t, err)
+		_, err = Bun().ExecContext(ctx, fmt.Sprintf("DROP FUNCTION IF EXISTS %s()", name))
+		require.NoError(t, err)
+	})
+}
+
+// TestEndingATaskWithItsAllocationIsAtomic checks that the task and its allocation end together or
+// not at all, so that a failure between them never leaves a closed allocation under an open task.
+func TestEndingATaskWithItsAllocationIsAtomic(t *testing.T) {
+	ctx := context.Background()
+	pgDB, closeDB := MustResolveTestPostgres(t)
+	t.Cleanup(closeDB) // after the triggers are dropped
+	MustMigrateTestPostgres(t, pgDB, MigrationsFromDB)
+	user := RequireMockUser(t, pgDB)
+
+	addTask := func(state model.AllocationState) (model.TaskID, model.AllocationID) {
+		task := RequireMockTask(t, pgDB, &user.ID)
+		allocationID := model.AllocationID(task.TaskID + ".1")
+		require.NoError(t, AddAllocation(ctx, &model.Allocation{
+			AllocationID: allocationID, TaskID: task.TaskID, ResourcePool: "default",
+			State: &state, Ports: map[string]int{},
+		}))
+		return task.TaskID, allocationID
+	}
+	requireOpen := func(taskID model.TaskID, allocationID model.AllocationID, state model.AllocationState) {
+		allocation, err := AllocationByID(ctx, allocationID)
+		require.NoError(t, err)
+		require.Nil(t, allocation.EndTime)
+		require.Equal(t, state, *allocation.State)
+		require.Nil(t, allocation.ExitClass)
+		require.Nil(t, allocation.ExitReason)
+		task, err := TaskByID(ctx, taskID)
+		require.NoError(t, err)
+		require.Nil(t, task.EndTime)
+	}
+
+	// A failed restore.
+	taskID, allocationID := addTask(model.AllocationStateRunning)
+	failTaskUpdates(t, taskID)
+	require.Error(t, FailTaskAllocation(ctx, taskID, allocationID, nil,
+		"restore failed", errors.New("restore failed")))
+	requireOpen(taskID, allocationID, model.AllocationStateRunning)
+
+	// A queued task that ends instead of being requested again keeps its resources too.
+	taskID, allocationID = addTask(model.AllocationStatePending)
+	resourceID := uuid.NewString()
+	_, err := Bun().NewRaw(`INSERT INTO allocation_resources (resource_id, allocation_id)
+		VALUES (?, ?)`, resourceID, allocationID).Exec(ctx)
+	require.NoError(t, err)
+	failTaskUpdates(t, taskID)
+	require.Error(t, EndQueuedTask(ctx, taskID, allocationID, nil, "stopped while queued"))
+	requireOpen(taskID, allocationID, model.AllocationStatePending)
+	var resources int
+	require.NoError(t, Bun().NewRaw(`SELECT count(*) FROM allocation_resources WHERE resource_id = ?`,
+		resourceID).Scan(ctx, &resources))
+	require.Equal(t, 1, resources)
 }

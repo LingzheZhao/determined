@@ -1,13 +1,17 @@
 package submission
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/pkg/model"
 	"github.com/determined-ai/determined/master/pkg/ptrs"
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
@@ -328,13 +332,25 @@ func TestExperimentSubmissionExitsWithLastEndedAllocation(t *testing.T) {
 	require.Equal(t, int32(2), *s.Tasks[1].TrialId)
 }
 
+// setTokenKeys gives the master a token key for the test.
+func setTokenKeys(t *testing.T) {
+	old := db.GetTokenKeys()
+	t.Cleanup(func() { db.SetTokenKeys(old) })
+	public, private, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	db.SetTokenKeys(&model.AuthTokenKeypair{PublicKey: public, PrivateKey: private})
+}
+
 func TestPageToken(t *testing.T) {
+	setTokenKeys(t)
 	at := time.Date(2026, 10, 1, 12, 0, 0, 123456000, time.UTC)
 	for _, token := range []pageToken{
 		{SubmittedAt: &at, JobID: "job-1"},
 		{JobID: "job-2"},
 	} {
-		got, err := decodePageToken(token.encode())
+		encoded, err := token.encode()
+		require.NoError(t, err)
+		got, err := decodePageToken(encoded)
 		require.NoError(t, err)
 		require.Equal(t, token.JobID, got.JobID)
 		if token.SubmittedAt == nil {
@@ -342,13 +358,33 @@ func TestPageToken(t *testing.T) {
 		} else {
 			require.True(t, token.SubmittedAt.Equal(*got.SubmittedAt))
 		}
+
+		// The token names no job, and a token changed in any byte is refused.
+		sealed, err := base64.RawURLEncoding.DecodeString(encoded)
+		require.NoError(t, err)
+		require.NotContains(t, string(sealed), string(token.JobID))
+		for i := range sealed {
+			changed := slices.Clone(sealed)
+			changed[i] ^= 1
+			_, err := decodePageToken(base64.RawURLEncoding.EncodeToString(changed))
+			require.Equal(t, codes.InvalidArgument, status.Code(err))
+		}
 	}
 
 	got, err := decodePageToken("")
 	require.NoError(t, err)
 	require.Nil(t, got)
-	for _, bad := range []string{"not base64!", "e30"} {
+	// Neither garbage nor a token in the clear, as a client could forge one, is accepted.
+	forged := base64.RawURLEncoding.EncodeToString([]byte(`{"j":"job-1"}`))
+	for _, bad := range []string{"not base64!", "e30", forged} {
 		_, err := decodePageToken(bad)
 		require.Equal(t, codes.InvalidArgument, status.Code(err), bad)
 	}
+
+	// A token sealed under another master's key is refused.
+	encoded, err := pageToken{JobID: "job-1"}.encode()
+	require.NoError(t, err)
+	setTokenKeys(t)
+	_, err = decodePageToken(encoded)
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }

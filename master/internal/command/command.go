@@ -301,9 +301,7 @@ func (c *Command) Start(ctx context.Context) error {
 		}
 	}
 
-	if err := task.KillIfCancelRequested(ctx, c.jobID, c.allocationID); err != nil {
-		c.syslog.WithError(err).Error("checking whether a started command was asked to stop")
-	}
+	task.KillIfCancelRequested(ctx, c.jobID, c.allocationID)
 	return nil
 }
 

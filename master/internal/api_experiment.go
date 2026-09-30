@@ -1630,7 +1630,10 @@ func (a *apiServer) CreateExperiment(
 			return authorizeExperimentReplay(ctx, *user, job)
 		},
 		Replayed: func(result *apiv1.SubmitResult) *apiv1.CreateExperimentResponse {
-			return &apiv1.CreateExperimentResponse{Submission: result}
+			return &apiv1.CreateExperimentResponse{
+				Experiment: &experimentv1.Experiment{},
+				Submission: result,
+			}
 		},
 		Prepare: func(ctx context.Context) error {
 			p, err = a.prepareExperiment(ctx, req, user, session, s.Template())
@@ -1643,9 +1646,10 @@ func (a *apiServer) CreateExperiment(
 					Experiment: &experimentv1.Experiment{},
 				}, nil
 			}
+			result.EffectiveConfig = printableExperimentConfig(p.activeConfig)
 			resp := &apiv1.CreateExperimentResponse{
 				Experiment: &experimentv1.Experiment{},
-				Config:     protoutils.ToStruct(p.activeConfig),
+				Config:     result.EffectiveConfig,
 				Submission: result,
 			}
 			if p.plan != nil {
@@ -1681,6 +1685,15 @@ func (a *apiServer) CreateExperiment(
 			}, nil
 		},
 	})
+}
+
+// printableExperimentConfig returns an experiment config for a dry run without the checkpoint
+// storage secrets that the workspace or master defaults merged into it.
+func printableExperimentConfig(config expconf.ExperimentConfig) *structpb.Struct {
+	if config.RawCheckpointStorage != nil {
+		config.SetCheckpointStorage(config.CheckpointStorage().Printable())
+	}
+	return protoutils.ToStruct(config)
 }
 
 // preparedExperiment is an experiment that CreateExperiment has parsed and checked.

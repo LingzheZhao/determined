@@ -13,9 +13,11 @@
    ``plan_changed``, and creates nothing. The digest covers the config of a named template as it
    is at submit, so a template that changed since the dry run also fails with ``plan_changed``,
    and the create applies the template it digested; master and pool defaults are not part of the
-   digest and apply as they are at the create. ``admission`` defaults to ``QUEUE``; ``IMMEDIATE`` is
-   not supported yet, and experiments reject it. Requests without ``submit`` options behave as
-   before. Unmanaged experiments do not accept ``submit`` options.
+   digest and apply as they are at the create. A dry run's result also carries the
+   ``effective_config``, with checkpoint storage secrets hidden. ``admission`` defaults to
+   ``QUEUE``; ``IMMEDIATE`` is not supported yet, and experiments reject it. Requests without
+   ``submit`` options keep their responses, and a ``validate_only`` create runs the added checks
+   described under Improvements. Unmanaged experiments do not accept ``submit`` options.
 
 -  API: Add ``GetSubmission`` (``GET /api/v1/submissions/{job_id}``), ``ListSubmissions``
    (``GET /api/v1/submissions``), and ``CancelSubmission``
@@ -26,20 +28,21 @@
    ``COMPLETED``, ``FAILED``, ``CANCELED``, or ``DELETED``, the exit class and reason of the
    allocation that ended it, and its tasks with their allocations. ``ListSubmissions`` lists one
    owner's jobs, the caller's by default, newest first, and filters them by kind, state, and submit
-   time; a page may hold fewer jobs than its ``limit`` and still have a ``next_page_token``. Each
-   job needs the read permission of its kind, a deleted experiment is visible only to its owner
-   and admins, and only the owner and admins see a job's ``idempotency_key`` and
-   ``request_digest``. ``CancelSubmission`` records the cancel before it signals the job, so a job
-   that has not started yet stops as it starts, and a job that has ended is returned unchanged.
+   time; a page may hold fewer jobs than its ``limit`` and still have a ``next_page_token``, which
+   is opaque. Each job needs the read permission of its kind, a deleted experiment is visible only
+   to its owner and admins, and only the owner and admins see a job's ``idempotency_key`` and
+   ``request_digest``. With RBAC, the admins are the users who may administer users across the
+   cluster, as ``ClusterAdmin`` allows, and a user's admin flag has no effect.
+   ``CancelSubmission`` records the cancel before it signals the job, so a job that has not
+   started yet stops as it starts, and a job that has ended is returned unchanged.
 
 -  API: Task allocations report their ``resource_pool`` and ``placements``, the node and
    accelerator UUIDs of each container that reported them.
 
 -  API: ``GetMaster`` reports ``submission_protocol``, the version of the submission options that
-   the master implements. It is ``0`` in this release.
+   the master implements. It is ``1`` in this release.
 
--  Tasks: Task containers have ``DET_JOB_ID``, and with the agent resource manager also
-   ``DET_CLUSTER_ID``.
+-  Tasks: Task containers have ``DET_JOB_ID``.
 
 **Improvements**
 
@@ -58,8 +61,10 @@
 
 -  Experiments: An experiment created with ``activate`` is stored ``ACTIVE`` from the start, so a
    master restart right after the create restores it active instead of paused. A dry run or
-   ``validate_only`` create no longer opens a user session, and it now also checks the warm start
-   checkpoint and the agent user group that a create checks.
+   ``validate_only`` create no longer opens a user session, and it now runs every check a create
+   runs before it writes anything: with ``activate``, the permission to activate the experiment,
+   plus the warm start checkpoint, the agent user group, and the resources of the config after
+   config policies are applied.
 
 -  Tasks: ``KillCommand``, ``KillShell``, and ``KillGenericTask`` record the cancel on the job
    before they signal it, as ``CancelSubmission`` does. A task that ends after the cancel was

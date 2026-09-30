@@ -715,7 +715,7 @@ type LaunchCommandResponse struct {
 	// If the requested slots exceeded the current max available.
 	Warnings []LaunchWarning `protobuf:"varint,3,rep,packed,name=warnings,proto3,enum=determined.api.v1.LaunchWarning" json:"warnings,omitempty"`
 	// The result of the submission, set when the request has submit options. A
-	// replay sets only this field.
+	// replay leaves the other fields empty and sets this field.
 	Submission *SubmitResult `protobuf:"bytes,4,opt,name=submission,proto3" json:"submission,omitempty"`
 }
 
