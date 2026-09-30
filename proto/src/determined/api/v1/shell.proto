@@ -7,6 +7,7 @@ import "google/protobuf/struct.proto";
 
 import "determined/api/v1/command.proto";
 import "determined/api/v1/pagination.proto";
+import "determined/api/v1/submission.proto";
 import "determined/shell/v1/shell.proto";
 import "determined/util/v1/util.proto";
 import "protoc-gen-swagger/options/annotations.proto";
@@ -106,6 +107,8 @@ message LaunchShellRequest {
   bytes data = 4;
   // Workspace ID. Defaults to 'Uncategorized' workspace if not specified.
   int32 workspace_id = 5;
+  // Options for submitting the shell.
+  SubmitOptions submit = 6;
 }
 // Response to LaunchShellRequest.
 message LaunchShellResponse {
@@ -119,4 +122,7 @@ message LaunchShellResponse {
 
   // List of any related warnings.
   repeated LaunchWarning warnings = 3;
+  // The result of the submission, set when the request has submit options. A
+  // replay sets only this field.
+  SubmitResult submission = 4;
 }

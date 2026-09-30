@@ -98,6 +98,9 @@ message GetMasterResponse {
   optional ClusterMessage cluster_message = 15;
   // Whether the cluster has a user-submitted custom logo.
   bool has_custom_logo = 16;
+  // The version of the submission protocol that the master implements. Masters
+  // that predate it report 0.
+  int32 submission_protocol = 17;
 }
 
 // Get telemetry information.

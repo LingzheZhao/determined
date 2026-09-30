@@ -10,6 +10,7 @@ import "protoc-gen-swagger/options/annotations.proto";
 
 import "determined/api/v1/command.proto";
 import "determined/api/v1/pagination.proto";
+import "determined/api/v1/submission.proto";
 import "determined/common/v1/common.proto";
 import "determined/checkpoint/v1/checkpoint.proto";
 import "determined/metric/v1/metric.proto";
@@ -591,6 +592,8 @@ message CreateExperimentRequest {
   int32 project_id = 6;
   // Template to use for the experiment.
   optional string template = 7;
+  // Options for submitting the experiment. Unmanaged experiments reject them.
+  SubmitOptions submit = 8;
   // Unmanaged experiments are detached.
   optional bool unmanaged = 40;
 }
@@ -606,6 +609,9 @@ message CreateExperimentResponse {
   google.protobuf.Struct config = 2;
   // List of any related warnings.
   repeated LaunchWarning warnings = 3;
+  // The result of the submission, set when the request has submit options. A
+  // replay sets only this field.
+  SubmitResult submission = 4;
 }
 
 // PutExperimentRequest is CreateExperimentRequest with external_experiment_id

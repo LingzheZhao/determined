@@ -6,6 +6,7 @@ option go_package = "github.com/determined-ai/determined/proto/pkg/apiv1";
 import "google/protobuf/struct.proto";
 
 import "determined/api/v1/pagination.proto";
+import "determined/api/v1/submission.proto";
 import "determined/command/v1/command.proto";
 import "determined/util/v1/util.proto";
 import "protoc-gen-swagger/options/annotations.proto";
@@ -106,6 +107,8 @@ message LaunchCommandRequest {
   bytes data = 4;
   // Workspace ID. Defaults to the 'Uncategorized' workspace if not specified.
   int32 workspace_id = 5;
+  // Options for submitting the command.
+  SubmitOptions submit = 6;
 }
 
 // Enum values for warnings when launching commands.
@@ -127,4 +130,7 @@ message LaunchCommandResponse {
   google.protobuf.Struct config = 2;
   // If the requested slots exceeded the current max available.
   repeated LaunchWarning warnings = 3;
+  // The result of the submission, set when the request has submit options. A
+  // replay sets only this field.
+  SubmitResult submission = 4;
 }

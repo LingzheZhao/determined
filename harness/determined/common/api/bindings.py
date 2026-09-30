@@ -1131,6 +1131,30 @@ class v1Address(Printable):
             out["hostPort"] = self.hostPort
         return out
 
+class v1Admission(DetEnum):
+    """How the master admits a submitted job to the scheduler.
+    - ADMISSION_UNSPECIFIED: The default, which queues the job like ADMISSION_QUEUE.
+    - ADMISSION_QUEUE: Queue the job until the scheduler places it.
+    - ADMISSION_IMMEDIATE: Place the job now or fail it, never queueing it. Experiments reject it.
+    """
+    UNSPECIFIED = "ADMISSION_UNSPECIFIED"
+    QUEUE = "ADMISSION_QUEUE"
+    IMMEDIATE = "ADMISSION_IMMEDIATE"
+
+class v1AdmissionOutcome(DetEnum):
+    """The admission outcome of a submission.
+    - ADMISSION_OUTCOME_UNSPECIFIED: No outcome, as for a dry run.
+    - ADMISSION_OUTCOME_QUEUED: The job was committed and waits in the queue for placement.
+    - ADMISSION_OUTCOME_PLACED: The job was committed and placed.
+    - ADMISSION_OUTCOME_REJECTED: The job was committed and then rejected because it could not be placed.
+    - ADMISSION_OUTCOME_PENDING: The job was committed, but its placement was not decided in time.
+    """
+    UNSPECIFIED = "ADMISSION_OUTCOME_UNSPECIFIED"
+    QUEUED = "ADMISSION_OUTCOME_QUEUED"
+    PLACED = "ADMISSION_OUTCOME_PLACED"
+    REJECTED = "ADMISSION_OUTCOME_REJECTED"
+    PENDING = "ADMISSION_OUTCOME_PENDING"
+
 class v1Agent(Printable):
     """Agent is a pool of resources where containers are run."""
     addresses: "typing.Optional[typing.Sequence[str]]" = None
@@ -2692,6 +2716,7 @@ class v1CreateExperimentRequest(Printable):
     modelDefinition: "typing.Optional[typing.Sequence[v1File]]" = None
     parentId: "typing.Optional[int]" = None
     projectId: "typing.Optional[int]" = None
+    submit: "typing.Optional[v1SubmitOptions]" = None
     template: "typing.Optional[str]" = None
     unmanaged: "typing.Optional[bool]" = None
     validateOnly: "typing.Optional[bool]" = None
@@ -2704,6 +2729,7 @@ class v1CreateExperimentRequest(Printable):
         modelDefinition: "typing.Union[typing.Sequence[v1File], None, Unset]" = _unset,
         parentId: "typing.Union[int, None, Unset]" = _unset,
         projectId: "typing.Union[int, None, Unset]" = _unset,
+        submit: "typing.Union[v1SubmitOptions, None, Unset]" = _unset,
         template: "typing.Union[str, None, Unset]" = _unset,
         unmanaged: "typing.Union[bool, None, Unset]" = _unset,
         validateOnly: "typing.Union[bool, None, Unset]" = _unset,
@@ -2718,6 +2744,8 @@ class v1CreateExperimentRequest(Printable):
             self.parentId = parentId
         if not isinstance(projectId, Unset):
             self.projectId = projectId
+        if not isinstance(submit, Unset):
+            self.submit = submit
         if not isinstance(template, Unset):
             self.template = template
         if not isinstance(unmanaged, Unset):
@@ -2739,6 +2767,8 @@ class v1CreateExperimentRequest(Printable):
             kwargs["parentId"] = obj["parentId"]
         if "projectId" in obj:
             kwargs["projectId"] = obj["projectId"]
+        if "submit" in obj:
+            kwargs["submit"] = v1SubmitOptions.from_json(obj["submit"]) if obj["submit"] is not None else None
         if "template" in obj:
             kwargs["template"] = obj["template"]
         if "unmanaged" in obj:
@@ -2760,6 +2790,8 @@ class v1CreateExperimentRequest(Printable):
             out["parentId"] = self.parentId
         if not omit_unset or "projectId" in vars(self):
             out["projectId"] = self.projectId
+        if not omit_unset or "submit" in vars(self):
+            out["submit"] = None if self.submit is None else self.submit.to_json(omit_unset)
         if not omit_unset or "template" in vars(self):
             out["template"] = self.template
         if not omit_unset or "unmanaged" in vars(self):
@@ -2770,6 +2802,7 @@ class v1CreateExperimentRequest(Printable):
 
 class v1CreateExperimentResponse(Printable):
     """Response to CreateExperimentRequest."""
+    submission: "typing.Optional[v1SubmitResult]" = None
     warnings: "typing.Optional[typing.Sequence[v1LaunchWarning]]" = None
 
     def __init__(
@@ -2777,10 +2810,13 @@ class v1CreateExperimentResponse(Printable):
         *,
         config: "typing.Dict[str, typing.Any]",
         experiment: "v1Experiment",
+        submission: "typing.Union[v1SubmitResult, None, Unset]" = _unset,
         warnings: "typing.Union[typing.Sequence[v1LaunchWarning], None, Unset]" = _unset,
     ):
         self.config = config
         self.experiment = experiment
+        if not isinstance(submission, Unset):
+            self.submission = submission
         if not isinstance(warnings, Unset):
             self.warnings = warnings
 
@@ -2790,6 +2826,8 @@ class v1CreateExperimentResponse(Printable):
             "config": obj["config"],
             "experiment": v1Experiment.from_json(obj["experiment"]),
         }
+        if "submission" in obj:
+            kwargs["submission"] = v1SubmitResult.from_json(obj["submission"]) if obj["submission"] is not None else None
         if "warnings" in obj:
             kwargs["warnings"] = [v1LaunchWarning(x) for x in obj["warnings"]] if obj["warnings"] is not None else None
         return cls(**kwargs)
@@ -2799,6 +2837,8 @@ class v1CreateExperimentResponse(Printable):
             "config": self.config,
             "experiment": self.experiment.to_json(omit_unset),
         }
+        if not omit_unset or "submission" in vars(self):
+            out["submission"] = None if self.submission is None else self.submission.to_json(omit_unset)
         if not omit_unset or "warnings" in vars(self):
             out["warnings"] = None if self.warnings is None else [x.value for x in self.warnings]
         return out
@@ -2810,6 +2850,7 @@ class v1CreateGenericTaskRequest(Printable):
     noPause: "typing.Optional[bool]" = None
     parentId: "typing.Optional[str]" = None
     projectId: "typing.Optional[int]" = None
+    submit: "typing.Optional[v1SubmitOptions]" = None
 
     def __init__(
         self,
@@ -2821,6 +2862,7 @@ class v1CreateGenericTaskRequest(Printable):
         noPause: "typing.Union[bool, None, Unset]" = _unset,
         parentId: "typing.Union[str, None, Unset]" = _unset,
         projectId: "typing.Union[int, None, Unset]" = _unset,
+        submit: "typing.Union[v1SubmitOptions, None, Unset]" = _unset,
     ):
         self.config = config
         self.contextDirectory = contextDirectory
@@ -2834,6 +2876,8 @@ class v1CreateGenericTaskRequest(Printable):
             self.parentId = parentId
         if not isinstance(projectId, Unset):
             self.projectId = projectId
+        if not isinstance(submit, Unset):
+            self.submit = submit
 
     @classmethod
     def from_json(cls, obj: Json) -> "v1CreateGenericTaskRequest":
@@ -2851,6 +2895,8 @@ class v1CreateGenericTaskRequest(Printable):
             kwargs["parentId"] = obj["parentId"]
         if "projectId" in obj:
             kwargs["projectId"] = obj["projectId"]
+        if "submit" in obj:
+            kwargs["submit"] = v1SubmitOptions.from_json(obj["submit"]) if obj["submit"] is not None else None
         return cls(**kwargs)
 
     def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
@@ -2868,19 +2914,25 @@ class v1CreateGenericTaskRequest(Printable):
             out["parentId"] = self.parentId
         if not omit_unset or "projectId" in vars(self):
             out["projectId"] = self.projectId
+        if not omit_unset or "submit" in vars(self):
+            out["submit"] = None if self.submit is None else self.submit.to_json(omit_unset)
         return out
 
 class v1CreateGenericTaskResponse(Printable):
     """Response to CreateExperimentRequest."""
+    submission: "typing.Optional[v1SubmitResult]" = None
     warnings: "typing.Optional[typing.Sequence[v1LaunchWarning]]" = None
 
     def __init__(
         self,
         *,
         taskId: str,
+        submission: "typing.Union[v1SubmitResult, None, Unset]" = _unset,
         warnings: "typing.Union[typing.Sequence[v1LaunchWarning], None, Unset]" = _unset,
     ):
         self.taskId = taskId
+        if not isinstance(submission, Unset):
+            self.submission = submission
         if not isinstance(warnings, Unset):
             self.warnings = warnings
 
@@ -2889,6 +2941,8 @@ class v1CreateGenericTaskResponse(Printable):
         kwargs: "typing.Dict[str, typing.Any]" = {
             "taskId": obj["taskId"],
         }
+        if "submission" in obj:
+            kwargs["submission"] = v1SubmitResult.from_json(obj["submission"]) if obj["submission"] is not None else None
         if "warnings" in obj:
             kwargs["warnings"] = [v1LaunchWarning(x) for x in obj["warnings"]] if obj["warnings"] is not None else None
         return cls(**kwargs)
@@ -2897,6 +2951,8 @@ class v1CreateGenericTaskResponse(Printable):
         out: "typing.Dict[str, typing.Any]" = {
             "taskId": self.taskId,
         }
+        if not omit_unset or "submission" in vars(self):
+            out["submission"] = None if self.submission is None else self.submission.to_json(omit_unset)
         if not omit_unset or "warnings" in vars(self):
             out["warnings"] = None if self.warnings is None else [x.value for x in self.warnings]
         return out
@@ -5439,6 +5495,7 @@ class v1GetMasterResponse(Printable):
     product: "typing.Optional[GetMasterResponseProduct]" = None
     rbacEnabled: "typing.Optional[bool]" = None
     ssoProviders: "typing.Optional[typing.Sequence[v1SSOProvider]]" = None
+    submissionProtocol: "typing.Optional[int]" = None
     telemetryEnabled: "typing.Optional[bool]" = None
     userManagementEnabled: "typing.Optional[bool]" = None
 
@@ -5459,6 +5516,7 @@ class v1GetMasterResponse(Printable):
         product: "typing.Union[GetMasterResponseProduct, None, Unset]" = _unset,
         rbacEnabled: "typing.Union[bool, None, Unset]" = _unset,
         ssoProviders: "typing.Union[typing.Sequence[v1SSOProvider], None, Unset]" = _unset,
+        submissionProtocol: "typing.Union[int, None, Unset]" = _unset,
         telemetryEnabled: "typing.Union[bool, None, Unset]" = _unset,
         userManagementEnabled: "typing.Union[bool, None, Unset]" = _unset,
     ):
@@ -5484,6 +5542,8 @@ class v1GetMasterResponse(Printable):
             self.rbacEnabled = rbacEnabled
         if not isinstance(ssoProviders, Unset):
             self.ssoProviders = ssoProviders
+        if not isinstance(submissionProtocol, Unset):
+            self.submissionProtocol = submissionProtocol
         if not isinstance(telemetryEnabled, Unset):
             self.telemetryEnabled = telemetryEnabled
         if not isinstance(userManagementEnabled, Unset):
@@ -5515,6 +5575,8 @@ class v1GetMasterResponse(Printable):
             kwargs["rbacEnabled"] = obj["rbacEnabled"]
         if "ssoProviders" in obj:
             kwargs["ssoProviders"] = [v1SSOProvider.from_json(x) for x in obj["ssoProviders"]] if obj["ssoProviders"] is not None else None
+        if "submissionProtocol" in obj:
+            kwargs["submissionProtocol"] = obj["submissionProtocol"]
         if "telemetryEnabled" in obj:
             kwargs["telemetryEnabled"] = obj["telemetryEnabled"]
         if "userManagementEnabled" in obj:
@@ -5546,6 +5608,8 @@ class v1GetMasterResponse(Printable):
             out["rbacEnabled"] = self.rbacEnabled
         if not omit_unset or "ssoProviders" in vars(self):
             out["ssoProviders"] = None if self.ssoProviders is None else [x.to_json(omit_unset) for x in self.ssoProviders]
+        if not omit_unset or "submissionProtocol" in vars(self):
+            out["submissionProtocol"] = self.submissionProtocol
         if not omit_unset or "telemetryEnabled" in vars(self):
             out["telemetryEnabled"] = self.telemetryEnabled
         if not omit_unset or "userManagementEnabled" in vars(self):
@@ -7945,6 +8009,7 @@ class v1LaunchCommandRequest(Printable):
     config: "typing.Optional[typing.Dict[str, typing.Any]]" = None
     data: "typing.Optional[str]" = None
     files: "typing.Optional[typing.Sequence[v1File]]" = None
+    submit: "typing.Optional[v1SubmitOptions]" = None
     templateName: "typing.Optional[str]" = None
     workspaceId: "typing.Optional[int]" = None
 
@@ -7954,6 +8019,7 @@ class v1LaunchCommandRequest(Printable):
         config: "typing.Union[typing.Dict[str, typing.Any], None, Unset]" = _unset,
         data: "typing.Union[str, None, Unset]" = _unset,
         files: "typing.Union[typing.Sequence[v1File], None, Unset]" = _unset,
+        submit: "typing.Union[v1SubmitOptions, None, Unset]" = _unset,
         templateName: "typing.Union[str, None, Unset]" = _unset,
         workspaceId: "typing.Union[int, None, Unset]" = _unset,
     ):
@@ -7963,6 +8029,8 @@ class v1LaunchCommandRequest(Printable):
             self.data = data
         if not isinstance(files, Unset):
             self.files = files
+        if not isinstance(submit, Unset):
+            self.submit = submit
         if not isinstance(templateName, Unset):
             self.templateName = templateName
         if not isinstance(workspaceId, Unset):
@@ -7978,6 +8046,8 @@ class v1LaunchCommandRequest(Printable):
             kwargs["data"] = obj["data"]
         if "files" in obj:
             kwargs["files"] = [v1File.from_json(x) for x in obj["files"]] if obj["files"] is not None else None
+        if "submit" in obj:
+            kwargs["submit"] = v1SubmitOptions.from_json(obj["submit"]) if obj["submit"] is not None else None
         if "templateName" in obj:
             kwargs["templateName"] = obj["templateName"]
         if "workspaceId" in obj:
@@ -7993,6 +8063,8 @@ class v1LaunchCommandRequest(Printable):
             out["data"] = self.data
         if not omit_unset or "files" in vars(self):
             out["files"] = None if self.files is None else [x.to_json(omit_unset) for x in self.files]
+        if not omit_unset or "submit" in vars(self):
+            out["submit"] = None if self.submit is None else self.submit.to_json(omit_unset)
         if not omit_unset or "templateName" in vars(self):
             out["templateName"] = self.templateName
         if not omit_unset or "workspaceId" in vars(self):
@@ -8001,6 +8073,7 @@ class v1LaunchCommandRequest(Printable):
 
 class v1LaunchCommandResponse(Printable):
     """Response to LaunchCommandRequest."""
+    submission: "typing.Optional[v1SubmitResult]" = None
     warnings: "typing.Optional[typing.Sequence[v1LaunchWarning]]" = None
 
     def __init__(
@@ -8008,10 +8081,13 @@ class v1LaunchCommandResponse(Printable):
         *,
         command: "v1Command",
         config: "typing.Dict[str, typing.Any]",
+        submission: "typing.Union[v1SubmitResult, None, Unset]" = _unset,
         warnings: "typing.Union[typing.Sequence[v1LaunchWarning], None, Unset]" = _unset,
     ):
         self.command = command
         self.config = config
+        if not isinstance(submission, Unset):
+            self.submission = submission
         if not isinstance(warnings, Unset):
             self.warnings = warnings
 
@@ -8021,6 +8097,8 @@ class v1LaunchCommandResponse(Printable):
             "command": v1Command.from_json(obj["command"]),
             "config": obj["config"],
         }
+        if "submission" in obj:
+            kwargs["submission"] = v1SubmitResult.from_json(obj["submission"]) if obj["submission"] is not None else None
         if "warnings" in obj:
             kwargs["warnings"] = [v1LaunchWarning(x) for x in obj["warnings"]] if obj["warnings"] is not None else None
         return cls(**kwargs)
@@ -8030,6 +8108,8 @@ class v1LaunchCommandResponse(Printable):
             "command": self.command.to_json(omit_unset),
             "config": self.config,
         }
+        if not omit_unset or "submission" in vars(self):
+            out["submission"] = None if self.submission is None else self.submission.to_json(omit_unset)
         if not omit_unset or "warnings" in vars(self):
             out["warnings"] = None if self.warnings is None else [x.value for x in self.warnings]
         return out
@@ -8133,6 +8213,7 @@ class v1LaunchShellRequest(Printable):
     config: "typing.Optional[typing.Dict[str, typing.Any]]" = None
     data: "typing.Optional[str]" = None
     files: "typing.Optional[typing.Sequence[v1File]]" = None
+    submit: "typing.Optional[v1SubmitOptions]" = None
     templateName: "typing.Optional[str]" = None
     workspaceId: "typing.Optional[int]" = None
 
@@ -8142,6 +8223,7 @@ class v1LaunchShellRequest(Printable):
         config: "typing.Union[typing.Dict[str, typing.Any], None, Unset]" = _unset,
         data: "typing.Union[str, None, Unset]" = _unset,
         files: "typing.Union[typing.Sequence[v1File], None, Unset]" = _unset,
+        submit: "typing.Union[v1SubmitOptions, None, Unset]" = _unset,
         templateName: "typing.Union[str, None, Unset]" = _unset,
         workspaceId: "typing.Union[int, None, Unset]" = _unset,
     ):
@@ -8151,6 +8233,8 @@ class v1LaunchShellRequest(Printable):
             self.data = data
         if not isinstance(files, Unset):
             self.files = files
+        if not isinstance(submit, Unset):
+            self.submit = submit
         if not isinstance(templateName, Unset):
             self.templateName = templateName
         if not isinstance(workspaceId, Unset):
@@ -8166,6 +8250,8 @@ class v1LaunchShellRequest(Printable):
             kwargs["data"] = obj["data"]
         if "files" in obj:
             kwargs["files"] = [v1File.from_json(x) for x in obj["files"]] if obj["files"] is not None else None
+        if "submit" in obj:
+            kwargs["submit"] = v1SubmitOptions.from_json(obj["submit"]) if obj["submit"] is not None else None
         if "templateName" in obj:
             kwargs["templateName"] = obj["templateName"]
         if "workspaceId" in obj:
@@ -8181,6 +8267,8 @@ class v1LaunchShellRequest(Printable):
             out["data"] = self.data
         if not omit_unset or "files" in vars(self):
             out["files"] = None if self.files is None else [x.to_json(omit_unset) for x in self.files]
+        if not omit_unset or "submit" in vars(self):
+            out["submit"] = None if self.submit is None else self.submit.to_json(omit_unset)
         if not omit_unset or "templateName" in vars(self):
             out["templateName"] = self.templateName
         if not omit_unset or "workspaceId" in vars(self):
@@ -8189,6 +8277,7 @@ class v1LaunchShellRequest(Printable):
 
 class v1LaunchShellResponse(Printable):
     """Response to LaunchShellRequest."""
+    submission: "typing.Optional[v1SubmitResult]" = None
     warnings: "typing.Optional[typing.Sequence[v1LaunchWarning]]" = None
 
     def __init__(
@@ -8196,10 +8285,13 @@ class v1LaunchShellResponse(Printable):
         *,
         config: "typing.Dict[str, typing.Any]",
         shell: "v1Shell",
+        submission: "typing.Union[v1SubmitResult, None, Unset]" = _unset,
         warnings: "typing.Union[typing.Sequence[v1LaunchWarning], None, Unset]" = _unset,
     ):
         self.config = config
         self.shell = shell
+        if not isinstance(submission, Unset):
+            self.submission = submission
         if not isinstance(warnings, Unset):
             self.warnings = warnings
 
@@ -8209,6 +8301,8 @@ class v1LaunchShellResponse(Printable):
             "config": obj["config"],
             "shell": v1Shell.from_json(obj["shell"]),
         }
+        if "submission" in obj:
+            kwargs["submission"] = v1SubmitResult.from_json(obj["submission"]) if obj["submission"] is not None else None
         if "warnings" in obj:
             kwargs["warnings"] = [v1LaunchWarning(x) for x in obj["warnings"]] if obj["warnings"] is not None else None
         return cls(**kwargs)
@@ -8218,6 +8312,8 @@ class v1LaunchShellResponse(Printable):
             "config": self.config,
             "shell": self.shell.to_json(omit_unset),
         }
+        if not omit_unset or "submission" in vars(self):
+            out["submission"] = None if self.submission is None else self.submission.to_json(omit_unset)
         if not omit_unset or "warnings" in vars(self):
             out["warnings"] = None if self.warnings is None else [x.value for x in self.warnings]
         return out
@@ -15142,6 +15238,110 @@ class v1StartTrialResponse(Printable):
         }
         if not omit_unset or "latestCheckpoint" in vars(self):
             out["latestCheckpoint"] = self.latestCheckpoint
+        return out
+
+class v1SubmitOptions(Printable):
+    """Options for submitting a managed command, shell, generic task, or experiment."""
+    admission: "typing.Optional[v1Admission]" = None
+    dryRun: "typing.Optional[bool]" = None
+    expectedDigest: "typing.Optional[str]" = None
+    idempotencyKey: "typing.Optional[str]" = None
+
+    def __init__(
+        self,
+        *,
+        admission: "typing.Union[v1Admission, None, Unset]" = _unset,
+        dryRun: "typing.Union[bool, None, Unset]" = _unset,
+        expectedDigest: "typing.Union[str, None, Unset]" = _unset,
+        idempotencyKey: "typing.Union[str, None, Unset]" = _unset,
+    ):
+        if not isinstance(admission, Unset):
+            self.admission = admission
+        if not isinstance(dryRun, Unset):
+            self.dryRun = dryRun
+        if not isinstance(expectedDigest, Unset):
+            self.expectedDigest = expectedDigest
+        if not isinstance(idempotencyKey, Unset):
+            self.idempotencyKey = idempotencyKey
+
+    @classmethod
+    def from_json(cls, obj: Json) -> "v1SubmitOptions":
+        kwargs: "typing.Dict[str, typing.Any]" = {
+        }
+        if "admission" in obj:
+            kwargs["admission"] = v1Admission(obj["admission"]) if obj["admission"] is not None else None
+        if "dryRun" in obj:
+            kwargs["dryRun"] = obj["dryRun"]
+        if "expectedDigest" in obj:
+            kwargs["expectedDigest"] = obj["expectedDigest"]
+        if "idempotencyKey" in obj:
+            kwargs["idempotencyKey"] = obj["idempotencyKey"]
+        return cls(**kwargs)
+
+    def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
+        out: "typing.Dict[str, typing.Any]" = {
+        }
+        if not omit_unset or "admission" in vars(self):
+            out["admission"] = None if self.admission is None else self.admission.value
+        if not omit_unset or "dryRun" in vars(self):
+            out["dryRun"] = self.dryRun
+        if not omit_unset or "expectedDigest" in vars(self):
+            out["expectedDigest"] = self.expectedDigest
+        if not omit_unset or "idempotencyKey" in vars(self):
+            out["idempotencyKey"] = self.idempotencyKey
+        return out
+
+class v1SubmitResult(Printable):
+    """The result of submitting a managed command, shell, generic task, or
+    experiment.
+    """
+    jobId: "typing.Optional[str]" = None
+    outcome: "typing.Optional[v1AdmissionOutcome]" = None
+    replayed: "typing.Optional[bool]" = None
+    requestDigest: "typing.Optional[str]" = None
+
+    def __init__(
+        self,
+        *,
+        jobId: "typing.Union[str, None, Unset]" = _unset,
+        outcome: "typing.Union[v1AdmissionOutcome, None, Unset]" = _unset,
+        replayed: "typing.Union[bool, None, Unset]" = _unset,
+        requestDigest: "typing.Union[str, None, Unset]" = _unset,
+    ):
+        if not isinstance(jobId, Unset):
+            self.jobId = jobId
+        if not isinstance(outcome, Unset):
+            self.outcome = outcome
+        if not isinstance(replayed, Unset):
+            self.replayed = replayed
+        if not isinstance(requestDigest, Unset):
+            self.requestDigest = requestDigest
+
+    @classmethod
+    def from_json(cls, obj: Json) -> "v1SubmitResult":
+        kwargs: "typing.Dict[str, typing.Any]" = {
+        }
+        if "jobId" in obj:
+            kwargs["jobId"] = obj["jobId"]
+        if "outcome" in obj:
+            kwargs["outcome"] = v1AdmissionOutcome(obj["outcome"]) if obj["outcome"] is not None else None
+        if "replayed" in obj:
+            kwargs["replayed"] = obj["replayed"]
+        if "requestDigest" in obj:
+            kwargs["requestDigest"] = obj["requestDigest"]
+        return cls(**kwargs)
+
+    def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
+        out: "typing.Dict[str, typing.Any]" = {
+        }
+        if not omit_unset or "jobId" in vars(self):
+            out["jobId"] = self.jobId
+        if not omit_unset or "outcome" in vars(self):
+            out["outcome"] = None if self.outcome is None else self.outcome.value
+        if not omit_unset or "replayed" in vars(self):
+            out["replayed"] = self.replayed
+        if not omit_unset or "requestDigest" in vars(self):
+            out["requestDigest"] = self.requestDigest
         return out
 
 class v1TableType(DetEnum):

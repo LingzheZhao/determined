@@ -1,6 +1,8 @@
 package model
 
 import (
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/uptrace/bun"
@@ -83,6 +85,16 @@ func JobTypeFromProto(t jobv1.Type) JobType {
 	}
 }
 
+// Admission is how the master admits a submitted job to the scheduler, stored in jobs.admission.
+type Admission string
+
+const (
+	// AdmissionQueue queues the job until the scheduler places it. It is the default.
+	AdmissionQueue Admission = "QUEUE"
+	// AdmissionImmediate places the job now or fails it, never queueing it.
+	AdmissionImmediate Admission = "IMMEDIATE"
+)
+
 // Job is the model for a job in the database.
 type Job struct {
 	bun.BaseModel `bun:"table:jobs"`
@@ -91,4 +103,13 @@ type Job struct {
 	JobType JobType         `db:"job_type" bun:"job_type"`
 	OwnerID *UserID         `db:"owner_id" bun:"owner_id"`
 	QPos    decimal.Decimal `db:"q_position" bun:"q_position"`
+
+	// IdempotencyKey and RequestDigest identify a managed create. Both are nil for jobs created
+	// without a key or digest, including every job created before they were recorded.
+	IdempotencyKey *string `db:"idempotency_key" bun:"idempotency_key"`
+	RequestDigest  *string `db:"request_digest" bun:"request_digest"`
+	// CancelRequestedAt is when the job was first asked to stop.
+	CancelRequestedAt *time.Time `db:"cancel_requested_at" bun:"cancel_requested_at"`
+	// Admission is empty on insert for the column default, QUEUE.
+	Admission Admission `db:"admission" bun:"admission,nullzero"`
 }

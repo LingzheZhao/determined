@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package determined.api.v1;
+option go_package = "github.com/determined-ai/determined/proto/pkg/apiv1";
+
+// How the master admits a submitted job to the scheduler.
+enum Admission {
+  // The default, which queues the job like ADMISSION_QUEUE.
+  ADMISSION_UNSPECIFIED = 0;
+  // Queue the job until the scheduler places it.
+  ADMISSION_QUEUE = 1;
+  // Place the job now or fail it, never queueing it. Experiments reject it.
+  ADMISSION_IMMEDIATE = 2;
+}
+
+// The admission outcome of a submission.
+enum AdmissionOutcome {
+  // No outcome, as for a dry run.
+  ADMISSION_OUTCOME_UNSPECIFIED = 0;
+  // The job was committed and waits in the queue for placement.
+  ADMISSION_OUTCOME_QUEUED = 1;
+  // The job was committed and placed.
+  ADMISSION_OUTCOME_PLACED = 2;
+  // The job was committed and then rejected because it could not be placed.
+  ADMISSION_OUTCOME_REJECTED = 3;
+  // The job was committed, but its placement was not decided in time.
+  ADMISSION_OUTCOME_PENDING = 4;
+}
+
+// Options for submitting a managed command, shell, generic task, or experiment.
+message SubmitOptions {
+  // A key that makes the submission idempotent for its owner: a request with a
+  // key the owner already used returns that job instead of creating one. At
+  // most 128 characters of [A-Za-z0-9._:-].
+  string idempotency_key = 1;
+  // How the job is admitted to the scheduler.
+  Admission admission = 2;
+  // Check the request and return its digest without creating anything.
+  bool dry_run = 3;
+  // The request digest a dry run returned. The request fails with
+  // FAILED_PRECONDITION and reason plan_changed, creating nothing, if its
+  // digest differs.
+  string expected_digest = 4;
+}
+
+// The result of submitting a managed command, shell, generic task, or
+// experiment.
+message SubmitResult {
+  // The ID of the job, empty for a dry run.
+  string job_id = 1;
+  // Whether the request replayed a job submitted earlier with the same
+  // idempotency key.
+  bool replayed = 2;
+  // The digest of the request, which identifies its content. Clients treat it
+  // as opaque.
+  string request_digest = 3;
+  // The admission outcome of the job.
+  AdmissionOutcome outcome = 4;
+}

@@ -1109,6 +1109,30 @@ export interface V1Address {
     hostPort?: number;
 }
 /**
+ * How the master admits a submitted job to the scheduler.   - ADMISSION_UNSPECIFIED: The default, which queues the job like ADMISSION_QUEUE.  - ADMISSION_QUEUE: Queue the job until the scheduler places it.  - ADMISSION_IMMEDIATE: Place the job now or fail it, never queueing it. Experiments reject it.
+ * @export
+ * @enum {string}
+ */
+export const V1Admission = {
+    UNSPECIFIED: 'ADMISSION_UNSPECIFIED',
+    QUEUE: 'ADMISSION_QUEUE',
+    IMMEDIATE: 'ADMISSION_IMMEDIATE',
+} as const
+export type V1Admission = ValueOf<typeof V1Admission>
+/**
+ * The admission outcome of a submission.   - ADMISSION_OUTCOME_UNSPECIFIED: No outcome, as for a dry run.  - ADMISSION_OUTCOME_QUEUED: The job was committed and waits in the queue for placement.  - ADMISSION_OUTCOME_PLACED: The job was committed and placed.  - ADMISSION_OUTCOME_REJECTED: The job was committed and then rejected because it could not be placed.  - ADMISSION_OUTCOME_PENDING: The job was committed, but its placement was not decided in time.
+ * @export
+ * @enum {string}
+ */
+export const V1AdmissionOutcome = {
+    UNSPECIFIED: 'ADMISSION_OUTCOME_UNSPECIFIED',
+    QUEUED: 'ADMISSION_OUTCOME_QUEUED',
+    PLACED: 'ADMISSION_OUTCOME_PLACED',
+    REJECTED: 'ADMISSION_OUTCOME_REJECTED',
+    PENDING: 'ADMISSION_OUTCOME_PENDING',
+} as const
+export type V1AdmissionOutcome = ValueOf<typeof V1AdmissionOutcome>
+/**
  * Agent is a pool of resources where containers are run.
  * @export
  * @interface V1Agent
@@ -2312,6 +2336,12 @@ export interface V1CreateExperimentRequest {
      */
     template?: string;
     /**
+     * Options for submitting the experiment. Unmanaged experiments reject them.
+     * @type {V1SubmitOptions}
+     * @memberof V1CreateExperimentRequest
+     */
+    submit?: V1SubmitOptions;
+    /**
      * Unmanaged experiments are detached.
      * @type {boolean}
      * @memberof V1CreateExperimentRequest
@@ -2342,6 +2372,12 @@ export interface V1CreateExperimentResponse {
      * @memberof V1CreateExperimentResponse
      */
     warnings?: Array<V1LaunchWarning>;
+    /**
+     * The result of the submission, set when the request has submit options. A replay sets only this field.
+     * @type {V1SubmitResult}
+     * @memberof V1CreateExperimentResponse
+     */
+    submission?: V1SubmitResult;
 }
 /**
  * Request to create a new generic task.
@@ -2391,6 +2427,12 @@ export interface V1CreateGenericTaskRequest {
      * @memberof V1CreateGenericTaskRequest
      */
     noPause?: boolean;
+    /**
+     * Options for submitting the task.
+     * @type {V1SubmitOptions}
+     * @memberof V1CreateGenericTaskRequest
+     */
+    submit?: V1SubmitOptions;
 }
 /**
  * Response to CreateExperimentRequest.
@@ -2410,6 +2452,12 @@ export interface V1CreateGenericTaskResponse {
      * @memberof V1CreateGenericTaskResponse
      */
     warnings?: Array<V1LaunchWarning>;
+    /**
+     * The result of the submission, set when the request has submit options. A replay sets only this field.
+     * @type {V1SubmitResult}
+     * @memberof V1CreateGenericTaskResponse
+     */
+    submission?: V1SubmitResult;
 }
 /**
  * CreateGroupRequest is the body of the request for the call to create a group.
@@ -4335,6 +4383,12 @@ export interface V1GetMasterResponse {
      * @memberof V1GetMasterResponse
      */
     hasCustomLogo: boolean;
+    /**
+     * The version of the submission protocol that the master implements. Masters that predate it report 0.
+     * @type {number}
+     * @memberof V1GetMasterResponse
+     */
+    submissionProtocol?: number;
 }
 /**
  * Response to GetMeRequest.
@@ -5887,6 +5941,12 @@ export interface V1LaunchCommandRequest {
      * @memberof V1LaunchCommandRequest
      */
     workspaceId?: number;
+    /**
+     * Options for submitting the command.
+     * @type {V1SubmitOptions}
+     * @memberof V1LaunchCommandRequest
+     */
+    submit?: V1SubmitOptions;
 }
 /**
  * Response to LaunchCommandRequest.
@@ -5912,6 +5972,12 @@ export interface V1LaunchCommandResponse {
      * @memberof V1LaunchCommandResponse
      */
     warnings?: Array<V1LaunchWarning>;
+    /**
+     * The result of the submission, set when the request has submit options. A replay sets only this field.
+     * @type {V1SubmitResult}
+     * @memberof V1LaunchCommandResponse
+     */
+    submission?: V1SubmitResult;
 }
 /**
  * Request to launch a notebook.
@@ -6011,6 +6077,12 @@ export interface V1LaunchShellRequest {
      * @memberof V1LaunchShellRequest
      */
     workspaceId?: number;
+    /**
+     * Options for submitting the shell.
+     * @type {V1SubmitOptions}
+     * @memberof V1LaunchShellRequest
+     */
+    submit?: V1SubmitOptions;
 }
 /**
  * Response to LaunchShellRequest.
@@ -6036,6 +6108,12 @@ export interface V1LaunchShellResponse {
      * @memberof V1LaunchShellResponse
      */
     warnings?: Array<V1LaunchWarning>;
+    /**
+     * The result of the submission, set when the request has submit options. A replay sets only this field.
+     * @type {V1SubmitResult}
+     * @memberof V1LaunchShellResponse
+     */
+    submission?: V1SubmitResult;
 }
 /**
  * Request to launch a tensorboard.
@@ -11051,6 +11129,68 @@ export interface V1StartTrialResponse {
      * @memberof V1StartTrialResponse
      */
     stepsCompleted: number;
+}
+/**
+ * Options for submitting a managed command, shell, generic task, or experiment.
+ * @export
+ * @interface V1SubmitOptions
+ */
+export interface V1SubmitOptions {
+    /**
+     * A key that makes the submission idempotent for its owner: a request with a key the owner already used returns that job instead of creating one. At most 128 characters of [A-Za-z0-9._:-].
+     * @type {string}
+     * @memberof V1SubmitOptions
+     */
+    idempotencyKey?: string;
+    /**
+     * How the job is admitted to the scheduler.
+     * @type {V1Admission}
+     * @memberof V1SubmitOptions
+     */
+    admission?: V1Admission;
+    /**
+     * Check the request and return its digest without creating anything.
+     * @type {boolean}
+     * @memberof V1SubmitOptions
+     */
+    dryRun?: boolean;
+    /**
+     * The request digest a dry run returned. The request fails with FAILED_PRECONDITION and reason plan_changed, creating nothing, if its digest differs.
+     * @type {string}
+     * @memberof V1SubmitOptions
+     */
+    expectedDigest?: string;
+}
+/**
+ * The result of submitting a managed command, shell, generic task, or experiment.
+ * @export
+ * @interface V1SubmitResult
+ */
+export interface V1SubmitResult {
+    /**
+     * The ID of the job, empty for a dry run.
+     * @type {string}
+     * @memberof V1SubmitResult
+     */
+    jobId?: string;
+    /**
+     * Whether the request replayed a job submitted earlier with the same idempotency key.
+     * @type {boolean}
+     * @memberof V1SubmitResult
+     */
+    replayed?: boolean;
+    /**
+     * The digest of the request, which identifies its content. Clients treat it as opaque.
+     * @type {string}
+     * @memberof V1SubmitResult
+     */
+    requestDigest?: string;
+    /**
+     * The admission outcome of the job.
+     * @type {V1AdmissionOutcome}
+     * @memberof V1SubmitResult
+     */
+    outcome?: V1AdmissionOutcome;
 }
 /**
  * Project Table type.   - TABLE_TYPE_UNSPECIFIED: Unspecified table type.  - TABLE_TYPE_EXPERIMENT: experiment table.  - TABLE_TYPE_RUN: run table.
