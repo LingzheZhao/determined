@@ -74,8 +74,9 @@ func newAgentService(
 	badAgentIds := []aproto.ID{}
 
 	for agentID, state := range agentStates {
-		agentRef, err := a.createAgent(agentID, state.resourcePoolName, a.opts, &state, func() {
-			_ = a.agents.Delete(agentID)
+		var agentRef *agent
+		agentRef, err = a.createAgent(agentID, state.resourcePoolName, a.opts, &state, func() {
+			tasklist.DeleteIf(a.agents, agentID, agentRef)
 		})
 		if err != nil {
 			a.syslog.WithError(err).Warnf("failed to create agent %s", agentID)
@@ -172,7 +173,9 @@ func (a *agents) HandleWebsocketConnection(msg webSocketRequest) error {
 
 	// Finally, this must not be a recovery flow, so just create the agent actor.
 	resourcePool := msg.echoCtx.QueryParam("resource_pool")
-	ref, err := a.createAgent(id, resourcePool, a.opts, nil, func() { _ = a.agents.Delete(id) })
+	// Unregister removes only this agent: a newer agent may be registered under the same ID by then.
+	var ref *agent
+	ref, err = a.createAgent(id, resourcePool, a.opts, nil, func() { tasklist.DeleteIf(a.agents, id, ref) })
 	if err != nil {
 		return err
 	}

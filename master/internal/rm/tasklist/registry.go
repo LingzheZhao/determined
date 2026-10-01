@@ -62,6 +62,22 @@ func (r *Registry[K, V]) Delete(key K) error {
 	return nil
 }
 
+// DeleteIf deletes the given key only if it currently maps to value (compared with ==) and reports
+// whether it did. A holder of an old value can use it to clean up without removing a newer value
+// that was registered under the same key.
+func DeleteIf[K, V comparable](r *Registry[K, V], key K, value V) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	e, ok := r.data[key]
+	if !ok || e.value != value {
+		return false
+	}
+	close(e.done)
+	delete(r.data, key)
+	return true
+}
+
 // OnDelete registers a callback to be called when the given key is deleted. If the key does not
 // exist, the callback is called async.
 func (r *Registry[K, V]) OnDelete(key K, callback func()) {
