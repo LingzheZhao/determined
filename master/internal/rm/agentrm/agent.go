@@ -77,6 +77,10 @@ type (
 		awaitingRestore  bool
 		reconnectBacklog []interface{}
 		reconnectTimers  []*time.Timer
+		// stopped is set once stop has run. A stopped agent is no longer registered: the closing of
+		// its socket must not arm a new reconnect timer, which would later stop it again and, through
+		// unregister, remove a new agent registered under the same ID in the meantime.
+		stopped bool
 		// On disconnect, we stash the state here and become "draining + disabled". Upon reconnect, we
 		// pop back to our previous state.
 		preDisconnectEnabled  bool
@@ -249,6 +253,11 @@ func (a *agent) killTaskContainer(msg sproto.KillTaskContainer) {
 }
 
 func (a *agent) stop(cause error) {
+	if a.stopped {
+		return
+	}
+	a.stopped = true
+	a.cancelReconnectTimers()
 	defer a.unregister()
 
 	if cause != nil {
@@ -391,11 +400,7 @@ func (a *agent) handleWebsocketConnection(msg webSocketRequest) error {
 		a.syslog.Info("agent reconnected")
 		a.awaitingReconnect = false
 
-		// Cancel reconnect timers.
-		for _, timerActor := range a.reconnectTimers {
-			timerActor.Stop()
-		}
-		a.reconnectTimers = nil
+		a.cancelReconnectTimers()
 
 		// Re-propagate our old state back on successful recovery.
 		if a.preDisconnectEnabled {
@@ -891,8 +896,19 @@ func (a *agent) defaultReattachFailureMessage() aproto.ContainerStopped {
 	)
 }
 
+func (a *agent) cancelReconnectTimers() {
+	for _, timer := range a.reconnectTimers {
+		timer.Stop()
+	}
+	a.reconnectTimers = nil
+}
+
 func (a *agent) socketDisconnected() {
 	a.socket = nil
+	if a.stopped {
+		// stop closed the socket; nothing to wait for.
+		return
+	}
 	a.awaitingReconnect = true
 
 	timer := time.AfterFunc(a.agentReconnectWait, a.HandleReconnectTimeout)
@@ -917,7 +933,7 @@ func (a *agent) HandleReconnectTimeout() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.awaitingReconnect {
+	if a.awaitingReconnect && !a.stopped {
 		a.stop(errors.New("agent failed to reconnect by deadline"))
 		return
 	}
