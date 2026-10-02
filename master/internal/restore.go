@@ -57,7 +57,7 @@ const experimentSnapshotVersion = 6
 // state that doesn't flow from trial to experiment; experiments can never push non-ephemeral state
 // updates to trials without special consideration. searcher.Operations are an example of this (and
 // the experiment snapshots them and re-sends them).
-func (m *Master) restoreExperiment(expModel *model.Experiment) error {
+func (m *Master) restoreExperiment(expModel *model.Experiment) (err error) {
 	// Experiments which were trying to stop need to be marked as terminal in the database.
 	activeConfig, err := m.db.ActiveExperimentConfig(expModel.ID)
 	if err != nil {
@@ -110,6 +110,15 @@ func (m *Master) restoreExperiment(expModel *model.Experiment) error {
 		return fmt.Errorf("unable to create user session inside task: %w", err)
 	}
 	taskSpec.UserSessionToken = token
+	defer func() {
+		// An experiment that failed to restore is not running, so nothing uses its session.
+		if err != nil {
+			if dErr := user.DeleteSessionByToken(context.Background(), token); dErr != nil {
+				log.WithField("experiment", expModel.ID).WithError(dErr).
+					Error("deleting the user session of an experiment that failed to restore")
+			}
+		}
+	}()
 
 	log.WithField("experiment", expModel.ID).Debug("restoring experiment")
 	snapshot, err := m.retrieveExperimentSnapshot(expModel)
