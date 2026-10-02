@@ -24,6 +24,7 @@ import (
 
 	"github.com/determined-ai/determined/master/internal/api"
 	"github.com/determined-ai/determined/master/pkg/cproto"
+	"github.com/determined-ai/determined/master/pkg/etc"
 	"github.com/determined-ai/determined/master/pkg/model"
 	"github.com/determined-ai/determined/master/pkg/ptrs"
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
@@ -287,6 +288,62 @@ func TestAllocationState(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestGetTaskAllocationExitFields checks that GetTask returns the slots, exit reason and status
+// code an allocation records.
+func TestGetTaskAllocationExitFields(t *testing.T) {
+	ctx := context.Background()
+	pgDB, closeDB := MustResolveTestPostgres(t)
+	defer closeDB()
+	MustMigrateTestPostgres(t, pgDB, MigrationsFromDB)
+	require.NoError(t, etc.SetRootPath(RootFromDB))
+
+	db := SingleDB()
+
+	tIn := RequireMockTask(t, db, nil)
+	running := &model.Allocation{
+		AllocationID: model.AllocationID(fmt.Sprintf("%s.0", tIn.TaskID)),
+		TaskID:       tIn.TaskID,
+		Slots:        2,
+		ResourcePool: "default",
+		StartTime:    ptrs.Ptr(time.Now().UTC().Truncate(time.Millisecond)),
+		State:        ptrs.Ptr(model.AllocationStateRunning),
+	}
+	require.NoError(t, AddAllocation(ctx, running))
+
+	failed := &model.Allocation{
+		AllocationID: model.AllocationID(fmt.Sprintf("%s.1", tIn.TaskID)),
+		TaskID:       tIn.TaskID,
+		Slots:        4,
+		ResourcePool: "default",
+		StartTime:    ptrs.Ptr(time.Now().UTC().Truncate(time.Millisecond)),
+		State:        ptrs.Ptr(model.AllocationStateTerminated),
+		ExitReason:   ptrs.Ptr("allocation failed: boom"),
+		StatusCode:   ptrs.Ptr(int32(137)),
+	}
+	require.NoError(t, AddAllocation(ctx, failed))
+	require.NoError(t, AddAllocationExitStatus(ctx, failed))
+
+	tOut := &taskv1.Task{}
+	require.NoError(t, db.QueryProto("get_task", tOut, tIn.TaskID))
+	require.Len(t, tOut.Allocations, 2)
+	byID := map[string]*taskv1.Allocation{}
+	for _, a := range tOut.Allocations {
+		byID[a.AllocationId] = a
+	}
+
+	r := byID[string(running.AllocationID)]
+	require.NotNil(t, r)
+	require.Equal(t, int32(2), r.Slots)
+	require.Nil(t, r.ExitReason)
+	require.Nil(t, r.StatusCode)
+
+	f := byID[string(failed.AllocationID)]
+	require.NotNil(t, f)
+	require.Equal(t, int32(4), f.Slots)
+	require.Equal(t, "allocation failed: boom", f.GetExitReason())
+	require.Equal(t, int32(137), f.GetStatusCode())
 }
 
 func TestExhaustiveEnums(t *testing.T) {
