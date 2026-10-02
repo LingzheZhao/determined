@@ -38,15 +38,32 @@ func TestStartAllocation(t *testing.T) {
 }
 
 func TestRestoreFailed(t *testing.T) {
-	closeDB, _, id, q, exitFuture := requireStarted(t)
-	defer closeDB()
-	defer requireKilled(t, id, exitFuture)
+	// The agent resource manager reports a failed restore as a RestoreError, which is a transient
+	// system error; the Kubernetes resource manager reports it as ResourcesMissing, which is not.
+	for _, tc := range []struct {
+		name        string
+		failureType sproto.FailureType
+		transient   bool
+	}{
+		{"restore error", sproto.RestoreError, true},
+		{"resources missing", sproto.ResourcesMissing, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			closeDB, _, id, q, exitFuture := requireStarted(t)
+			defer closeDB()
+			defer requireKilled(t, id, exitFuture)
 
-	q.Put(&sproto.ResourcesFailedError{
-		FailureType: sproto.RestoreError,
-		ErrMsg:      "things weren't there",
-	})
-	requireTerminated(t, id, exitFuture)
+			failure := sproto.ResourcesFailedError{
+				FailureType: tc.failureType,
+				ErrMsg:      "things weren't there",
+			}
+			q.Put(&failure)
+			exit := requireTerminated(t, id, exitFuture)
+			// The allocation reports the failure itself, not a handler crash.
+			require.Equal(t, failure, exit.Err)
+			require.Equal(t, tc.transient, sproto.IsTransientSystemError(exit.Err))
+		})
+	}
 }
 
 func TestInvalidResourcesRequest(t *testing.T) {
