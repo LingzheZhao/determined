@@ -18,6 +18,8 @@ import (
 	apiPkg "github.com/determined-ai/determined/master/internal/api"
 	authz2 "github.com/determined-ai/determined/master/internal/authz"
 	"github.com/determined-ai/determined/master/internal/db"
+	"github.com/determined-ai/determined/master/internal/mocks"
+	"github.com/determined-ai/determined/master/internal/project"
 	"github.com/determined-ai/determined/master/internal/rm"
 	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/sproto"
@@ -47,7 +49,7 @@ func addGenericTaskForAuthZTest(
 	taskID := model.NewTaskID()
 	require.NoError(t, db.AddTask(ctx, &model.Task{
 		TaskID: taskID, TaskType: model.TaskTypeGeneric, JobID: &jobID,
-		ParentID: parentID, State: ptrs.Ptr(state),
+		ParentID: parentID, State: ptrs.Ptr(state), NoPause: ptrs.Ptr(false),
 	}))
 	allocationID := model.AllocationID(taskID.String() + ".0")
 	now := time.Now().UTC()
@@ -141,6 +143,23 @@ func (s *lifecycleAllocationService) StartAllocation(
 	s.starts = append(s.starts, req.AllocationID)
 	s.restores = append(s.restores, req.Restore)
 	return nil
+}
+
+// startsOf returns the starts and their restore flags of one task's allocations. Recovery resumes
+// every pending resume in the database, including those other tests and earlier runs left behind
+// in the shared test database, so tests that recover look only at their own task.
+func (s *lifecycleAllocationService) startsOf(id model.TaskID) ([]model.AllocationID, []bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var starts []model.AllocationID
+	var restores []bool
+	for i, allocationID := range s.starts {
+		if allocationID.ToTaskID() == id {
+			starts = append(starts, allocationID)
+			restores = append(restores, s.restores[i])
+		}
+	}
+	return starts, restores
 }
 
 func TestGenericTaskTreePauseUnpauseKeepsNoPauseAllocations(t *testing.T) {
@@ -373,12 +392,13 @@ func TestGenericTaskResumeRecoversClaimAndStartWindows(t *testing.T) {
 				service.running[plan[0].NewAllocationID] = false // a new master has an empty runtime registry
 			}
 			require.NoError(t, api.m.recoverGenericTaskResumes(ctx))
+			starts, restores := service.startsOf(id)
 			if started {
-				require.Equal(t, []model.AllocationID{plan[0].NewAllocationID, plan[0].NewAllocationID}, service.starts)
-				require.Equal(t, []bool{false, true}, service.restores)
+				require.Equal(t, []model.AllocationID{plan[0].NewAllocationID, plan[0].NewAllocationID}, starts)
+				require.Equal(t, []bool{false, true}, restores)
 			} else {
-				require.Equal(t, []model.AllocationID{plan[0].NewAllocationID}, service.starts)
-				require.Equal(t, []bool{false}, service.restores)
+				require.Equal(t, []model.AllocationID{plan[0].NewAllocationID}, starts)
+				require.Equal(t, []bool{false}, restores)
 			}
 			allocationID, _, err := getGenericTaskSpec(ctx, id)
 			require.NoError(t, err)
@@ -463,8 +483,9 @@ func TestGenericTaskResumeRestoresCanceledStartBeforeSnapshot(t *testing.T) {
 	_, err = api.KillGenericTask(ctx, &apiv1.KillGenericTaskRequest{TaskId: id.String()})
 	require.NoError(t, err)
 	require.NoError(t, api.m.recoverGenericTaskResumes(ctx))
-	require.Equal(t, []model.AllocationID{plan[0].NewAllocationID}, service.starts)
-	require.Equal(t, []bool{true}, service.restores)
+	starts, restores := service.startsOf(id)
+	require.Equal(t, []model.AllocationID{plan[0].NewAllocationID}, starts)
+	require.Equal(t, []bool{true}, restores)
 	require.NoError(t, finishCanceledGenericTaskResume(id, plan[0].NewAllocationID))
 	remaining, err := pendingGenericTaskResume(ctx, id)
 	require.NoError(t, err)
@@ -494,7 +515,8 @@ func TestGenericTaskResumeReconcilesEndedAllocationBeforeCallback(t *testing.T) 
 	got, err := db.TaskByID(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, model.TaskStateCompleted, *got.State)
-	require.Empty(t, service.starts)
+	starts, _ := service.startsOf(id)
+	require.Empty(t, starts)
 	allocationID, _, err := getGenericTaskSpec(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, plan[0].NewAllocationID.String(), allocationID)
@@ -553,8 +575,10 @@ func TestGenericTaskResumeRejectsPauseAndKillDuringStart(t *testing.T) {
 	}
 	_, err := api.PauseGenericTask(ctx, &apiv1.PauseGenericTaskRequest{TaskId: id.String()})
 	require.ErrorContains(t, err, "generic task mutation is in progress")
+	require.Equal(t, codes.Aborted, status.Code(err))
 	_, err = api.KillGenericTask(ctx, &apiv1.KillGenericTaskRequest{TaskId: id.String()})
 	require.ErrorContains(t, err, "generic task mutation is in progress")
+	require.Equal(t, codes.Aborted, status.Code(err))
 	release()
 	require.NoError(t, <-done)
 }
@@ -835,4 +859,56 @@ func TestGenericTaskMutationHidesTaskWithoutViewAuthorization(t *testing.T) {
 	require.ErrorIs(t, err, apiPkg.NotFoundErrs("task", taskID.String(), true))
 	authZ.AssertNotCalled(t, "CanControlGenericTask", mock.Anything, mock.Anything,
 		mock.Anything, mock.Anything)
+}
+
+func TestCreateGenericTaskChildRequiresControlOfParent(t *testing.T) {
+	api, authZ, curUser, ctx := setupNTSCAuthzTest(t)
+	parentID := addGenericTaskForAuthZTest(ctx, t, curUser, 11, nil, model.TaskStateActive)
+	create := func(parent string) error {
+		_, err := api.CreateGenericTask(ctx, &apiv1.CreateGenericTaskRequest{
+			Config: "entrypoint: [\"true\"]\n", ParentId: &parent,
+		})
+		return err
+	}
+
+	if pAuthZ == nil {
+		pAuthZ = &mocks.ProjectAuthZ{}
+		project.AuthZProvider.Register(mockType, pAuthZ)
+	}
+	pAuthZ.On("CanGetProject", mock.Anything, curUser, mock.Anything).Return(nil).Twice()
+	authZ.On("CanCreateGenericTask", mock.Anything, curUser, mock.Anything).Return(nil).Twice()
+	authZ.On("CanGetNSC", mock.Anything, curUser, model.AccessScopeID(11)).Return(nil).Once()
+	authZ.On("CanControlGenericTask", mock.Anything, curUser,
+		model.AccessScopeID(11), &curUser.ID).
+		Return(authz2.PermissionDeniedError{}).Once()
+	require.Equal(t, codes.PermissionDenied, status.Code(create(parentID.String())))
+
+	require.Equal(t, codes.NotFound, status.Code(create(model.NewTaskID().String())))
+
+	children, err := api.GetTaskChildren(ctx, parentID, nil)
+	require.NoError(t, err)
+	require.Len(t, children, 1, "no child may join the parent's tree")
+	authZ.AssertExpectations(t)
+}
+
+// Killing a paused task, whose allocation is gone, must cancel it and still kill the rest of its
+// tree; it used to fail on the missing allocation and leave the tree stuck in STOPPING_CANCELED.
+func TestKillPausedGenericTaskCancelsTree(t *testing.T) {
+	api, owner, ctx := setupAPITest(t, nil)
+	root := addGenericTaskForAuthZTest(ctx, t, owner, 1, nil, model.TaskStatePaused)
+	child := addGenericTaskForAuthZTest(ctx, t, owner, 1, &root, model.TaskStateActive)
+	childAllocation := model.AllocationID(child.String() + ".0")
+	service := &lifecycleAllocationService{running: map[model.AllocationID]bool{childAllocation: true}}
+	oldService := task.DefaultService
+	task.DefaultService = service
+	t.Cleanup(func() { task.DefaultService = oldService })
+
+	_, err := api.KillGenericTask(ctx, &apiv1.KillGenericTaskRequest{TaskId: root.String()})
+	require.NoError(t, err)
+
+	got, err := db.TaskByID(ctx, root)
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStateCanceled, *got.State)
+	require.NotNil(t, got.EndTime)
+	require.False(t, service.running[childAllocation], "the running child was not killed")
 }

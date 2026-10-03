@@ -2,15 +2,15 @@ package tasks
 
 import (
 	"archive/tar"
+	"strconv"
 	"time"
-
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/determined-ai/determined/master/pkg/archive"
 	"github.com/determined-ai/determined/master/pkg/cproto"
 	"github.com/determined-ai/determined/master/pkg/etc"
 	"github.com/determined-ai/determined/master/pkg/model"
-	"github.com/determined-ai/determined/proto/pkg/jobv1"
+	"github.com/determined-ai/determined/master/pkg/schemas"
+	"github.com/determined-ai/determined/master/pkg/schemas/expconf"
 )
 
 // GenericTaskSpec is the generic task spec.
@@ -40,7 +40,6 @@ func (s GenericTaskSpec) ToTaskSpec() TaskSpec {
 		),
 	}, "/")
 
-	// TODO proxy ports eventually.
 	res.PbsConfig = s.GenericTaskConfig.Pbs
 	res.SlurmConfig = s.GenericTaskConfig.Slurm
 
@@ -55,7 +54,7 @@ func (s GenericTaskSpec) ToTaskSpec() TaskSpec {
 
 	res.ResourcesConfig = s.GenericTaskConfig.Resources
 
-	res.Description = "generic-task"
+	res.Description = s.DisplayName()
 
 	res.Mounts = ToDockerMounts(s.GenericTaskConfig.BindMounts.ToExpconf(), res.WorkDir)
 
@@ -68,43 +67,39 @@ func (s GenericTaskSpec) ToTaskSpec() TaskSpec {
 	return res
 }
 
-// TODO(aaron.amanuel): fill in job information. These should probably be on a different struct.
-// not right on the generic task spec.
-
-// ToV1Job todo.
-func (s GenericTaskSpec) ToV1Job() (*jobv1.Job, error) {
-	j := jobv1.Job{
-		JobId:          s.JobID.String(),
-		EntityId:       s.Base.TaskID,
-		Type:           model.JobTypeGeneric.Proto(),
-		SubmissionTime: timestamppb.New(s.RegisteredTime),
-		Username:       s.Base.Owner.Username,
-		UserId:         int32(s.Base.Owner.ID),
-		Weight:         0,
-		Name:           "generic-task",
-		WorkspaceId:    int32(s.WorkspaceID),
+// DisplayName is the task's configured name, or "Generic Task <task id>".
+func (s GenericTaskSpec) DisplayName() string {
+	switch {
+	case s.GenericTaskConfig.Name != "":
+		return s.GenericTaskConfig.Name
+	case s.Base.TaskID != "":
+		return "Generic Task " + s.Base.TaskID
+	default:
+		return "Generic Task"
 	}
-
-	j.Priority = 0
-	if s.Base.ResourcesConfig.RawWeight != nil {
-		j.Weight = *s.Base.ResourcesConfig.RawWeight
-	}
-
-	j.ResourcePool = s.ResourcePool()
-	return &j, nil
 }
 
-// SetJobPriority todo.
-func (s GenericTaskSpec) SetJobPriority(priority int) error { return nil }
-
-// SetWeight todo.
-func (s GenericTaskSpec) SetWeight(weight float64) error {
-	s.Base.ResourcesConfig.SetWeight(weight)
-	return nil
+// MakeEnvPorts adds the proxy ports to `Environment.Ports`, the ports exposed in the container
+// config, keeping ports the config already lists. It runs when the task is created; the result is
+// persisted with the spec, so an unpaused or restored task exposes the same ports.
+func (s *GenericTaskSpec) MakeEnvPorts() {
+	if s.GenericTaskConfig.Environment.Ports == nil {
+		s.GenericTaskConfig.Environment.Ports = map[string]int{}
+	}
+	for _, pp := range s.ProxyPorts() {
+		port := pp.ProxyPort()
+		s.GenericTaskConfig.Environment.Ports[strconv.Itoa(port)] = port
+	}
 }
 
-// SetResourcePool todo.
-func (s GenericTaskSpec) SetResourcePool(resourcePool string) error { return nil }
+// ProxyPorts combines the system proxy ports and the ports of `environment.proxy_ports`.
+func (s *GenericTaskSpec) ProxyPorts() expconf.ProxyPortsConfig {
+	env := schemas.WithDefaults(s.GenericTaskConfig.Environment.ToExpconf())
+	epp := schemas.WithDefaults(s.Base.ExtraProxyPorts)
+	out := make(expconf.ProxyPortsConfig, 0, len(epp)+len(env.ProxyPorts()))
 
-// ResourcePool - returns resource pool.
-func (s GenericTaskSpec) ResourcePool() string { return s.GenericTaskConfig.Resources.ResourcePool() }
+	out = append(out, epp...)
+	out = append(out, env.ProxyPorts()...)
+
+	return out
+}

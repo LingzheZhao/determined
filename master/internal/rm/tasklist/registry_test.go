@@ -76,3 +76,29 @@ func TestRegistry(t *testing.T) {
 	assert.Assert(t, ok)
 	assert.Equal(t, val, "value2")
 }
+
+func TestRegistryUpsertDoesNotNotifyDelete(t *testing.T) {
+	registry := NewRegistry[string, string]()
+	registry.Upsert("key", "first")
+	val, ok := registry.Load("key")
+	assert.Assert(t, ok)
+	assert.Equal(t, val, "first")
+
+	deleted := make(chan bool)
+	registry.OnDelete("key", func() { close(deleted) })
+	registry.Upsert("key", "second")
+	val, _ = registry.Load("key")
+	assert.Equal(t, val, "second")
+	select {
+	case <-deleted:
+		t.Fatal("replacing a value notified a delete")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	assert.NilError(t, registry.Delete("key"))
+	select {
+	case <-deleted:
+	case <-time.After(time.Second):
+		t.Fatal("delete did not notify")
+	}
+}

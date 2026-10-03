@@ -586,6 +586,200 @@ func (x *Task) GetNoPause() bool {
 	return false
 }
 
+// GenericTask is a generic task with its owner and display fields, as listed by
+// GetGenericTasks.
+type GenericTask struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	// Unique ID of the task.
+	TaskId string `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// ID of the task's job in the job queue.
+	JobId string `protobuf:"bytes,2,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	// State of the task.
+	State GenericTaskState `protobuf:"varint,3,opt,name=state,proto3,enum=determined.task.v1.GenericTaskState" json:"state,omitempty"`
+	// Display name: the config's name, or "Generic Task <task_id>" without one.
+	Name string `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
+	// The config's description; empty without one.
+	Description string `protobuf:"bytes,5,opt,name=description,proto3" json:"description,omitempty"`
+	// ID of the user who owns the task.
+	UserId int32 `protobuf:"varint,6,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// Username of the user who owns the task.
+	Username string `protobuf:"bytes,7,opt,name=username,proto3" json:"username,omitempty"`
+	// ID of the task's workspace.
+	WorkspaceId int32 `protobuf:"varint,8,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	// ID of the task's project.
+	ProjectId int32 `protobuf:"varint,9,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	// When the task was created.
+	StartTime *timestamp.Timestamp `protobuf:"bytes,10,opt,name=start_time,json=startTime,proto3" json:"start_time,omitempty"`
+	// When the task ended, if it has.
+	EndTime *timestamp.Timestamp `protobuf:"bytes,11,opt,name=end_time,json=endTime,proto3,oneof" json:"end_time,omitempty"`
+	// ID of the parent task (empty for a root task).
+	ParentId *string `protobuf:"bytes,12,opt,name=parent_id,json=parentId,proto3,oneof" json:"parent_id,omitempty"`
+	// ID of the task this one was forked from.
+	ForkedFrom *string `protobuf:"bytes,13,opt,name=forked_from,json=forkedFrom,proto3,oneof" json:"forked_from,omitempty"`
+	// Whether the task cannot be paused (and so is never rerun).
+	NoPause bool `protobuf:"varint,14,opt,name=no_pause,json=noPause,proto3" json:"no_pause,omitempty"`
+	// Slots the task requests.
+	Slots int32 `protobuf:"varint,15,opt,name=slots,proto3" json:"slots,omitempty"`
+	// Resource pool the task runs in.
+	ResourcePool string `protobuf:"bytes,16,opt,name=resource_pool,json=resourcePool,proto3" json:"resource_pool,omitempty"`
+	// ID of the task's current or last allocation.
+	AllocationId *string `protobuf:"bytes,17,opt,name=allocation_id,json=allocationId,proto3,oneof" json:"allocation_id,omitempty"`
+}
+
+func (x *GenericTask) Reset() {
+	*x = GenericTask{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_determined_task_v1_task_proto_msgTypes[2]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *GenericTask) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GenericTask) ProtoMessage() {}
+
+func (x *GenericTask) ProtoReflect() protoreflect.Message {
+	mi := &file_determined_task_v1_task_proto_msgTypes[2]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GenericTask.ProtoReflect.Descriptor instead.
+func (*GenericTask) Descriptor() ([]byte, []int) {
+	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *GenericTask) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *GenericTask) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *GenericTask) GetState() GenericTaskState {
+	if x != nil {
+		return x.State
+	}
+	return GenericTaskState_GENERIC_TASK_STATE_UNSPECIFIED
+}
+
+func (x *GenericTask) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *GenericTask) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *GenericTask) GetUserId() int32 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
+func (x *GenericTask) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *GenericTask) GetWorkspaceId() int32 {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return 0
+}
+
+func (x *GenericTask) GetProjectId() int32 {
+	if x != nil {
+		return x.ProjectId
+	}
+	return 0
+}
+
+func (x *GenericTask) GetStartTime() *timestamp.Timestamp {
+	if x != nil {
+		return x.StartTime
+	}
+	return nil
+}
+
+func (x *GenericTask) GetEndTime() *timestamp.Timestamp {
+	if x != nil {
+		return x.EndTime
+	}
+	return nil
+}
+
+func (x *GenericTask) GetParentId() string {
+	if x != nil && x.ParentId != nil {
+		return *x.ParentId
+	}
+	return ""
+}
+
+func (x *GenericTask) GetForkedFrom() string {
+	if x != nil && x.ForkedFrom != nil {
+		return *x.ForkedFrom
+	}
+	return ""
+}
+
+func (x *GenericTask) GetNoPause() bool {
+	if x != nil {
+		return x.NoPause
+	}
+	return false
+}
+
+func (x *GenericTask) GetSlots() int32 {
+	if x != nil {
+		return x.Slots
+	}
+	return 0
+}
+
+func (x *GenericTask) GetResourcePool() string {
+	if x != nil {
+		return x.ResourcePool
+	}
+	return ""
+}
+
+func (x *GenericTask) GetAllocationId() string {
+	if x != nil && x.AllocationId != nil {
+		return *x.AllocationId
+	}
+	return ""
+}
+
 // Address represents an exposed port on a container.
 type Address struct {
 	state         protoimpl.MessageState
@@ -608,7 +802,7 @@ type Address struct {
 func (x *Address) Reset() {
 	*x = Address{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_determined_task_v1_task_proto_msgTypes[2]
+		mi := &file_determined_task_v1_task_proto_msgTypes[3]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -621,7 +815,7 @@ func (x *Address) String() string {
 func (*Address) ProtoMessage() {}
 
 func (x *Address) ProtoReflect() protoreflect.Message {
-	mi := &file_determined_task_v1_task_proto_msgTypes[2]
+	mi := &file_determined_task_v1_task_proto_msgTypes[3]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -634,7 +828,7 @@ func (x *Address) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Address.ProtoReflect.Descriptor instead.
 func (*Address) Descriptor() ([]byte, []int) {
-	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{2}
+	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Address) GetContainerIp() string {
@@ -682,7 +876,7 @@ type ResourcesStarted struct {
 func (x *ResourcesStarted) Reset() {
 	*x = ResourcesStarted{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_determined_task_v1_task_proto_msgTypes[3]
+		mi := &file_determined_task_v1_task_proto_msgTypes[4]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -695,7 +889,7 @@ func (x *ResourcesStarted) String() string {
 func (*ResourcesStarted) ProtoMessage() {}
 
 func (x *ResourcesStarted) ProtoReflect() protoreflect.Message {
-	mi := &file_determined_task_v1_task_proto_msgTypes[3]
+	mi := &file_determined_task_v1_task_proto_msgTypes[4]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -708,7 +902,7 @@ func (x *ResourcesStarted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourcesStarted.ProtoReflect.Descriptor instead.
 func (*ResourcesStarted) Descriptor() ([]byte, []int) {
-	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{3}
+	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ResourcesStarted) GetAddresses() []*Address {
@@ -743,7 +937,7 @@ type ResourcesFailure struct {
 func (x *ResourcesFailure) Reset() {
 	*x = ResourcesFailure{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_determined_task_v1_task_proto_msgTypes[4]
+		mi := &file_determined_task_v1_task_proto_msgTypes[5]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -756,7 +950,7 @@ func (x *ResourcesFailure) String() string {
 func (*ResourcesFailure) ProtoMessage() {}
 
 func (x *ResourcesFailure) ProtoReflect() protoreflect.Message {
-	mi := &file_determined_task_v1_task_proto_msgTypes[4]
+	mi := &file_determined_task_v1_task_proto_msgTypes[5]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -769,7 +963,7 @@ func (x *ResourcesFailure) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourcesFailure.ProtoReflect.Descriptor instead.
 func (*ResourcesFailure) Descriptor() ([]byte, []int) {
-	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{4}
+	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ResourcesFailure) GetFailureType() FailureType {
@@ -807,7 +1001,7 @@ type ResourcesStopped struct {
 func (x *ResourcesStopped) Reset() {
 	*x = ResourcesStopped{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_determined_task_v1_task_proto_msgTypes[5]
+		mi := &file_determined_task_v1_task_proto_msgTypes[6]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -820,7 +1014,7 @@ func (x *ResourcesStopped) String() string {
 func (*ResourcesStopped) ProtoMessage() {}
 
 func (x *ResourcesStopped) ProtoReflect() protoreflect.Message {
-	mi := &file_determined_task_v1_task_proto_msgTypes[5]
+	mi := &file_determined_task_v1_task_proto_msgTypes[6]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -833,7 +1027,7 @@ func (x *ResourcesStopped) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourcesStopped.ProtoReflect.Descriptor instead.
 func (*ResourcesStopped) Descriptor() ([]byte, []int) {
-	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{5}
+	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ResourcesStopped) GetFailure() *ResourcesFailure {
@@ -872,7 +1066,7 @@ type ResourcesSummary struct {
 func (x *ResourcesSummary) Reset() {
 	*x = ResourcesSummary{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_determined_task_v1_task_proto_msgTypes[6]
+		mi := &file_determined_task_v1_task_proto_msgTypes[7]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -885,7 +1079,7 @@ func (x *ResourcesSummary) String() string {
 func (*ResourcesSummary) ProtoMessage() {}
 
 func (x *ResourcesSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_determined_task_v1_task_proto_msgTypes[6]
+	mi := &file_determined_task_v1_task_proto_msgTypes[7]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -898,7 +1092,7 @@ func (x *ResourcesSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourcesSummary.ProtoReflect.Descriptor instead.
 func (*ResourcesSummary) Descriptor() ([]byte, []int) {
-	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{6}
+	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ResourcesSummary) GetResourcesId() string {
@@ -969,7 +1163,7 @@ type ProxyPortConfig struct {
 func (x *ProxyPortConfig) Reset() {
 	*x = ProxyPortConfig{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_determined_task_v1_task_proto_msgTypes[7]
+		mi := &file_determined_task_v1_task_proto_msgTypes[8]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -982,7 +1176,7 @@ func (x *ProxyPortConfig) String() string {
 func (*ProxyPortConfig) ProtoMessage() {}
 
 func (x *ProxyPortConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_determined_task_v1_task_proto_msgTypes[7]
+	mi := &file_determined_task_v1_task_proto_msgTypes[8]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -995,7 +1189,7 @@ func (x *ProxyPortConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyPortConfig.ProtoReflect.Descriptor instead.
 func (*ProxyPortConfig) Descriptor() ([]byte, []int) {
-	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{7}
+	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ProxyPortConfig) GetServiceId() string {
@@ -1061,7 +1255,7 @@ type AllocationSummary struct {
 func (x *AllocationSummary) Reset() {
 	*x = AllocationSummary{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_determined_task_v1_task_proto_msgTypes[8]
+		mi := &file_determined_task_v1_task_proto_msgTypes[9]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1074,7 +1268,7 @@ func (x *AllocationSummary) String() string {
 func (*AllocationSummary) ProtoMessage() {}
 
 func (x *AllocationSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_determined_task_v1_task_proto_msgTypes[8]
+	mi := &file_determined_task_v1_task_proto_msgTypes[9]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1087,7 +1281,7 @@ func (x *AllocationSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AllocationSummary.ProtoReflect.Descriptor instead.
 func (*AllocationSummary) Descriptor() ([]byte, []int) {
-	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{8}
+	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *AllocationSummary) GetTaskId() string {
@@ -1193,7 +1387,7 @@ type TaskLog struct {
 func (x *TaskLog) Reset() {
 	*x = TaskLog{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_determined_task_v1_task_proto_msgTypes[9]
+		mi := &file_determined_task_v1_task_proto_msgTypes[10]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1206,7 +1400,7 @@ func (x *TaskLog) String() string {
 func (*TaskLog) ProtoMessage() {}
 
 func (x *TaskLog) ProtoReflect() protoreflect.Message {
-	mi := &file_determined_task_v1_task_proto_msgTypes[9]
+	mi := &file_determined_task_v1_task_proto_msgTypes[10]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1219,7 +1413,7 @@ func (x *TaskLog) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskLog.ProtoReflect.Descriptor instead.
 func (*TaskLog) Descriptor() ([]byte, []int) {
-	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{9}
+	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *TaskLog) GetId() int32 {
@@ -1312,7 +1506,7 @@ type ResourcesSummary_Devices struct {
 func (x *ResourcesSummary_Devices) Reset() {
 	*x = ResourcesSummary_Devices{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_determined_task_v1_task_proto_msgTypes[10]
+		mi := &file_determined_task_v1_task_proto_msgTypes[11]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -1325,7 +1519,7 @@ func (x *ResourcesSummary_Devices) String() string {
 func (*ResourcesSummary_Devices) ProtoMessage() {}
 
 func (x *ResourcesSummary_Devices) ProtoReflect() protoreflect.Message {
-	mi := &file_determined_task_v1_task_proto_msgTypes[10]
+	mi := &file_determined_task_v1_task_proto_msgTypes[11]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1338,7 +1532,7 @@ func (x *ResourcesSummary_Devices) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourcesSummary_Devices.ProtoReflect.Descriptor instead.
 func (*ResourcesSummary_Devices) Descriptor() ([]byte, []int) {
-	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{6, 0}
+	return file_determined_task_v1_task_proto_rawDescGZIP(), []int{7, 0}
 }
 
 func (x *ResourcesSummary_Devices) GetDevices() []*devicev1.Device {
@@ -1430,6 +1624,58 @@ var file_determined_task_v1_task_proto_rawDesc = []byte{
 	0x5f, 0x69, 0x64, 0x42, 0x0d, 0x0a, 0x0b, 0x5f, 0x74, 0x61, 0x73, 0x6b, 0x5f, 0x73, 0x74, 0x61,
 	0x74, 0x65, 0x42, 0x0e, 0x0a, 0x0c, 0x5f, 0x66, 0x6f, 0x72, 0x6b, 0x65, 0x64, 0x5f, 0x66, 0x72,
 	0x6f, 0x6d, 0x42, 0x0b, 0x0a, 0x09, 0x5f, 0x6e, 0x6f, 0x5f, 0x70, 0x61, 0x75, 0x73, 0x65, 0x22,
+	0xbd, 0x06, 0x0a, 0x0b, 0x47, 0x65, 0x6e, 0x65, 0x72, 0x69, 0x63, 0x54, 0x61, 0x73, 0x6b, 0x12,
+	0x17, 0x0a, 0x07, 0x74, 0x61, 0x73, 0x6b, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,
+	0x52, 0x06, 0x74, 0x61, 0x73, 0x6b, 0x49, 0x64, 0x12, 0x15, 0x0a, 0x06, 0x6a, 0x6f, 0x62, 0x5f,
+	0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x6a, 0x6f, 0x62, 0x49, 0x64, 0x12,
+	0x3a, 0x0a, 0x05, 0x73, 0x74, 0x61, 0x74, 0x65, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x24,
+	0x2e, 0x64, 0x65, 0x74, 0x65, 0x72, 0x6d, 0x69, 0x6e, 0x65, 0x64, 0x2e, 0x74, 0x61, 0x73, 0x6b,
+	0x2e, 0x76, 0x31, 0x2e, 0x47, 0x65, 0x6e, 0x65, 0x72, 0x69, 0x63, 0x54, 0x61, 0x73, 0x6b, 0x53,
+	0x74, 0x61, 0x74, 0x65, 0x52, 0x05, 0x73, 0x74, 0x61, 0x74, 0x65, 0x12, 0x12, 0x0a, 0x04, 0x6e,
+	0x61, 0x6d, 0x65, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x12,
+	0x20, 0x0a, 0x0b, 0x64, 0x65, 0x73, 0x63, 0x72, 0x69, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x05,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x64, 0x65, 0x73, 0x63, 0x72, 0x69, 0x70, 0x74, 0x69, 0x6f,
+	0x6e, 0x12, 0x17, 0x0a, 0x07, 0x75, 0x73, 0x65, 0x72, 0x5f, 0x69, 0x64, 0x18, 0x06, 0x20, 0x01,
+	0x28, 0x05, 0x52, 0x06, 0x75, 0x73, 0x65, 0x72, 0x49, 0x64, 0x12, 0x1a, 0x0a, 0x08, 0x75, 0x73,
+	0x65, 0x72, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x07, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x75, 0x73,
+	0x65, 0x72, 0x6e, 0x61, 0x6d, 0x65, 0x12, 0x21, 0x0a, 0x0c, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x70,
+	0x61, 0x63, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x08, 0x20, 0x01, 0x28, 0x05, 0x52, 0x0b, 0x77, 0x6f,
+	0x72, 0x6b, 0x73, 0x70, 0x61, 0x63, 0x65, 0x49, 0x64, 0x12, 0x1d, 0x0a, 0x0a, 0x70, 0x72, 0x6f,
+	0x6a, 0x65, 0x63, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x09, 0x20, 0x01, 0x28, 0x05, 0x52, 0x09, 0x70,
+	0x72, 0x6f, 0x6a, 0x65, 0x63, 0x74, 0x49, 0x64, 0x12, 0x39, 0x0a, 0x0a, 0x73, 0x74, 0x61, 0x72,
+	0x74, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1a, 0x2e, 0x67,
+	0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x54,
+	0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d, 0x70, 0x52, 0x09, 0x73, 0x74, 0x61, 0x72, 0x74, 0x54,
+	0x69, 0x6d, 0x65, 0x12, 0x3a, 0x0a, 0x08, 0x65, 0x6e, 0x64, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x18,
+	0x0b, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1a, 0x2e, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70,
+	0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x74, 0x61, 0x6d,
+	0x70, 0x48, 0x00, 0x52, 0x07, 0x65, 0x6e, 0x64, 0x54, 0x69, 0x6d, 0x65, 0x88, 0x01, 0x01, 0x12,
+	0x20, 0x0a, 0x09, 0x70, 0x61, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x0c, 0x20, 0x01,
+	0x28, 0x09, 0x48, 0x01, 0x52, 0x08, 0x70, 0x61, 0x72, 0x65, 0x6e, 0x74, 0x49, 0x64, 0x88, 0x01,
+	0x01, 0x12, 0x24, 0x0a, 0x0b, 0x66, 0x6f, 0x72, 0x6b, 0x65, 0x64, 0x5f, 0x66, 0x72, 0x6f, 0x6d,
+	0x18, 0x0d, 0x20, 0x01, 0x28, 0x09, 0x48, 0x02, 0x52, 0x0a, 0x66, 0x6f, 0x72, 0x6b, 0x65, 0x64,
+	0x46, 0x72, 0x6f, 0x6d, 0x88, 0x01, 0x01, 0x12, 0x19, 0x0a, 0x08, 0x6e, 0x6f, 0x5f, 0x70, 0x61,
+	0x75, 0x73, 0x65, 0x18, 0x0e, 0x20, 0x01, 0x28, 0x08, 0x52, 0x07, 0x6e, 0x6f, 0x50, 0x61, 0x75,
+	0x73, 0x65, 0x12, 0x14, 0x0a, 0x05, 0x73, 0x6c, 0x6f, 0x74, 0x73, 0x18, 0x0f, 0x20, 0x01, 0x28,
+	0x05, 0x52, 0x05, 0x73, 0x6c, 0x6f, 0x74, 0x73, 0x12, 0x23, 0x0a, 0x0d, 0x72, 0x65, 0x73, 0x6f,
+	0x75, 0x72, 0x63, 0x65, 0x5f, 0x70, 0x6f, 0x6f, 0x6c, 0x18, 0x10, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x0c, 0x72, 0x65, 0x73, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x50, 0x6f, 0x6f, 0x6c, 0x12, 0x28, 0x0a,
+	0x0d, 0x61, 0x6c, 0x6c, 0x6f, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x69, 0x64, 0x18, 0x11,
+	0x20, 0x01, 0x28, 0x09, 0x48, 0x03, 0x52, 0x0c, 0x61, 0x6c, 0x6c, 0x6f, 0x63, 0x61, 0x74, 0x69,
+	0x6f, 0x6e, 0x49, 0x64, 0x88, 0x01, 0x01, 0x3a, 0x98, 0x01, 0x92, 0x41, 0x94, 0x01, 0x0a, 0x91,
+	0x01, 0xd2, 0x01, 0x07, 0x74, 0x61, 0x73, 0x6b, 0x5f, 0x69, 0x64, 0xd2, 0x01, 0x06, 0x6a, 0x6f,
+	0x62, 0x5f, 0x69, 0x64, 0xd2, 0x01, 0x05, 0x73, 0x74, 0x61, 0x74, 0x65, 0xd2, 0x01, 0x04, 0x6e,
+	0x61, 0x6d, 0x65, 0xd2, 0x01, 0x0b, 0x64, 0x65, 0x73, 0x63, 0x72, 0x69, 0x70, 0x74, 0x69, 0x6f,
+	0x6e, 0xd2, 0x01, 0x07, 0x75, 0x73, 0x65, 0x72, 0x5f, 0x69, 0x64, 0xd2, 0x01, 0x08, 0x75, 0x73,
+	0x65, 0x72, 0x6e, 0x61, 0x6d, 0x65, 0xd2, 0x01, 0x0c, 0x77, 0x6f, 0x72, 0x6b, 0x73, 0x70, 0x61,
+	0x63, 0x65, 0x5f, 0x69, 0x64, 0xd2, 0x01, 0x0a, 0x70, 0x72, 0x6f, 0x6a, 0x65, 0x63, 0x74, 0x5f,
+	0x69, 0x64, 0xd2, 0x01, 0x0a, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0xd2,
+	0x01, 0x08, 0x6e, 0x6f, 0x5f, 0x70, 0x61, 0x75, 0x73, 0x65, 0xd2, 0x01, 0x05, 0x73, 0x6c, 0x6f,
+	0x74, 0x73, 0xd2, 0x01, 0x0d, 0x72, 0x65, 0x73, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x5f, 0x70, 0x6f,
+	0x6f, 0x6c, 0x42, 0x0b, 0x0a, 0x09, 0x5f, 0x65, 0x6e, 0x64, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x42,
+	0x0c, 0x0a, 0x0a, 0x5f, 0x70, 0x61, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x69, 0x64, 0x42, 0x0e, 0x0a,
+	0x0c, 0x5f, 0x66, 0x6f, 0x72, 0x6b, 0x65, 0x64, 0x5f, 0x66, 0x72, 0x6f, 0x6d, 0x42, 0x10, 0x0a,
+	0x0e, 0x5f, 0x61, 0x6c, 0x6c, 0x6f, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x69, 0x64, 0x22,
 	0x89, 0x01, 0x0a, 0x07, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x21, 0x0a, 0x0c, 0x63,
 	0x6f, 0x6e, 0x74, 0x61, 0x69, 0x6e, 0x65, 0x72, 0x5f, 0x69, 0x70, 0x18, 0x01, 0x20, 0x01, 0x28,
 	0x09, 0x52, 0x0b, 0x63, 0x6f, 0x6e, 0x74, 0x61, 0x69, 0x6e, 0x65, 0x72, 0x49, 0x70, 0x12, 0x25,
@@ -1660,7 +1906,7 @@ func file_determined_task_v1_task_proto_rawDescGZIP() []byte {
 }
 
 var file_determined_task_v1_task_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_determined_task_v1_task_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_determined_task_v1_task_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_determined_task_v1_task_proto_goTypes = []interface{}{
 	(State)(0),                       // 0: determined.task.v1.State
 	(TaskType)(0),                    // 1: determined.task.v1.TaskType
@@ -1668,45 +1914,49 @@ var file_determined_task_v1_task_proto_goTypes = []interface{}{
 	(FailureType)(0),                 // 3: determined.task.v1.FailureType
 	(*Allocation)(nil),               // 4: determined.task.v1.Allocation
 	(*Task)(nil),                     // 5: determined.task.v1.Task
-	(*Address)(nil),                  // 6: determined.task.v1.Address
-	(*ResourcesStarted)(nil),         // 7: determined.task.v1.ResourcesStarted
-	(*ResourcesFailure)(nil),         // 8: determined.task.v1.ResourcesFailure
-	(*ResourcesStopped)(nil),         // 9: determined.task.v1.ResourcesStopped
-	(*ResourcesSummary)(nil),         // 10: determined.task.v1.ResourcesSummary
-	(*ProxyPortConfig)(nil),          // 11: determined.task.v1.ProxyPortConfig
-	(*AllocationSummary)(nil),        // 12: determined.task.v1.AllocationSummary
-	(*TaskLog)(nil),                  // 13: determined.task.v1.TaskLog
-	(*ResourcesSummary_Devices)(nil), // 14: determined.task.v1.ResourcesSummary.Devices
-	nil,                              // 15: determined.task.v1.ResourcesSummary.AgentDevicesEntry
-	(*timestamp.Timestamp)(nil),      // 16: google.protobuf.Timestamp
-	(logv1.LogLevel)(0),              // 17: determined.log.v1.LogLevel
-	(*devicev1.Device)(nil),          // 18: determined.device.v1.Device
+	(*GenericTask)(nil),              // 6: determined.task.v1.GenericTask
+	(*Address)(nil),                  // 7: determined.task.v1.Address
+	(*ResourcesStarted)(nil),         // 8: determined.task.v1.ResourcesStarted
+	(*ResourcesFailure)(nil),         // 9: determined.task.v1.ResourcesFailure
+	(*ResourcesStopped)(nil),         // 10: determined.task.v1.ResourcesStopped
+	(*ResourcesSummary)(nil),         // 11: determined.task.v1.ResourcesSummary
+	(*ProxyPortConfig)(nil),          // 12: determined.task.v1.ProxyPortConfig
+	(*AllocationSummary)(nil),        // 13: determined.task.v1.AllocationSummary
+	(*TaskLog)(nil),                  // 14: determined.task.v1.TaskLog
+	(*ResourcesSummary_Devices)(nil), // 15: determined.task.v1.ResourcesSummary.Devices
+	nil,                              // 16: determined.task.v1.ResourcesSummary.AgentDevicesEntry
+	(*timestamp.Timestamp)(nil),      // 17: google.protobuf.Timestamp
+	(logv1.LogLevel)(0),              // 18: determined.log.v1.LogLevel
+	(*devicev1.Device)(nil),          // 19: determined.device.v1.Device
 }
 var file_determined_task_v1_task_proto_depIdxs = []int32{
 	0,  // 0: determined.task.v1.Allocation.state:type_name -> determined.task.v1.State
 	1,  // 1: determined.task.v1.Task.task_type:type_name -> determined.task.v1.TaskType
 	4,  // 2: determined.task.v1.Task.allocations:type_name -> determined.task.v1.Allocation
-	16, // 3: determined.task.v1.Task.start_time:type_name -> google.protobuf.Timestamp
-	16, // 4: determined.task.v1.Task.end_time:type_name -> google.protobuf.Timestamp
+	17, // 3: determined.task.v1.Task.start_time:type_name -> google.protobuf.Timestamp
+	17, // 4: determined.task.v1.Task.end_time:type_name -> google.protobuf.Timestamp
 	2,  // 5: determined.task.v1.Task.task_state:type_name -> determined.task.v1.GenericTaskState
-	6,  // 6: determined.task.v1.ResourcesStarted.addresses:type_name -> determined.task.v1.Address
-	3,  // 7: determined.task.v1.ResourcesFailure.failure_type:type_name -> determined.task.v1.FailureType
-	8,  // 8: determined.task.v1.ResourcesStopped.failure:type_name -> determined.task.v1.ResourcesFailure
-	15, // 9: determined.task.v1.ResourcesSummary.agent_devices:type_name -> determined.task.v1.ResourcesSummary.AgentDevicesEntry
-	7,  // 10: determined.task.v1.ResourcesSummary.started:type_name -> determined.task.v1.ResourcesStarted
-	9,  // 11: determined.task.v1.ResourcesSummary.exited:type_name -> determined.task.v1.ResourcesStopped
-	16, // 12: determined.task.v1.AllocationSummary.registered_time:type_name -> google.protobuf.Timestamp
-	10, // 13: determined.task.v1.AllocationSummary.resources:type_name -> determined.task.v1.ResourcesSummary
-	11, // 14: determined.task.v1.AllocationSummary.proxy_ports:type_name -> determined.task.v1.ProxyPortConfig
-	16, // 15: determined.task.v1.TaskLog.timestamp:type_name -> google.protobuf.Timestamp
-	17, // 16: determined.task.v1.TaskLog.level:type_name -> determined.log.v1.LogLevel
-	18, // 17: determined.task.v1.ResourcesSummary.Devices.devices:type_name -> determined.device.v1.Device
-	14, // 18: determined.task.v1.ResourcesSummary.AgentDevicesEntry.value:type_name -> determined.task.v1.ResourcesSummary.Devices
-	19, // [19:19] is the sub-list for method output_type
-	19, // [19:19] is the sub-list for method input_type
-	19, // [19:19] is the sub-list for extension type_name
-	19, // [19:19] is the sub-list for extension extendee
-	0,  // [0:19] is the sub-list for field type_name
+	2,  // 6: determined.task.v1.GenericTask.state:type_name -> determined.task.v1.GenericTaskState
+	17, // 7: determined.task.v1.GenericTask.start_time:type_name -> google.protobuf.Timestamp
+	17, // 8: determined.task.v1.GenericTask.end_time:type_name -> google.protobuf.Timestamp
+	7,  // 9: determined.task.v1.ResourcesStarted.addresses:type_name -> determined.task.v1.Address
+	3,  // 10: determined.task.v1.ResourcesFailure.failure_type:type_name -> determined.task.v1.FailureType
+	9,  // 11: determined.task.v1.ResourcesStopped.failure:type_name -> determined.task.v1.ResourcesFailure
+	16, // 12: determined.task.v1.ResourcesSummary.agent_devices:type_name -> determined.task.v1.ResourcesSummary.AgentDevicesEntry
+	8,  // 13: determined.task.v1.ResourcesSummary.started:type_name -> determined.task.v1.ResourcesStarted
+	10, // 14: determined.task.v1.ResourcesSummary.exited:type_name -> determined.task.v1.ResourcesStopped
+	17, // 15: determined.task.v1.AllocationSummary.registered_time:type_name -> google.protobuf.Timestamp
+	11, // 16: determined.task.v1.AllocationSummary.resources:type_name -> determined.task.v1.ResourcesSummary
+	12, // 17: determined.task.v1.AllocationSummary.proxy_ports:type_name -> determined.task.v1.ProxyPortConfig
+	17, // 18: determined.task.v1.TaskLog.timestamp:type_name -> google.protobuf.Timestamp
+	18, // 19: determined.task.v1.TaskLog.level:type_name -> determined.log.v1.LogLevel
+	19, // 20: determined.task.v1.ResourcesSummary.Devices.devices:type_name -> determined.device.v1.Device
+	15, // 21: determined.task.v1.ResourcesSummary.AgentDevicesEntry.value:type_name -> determined.task.v1.ResourcesSummary.Devices
+	22, // [22:22] is the sub-list for method output_type
+	22, // [22:22] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_determined_task_v1_task_proto_init() }
@@ -1740,7 +1990,7 @@ func file_determined_task_v1_task_proto_init() {
 			}
 		}
 		file_determined_task_v1_task_proto_msgTypes[2].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Address); i {
+			switch v := v.(*GenericTask); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1752,7 +2002,7 @@ func file_determined_task_v1_task_proto_init() {
 			}
 		}
 		file_determined_task_v1_task_proto_msgTypes[3].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ResourcesStarted); i {
+			switch v := v.(*Address); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1764,7 +2014,7 @@ func file_determined_task_v1_task_proto_init() {
 			}
 		}
 		file_determined_task_v1_task_proto_msgTypes[4].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ResourcesFailure); i {
+			switch v := v.(*ResourcesStarted); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1776,7 +2026,7 @@ func file_determined_task_v1_task_proto_init() {
 			}
 		}
 		file_determined_task_v1_task_proto_msgTypes[5].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ResourcesStopped); i {
+			switch v := v.(*ResourcesFailure); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1788,7 +2038,7 @@ func file_determined_task_v1_task_proto_init() {
 			}
 		}
 		file_determined_task_v1_task_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ResourcesSummary); i {
+			switch v := v.(*ResourcesStopped); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1800,7 +2050,7 @@ func file_determined_task_v1_task_proto_init() {
 			}
 		}
 		file_determined_task_v1_task_proto_msgTypes[7].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ProxyPortConfig); i {
+			switch v := v.(*ResourcesSummary); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1812,7 +2062,7 @@ func file_determined_task_v1_task_proto_init() {
 			}
 		}
 		file_determined_task_v1_task_proto_msgTypes[8].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*AllocationSummary); i {
+			switch v := v.(*ProxyPortConfig); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1824,7 +2074,7 @@ func file_determined_task_v1_task_proto_init() {
 			}
 		}
 		file_determined_task_v1_task_proto_msgTypes[9].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*TaskLog); i {
+			switch v := v.(*AllocationSummary); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -1836,6 +2086,18 @@ func file_determined_task_v1_task_proto_init() {
 			}
 		}
 		file_determined_task_v1_task_proto_msgTypes[10].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*TaskLog); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_determined_task_v1_task_proto_msgTypes[11].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*ResourcesSummary_Devices); i {
 			case 0:
 				return &v.state
@@ -1850,17 +2112,18 @@ func file_determined_task_v1_task_proto_init() {
 	}
 	file_determined_task_v1_task_proto_msgTypes[0].OneofWrappers = []interface{}{}
 	file_determined_task_v1_task_proto_msgTypes[1].OneofWrappers = []interface{}{}
-	file_determined_task_v1_task_proto_msgTypes[4].OneofWrappers = []interface{}{}
-	file_determined_task_v1_task_proto_msgTypes[6].OneofWrappers = []interface{}{}
-	file_determined_task_v1_task_proto_msgTypes[8].OneofWrappers = []interface{}{}
+	file_determined_task_v1_task_proto_msgTypes[2].OneofWrappers = []interface{}{}
+	file_determined_task_v1_task_proto_msgTypes[5].OneofWrappers = []interface{}{}
+	file_determined_task_v1_task_proto_msgTypes[7].OneofWrappers = []interface{}{}
 	file_determined_task_v1_task_proto_msgTypes[9].OneofWrappers = []interface{}{}
+	file_determined_task_v1_task_proto_msgTypes[10].OneofWrappers = []interface{}{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_determined_task_v1_task_proto_rawDesc,
 			NumEnums:      4,
-			NumMessages:   12,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -38,15 +38,32 @@ func TestStartAllocation(t *testing.T) {
 }
 
 func TestRestoreFailed(t *testing.T) {
-	closeDB, _, id, q, exitFuture := requireStarted(t)
-	defer closeDB()
-	defer requireKilled(t, id, exitFuture)
+	// The agent resource manager reports a failed restore as a RestoreError, which is a transient
+	// system error; the Kubernetes resource manager reports it as ResourcesMissing, which is not.
+	for _, tc := range []struct {
+		name        string
+		failureType sproto.FailureType
+		transient   bool
+	}{
+		{"restore error", sproto.RestoreError, true},
+		{"resources missing", sproto.ResourcesMissing, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			closeDB, _, id, q, exitFuture := requireStarted(t)
+			defer closeDB()
+			defer requireKilled(t, id, exitFuture)
 
-	q.Put(&sproto.ResourcesFailedError{
-		FailureType: sproto.RestoreError,
-		ErrMsg:      "things weren't there",
-	})
-	requireTerminated(t, id, exitFuture)
+			failure := sproto.ResourcesFailedError{
+				FailureType: tc.failureType,
+				ErrMsg:      "things weren't there",
+			}
+			q.Put(&failure)
+			exit := requireTerminated(t, id, exitFuture)
+			// The allocation reports the failure itself, not a handler crash.
+			require.Equal(t, failure, exit.Err)
+			require.Equal(t, tc.transient, sproto.IsTransientSystemError(exit.Err))
+		})
+	}
 }
 
 func TestInvalidResourcesRequest(t *testing.T) {
@@ -394,6 +411,40 @@ func TestPreemption(t *testing.T) {
 			requireTerminated(t, id, exitFuture)
 		})
 	}
+}
+
+// A graceful-stop allocation that the scheduler may not preempt, such as a generic task, still gets
+// the preemption signal when it is terminated, e.g. by a pause.
+func TestGracefulStopWithoutPreemptible(t *testing.T) {
+	closeDB, _, id, q, exitFuture := requireStarted(t, func(ar *sproto.AllocateRequest) {
+		ar.Preemption.Preemptible = false
+		ar.Preemption.GracefulStop = true
+	})
+	defer closeDB()
+	defer requireKilled(t, id, exitFuture)
+
+	rID, _ := requireAssigned(t, id, q)
+	q.Put(&sproto.ResourcesStateChanged{
+		ResourcesID:      rID,
+		ResourcesState:   sproto.Running,
+		ResourcesStarted: &sproto.ResourcesStarted{},
+	})
+	requireState(t, id, model.AllocationStateRunning)
+	require.NoError(t, DefaultService.SetReady(context.Background(), id))
+
+	require.NoError(t, DefaultService.Signal(id, TerminateAllocation, "user requested pause"))
+	preempted, err := DefaultService.WatchPreemption(context.Background(), id)
+	require.NoError(t, err)
+	require.True(t, preempted)
+	require.NoError(t, DefaultService.AckPreemption(context.Background(), id))
+
+	q.Put(&sproto.ResourcesStateChanged{
+		ResourcesID:      rID,
+		ResourcesState:   sproto.Terminated,
+		ResourcesStopped: &sproto.ResourcesStopped{},
+	})
+	exit := requireTerminated(t, id, exitFuture)
+	require.NoError(t, exit.Err)
 }
 
 func TestSignalBeforeLaunch(t *testing.T) {

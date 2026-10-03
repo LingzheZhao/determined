@@ -12,9 +12,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 	"golang.org/x/exp/slices"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/determined-ai/determined/master/internal/db"
-	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/sproto"
 	"github.com/determined-ai/determined/master/internal/task"
 	"github.com/determined-ai/determined/master/pkg/logger"
@@ -60,7 +61,7 @@ func genericTaskResumeConflicts(ctx context.Context, tasks []model.Task) error {
 		return err
 	}
 	if n != 0 {
-		return fmt.Errorf("generic task resume is in progress")
+		return status.Error(codes.Aborted, "generic task resume is in progress")
 	}
 	return nil
 }
@@ -204,7 +205,7 @@ func makeGenericTaskResumePlan(ctx context.Context, rootID model.TaskID, members
 			return nil, err
 		}
 		if !ended {
-			return nil, fmt.Errorf("task %s allocation has not stopped", member.TaskID)
+			return nil, status.Errorf(codes.FailedPrecondition, "task %s allocation has not stopped", member.TaskID)
 		}
 		plan = append(plan, genericTaskResume{
 			RootTaskID: rootID, OperationID: operationID, TaskID: member.TaskID, OldAllocationID: oldAllocationID,
@@ -213,7 +214,7 @@ func makeGenericTaskResumePlan(ctx context.Context, rootID model.TaskID, members
 		})
 	}
 	if len(plan) == 0 {
-		return nil, fmt.Errorf("task %s has no paused members", rootID)
+		return nil, status.Errorf(codes.FailedPrecondition, "task %s has no paused members", rootID)
 	}
 	sort.SliceStable(plan, func(i, j int) bool { return plan[i].TaskID == rootID })
 	for i := range plan {
@@ -227,7 +228,7 @@ func makeGenericTaskResumePlan(ctx context.Context, rootID model.TaskID, members
 			return err
 		}
 		if state != model.TaskStatePaused {
-			return fmt.Errorf("task %s is no longer paused", rootID)
+			return status.Errorf(codes.Aborted, "task %s is no longer paused", rootID)
 		}
 		_, err := tx.NewInsert().Model(&plan).Exec(ctx)
 		return err
@@ -336,11 +337,11 @@ func (a *apiServer) runGenericTaskResume(ctx context.Context, plan []genericTask
 				return fmt.Errorf("cannot claim paused task %s", member.TaskID)
 			}
 		}
-		if _, found := tasklist.GroupPriorityChangeRegistry.Load(*t.JobID); !found {
-			priorityChange := func(priority int) error { spec.GenericTaskConfig.Resources.SetPriority(&priority); return nil }
-			if err := tasklist.GroupPriorityChangeRegistry.Add(*t.JobID, priorityChange); err != nil {
-				return err
-			}
+		if spec.Base.TaskID == "" { // specs persisted before the task ID was stored in them
+			spec.Base.TaskID = string(member.TaskID)
+		}
+		if err := registerGenericTaskJob(a.m.rm, member.TaskID, member.NewAllocationID, *t.JobID, spec); err != nil {
+			return err
 		}
 		live := slices.Contains(task.DefaultService.GetAllAllocationIDs(), member.NewAllocationID)
 		if !live {
@@ -371,11 +372,12 @@ func (a *apiServer) startGenericTaskResumeAllocation(
 	return task.DefaultService.StartAllocation(logCtx, sproto.AllocateRequest{
 		AllocationID: member.NewAllocationID, TaskID: member.TaskID, JobID: *t.JobID,
 		JobSubmissionTime: now, RequestTime: now, IsUserVisible: true,
-		Name:                fmt.Sprintf("Generic Task %s", member.TaskID),
+		Name:                spec.DisplayName(),
+		ProxyPorts:          sproto.NewProxyPortConfig(spec.ProxyPorts(), member.TaskID),
 		SlotsNeeded:         *spec.GenericTaskConfig.Resources.Slots(),
 		ResourcePool:        spec.GenericTaskConfig.Resources.ResourcePool(),
 		FittingRequirements: sproto.FittingRequirements{SingleAgent: singleNode},
-		Preemption: sproto.PreemptionConfig{Preemptible: true,
+		Preemption: sproto.PreemptionConfig{GracefulStop: true,
 			TimeoutDuration: time.Duration(spec.GenericTaskConfig.PreemptionTimeout) * time.Second},
 		Restore: restore,
 	}, a.m.db, a.m.rm, spec,

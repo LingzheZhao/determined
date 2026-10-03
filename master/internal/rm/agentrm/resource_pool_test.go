@@ -198,6 +198,7 @@ func TestScalingInfoAgentSummary(t *testing.T) {
 func TestSettingGroupPriority(t *testing.T) {
 	defaultPriority := 50
 	config := config.ResourcePoolConfig{
+		PoolName: "default",
 		Scheduler: &config.SchedulerConfig{
 			Priority: &config.PrioritySchedulerConfig{
 				DefaultPriority: &defaultPriority,
@@ -231,9 +232,50 @@ func TestSettingGroupPriority(t *testing.T) {
 	rp.mu.Unlock()
 }
 
+// Replacing a job's priority-change callback, as a generic task does when a retried unpause
+// registers an allocation that is already running, must not stop the job's scheduling group;
+// deleting the registration must.
+func TestGroupSurvivesRegistrationReplace(t *testing.T) {
+	defaultPriority := 50
+	config := config.ResourcePoolConfig{
+		PoolName: "default",
+		Scheduler: &config.SchedulerConfig{
+			Priority: &config.PrioritySchedulerConfig{
+				DefaultPriority: &defaultPriority,
+			},
+			FittingPolicy: best,
+		},
+	}
+	rp := setupResourcePool(t, nil, &config, nil, nil, nil)
+	defer rp.stop()
+
+	jobID := model.NewJobID()
+	assert.NilError(t, tasklist.GroupPriorityChangeRegistry.Add(jobID, nil))
+	require.NoError(t, rp.SetGroupPriority(sproto.SetGroupPriority{Priority: 22, JobID: jobID}))
+
+	tasklist.GroupPriorityChangeRegistry.Upsert(jobID, func(int) error { return nil })
+	time.Sleep(100 * time.Millisecond)
+	rp.mu.Lock()
+	group := rp.groups[jobID]
+	rp.mu.Unlock()
+	assert.Check(t, group != nil, "replacing the registration stopped the job")
+	assert.Equal(t, *group.Priority, 22)
+
+	assert.NilError(t, tasklist.GroupPriorityChangeRegistry.Delete(jobID))
+	stopped := false
+	for deadline := time.Now().Add(time.Second); !stopped && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+		rp.mu.Lock()
+		stopped = rp.groups[jobID] == nil
+		rp.mu.Unlock()
+	}
+	assert.Check(t, stopped, "deleting the registration did not stop the job")
+}
+
 func TestGetResourceSummary(t *testing.T) {
 	defaultPriority := 50
 	config := config.ResourcePoolConfig{
+		PoolName: "default",
 		Scheduler: &config.SchedulerConfig{
 			Priority: &config.PrioritySchedulerConfig{
 				DefaultPriority: &defaultPriority,

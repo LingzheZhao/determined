@@ -150,6 +150,10 @@ func FromContainerStopped(cs *aproto.ContainerStopped) *ResourcesStopped {
 			ErrMsg:      f.ErrMsg,
 			ExitCode:    FromContainerExitCode(f.ExitCode),
 		}
+		if rs.Failure.FailureType == UnknownError {
+			// Keep the agent's own failure type, which UnknownError drops.
+			rs.Failure.ErrMsg = fmt.Sprintf("%s: %s", f.FailureType, f.ErrMsg)
+		}
 	}
 	return rs
 }
@@ -246,7 +250,8 @@ func FromContainerExitCode(c *aproto.ExitCode) *ExitCode {
 }
 
 // FailureType denotes the type of failure that resulted in the container stopping.
-// Each FailureType must be handled by ./internal/task/allocation.go.
+// Each FailureType should be handled by ./internal/task/allocation.go; one it does not list is
+// reported as an unexpected failure.
 type FailureType string
 
 const (
@@ -275,7 +280,7 @@ const (
 	RestoreError FailureType = "RM failed to restore the allocation"
 
 	// UnknownError denotes an internal error that did not map to a know failure type.
-	UnknownError = "unknown agent failure: %s"
+	UnknownError FailureType = "unknown agent failure"
 )
 
 // Proto returns the proto representation of the device type.
@@ -325,7 +330,7 @@ func FromContainerFailureType(t aproto.FailureType) FailureType {
 	case aproto.RestoreError:
 		return RestoreError
 	default:
-		return FailureType(fmt.Sprintf(UnknownError, t))
+		return UnknownError
 	}
 }
 

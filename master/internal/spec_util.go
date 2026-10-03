@@ -15,7 +15,6 @@ import (
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/grpcutil"
 	"github.com/determined-ai/determined/master/internal/rm"
-	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/sproto"
 	"github.com/determined-ai/determined/master/internal/task"
 	"github.com/determined-ai/determined/master/internal/user"
@@ -143,6 +142,8 @@ func getGenericTaskOnAllocationExit(
 ) func(ae *task.AllocationExited) {
 	return func(ae *task.AllocationExited) {
 		syslog := logrus.WithField("component", "genericTask").WithFields(logCtx.Fields())
+		paused := false
+		defer func() { genericTaskAllocationExited(jobID, allocationID, paused) }()
 		defer func() {
 			if err := finishCanceledGenericTaskResume(taskID, allocationID); err != nil {
 				syslog.WithError(err).Error("finishing canceled task resume")
@@ -153,9 +154,6 @@ func getGenericTaskOnAllocationExit(
 			if err != nil {
 				syslog.WithError(err).Error("setting task to error state")
 			}
-			if err := tasklist.GroupPriorityChangeRegistry.Delete(jobID); err != nil {
-				syslog.WithError(err).Error("deleting group priority change registry")
-			}
 			return
 		}
 		isPaused, err := db.IsPaused(ctx, taskID)
@@ -163,6 +161,7 @@ func getGenericTaskOnAllocationExit(
 			syslog.WithError(err).Error("checking if a task is paused")
 		}
 		if isPaused {
+			paused = true
 			err = db.SetPausedState(taskID, time.Now().UTC())
 			if err != nil {
 				syslog.WithError(err).Error("setting task to paused state")
@@ -171,9 +170,6 @@ func getGenericTaskOnAllocationExit(
 		}
 		if err := db.CompleteGenericTask(taskID, time.Now().UTC()); err != nil {
 			syslog.WithError(err).Error("marking generic task complete")
-		}
-		if err := tasklist.GroupPriorityChangeRegistry.Delete(jobID); err != nil {
-			syslog.WithError(err).Error("deleting group priority change registry")
 		}
 	}
 }

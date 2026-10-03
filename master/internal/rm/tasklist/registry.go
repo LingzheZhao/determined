@@ -48,6 +48,23 @@ func (r *Registry[K, V]) Add(key K, value V) error {
 	return nil
 }
 
+// Upsert stores the value for the given key, adding the key if it does not exist. Replacing the
+// value of an existing key is not a delete: callbacks registered with OnDelete keep waiting.
+func (r *Registry[K, V]) Upsert(key K, value V) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if e, ok := r.data[key]; ok {
+		e.value = value
+		r.data[key] = e
+		return
+	}
+	r.data[key] = entry[V]{
+		value: value,
+		done:  make(chan bool),
+	}
+}
+
 // Delete deletes the given key from the registry. If the key does not exist, an error is returned.
 func (r *Registry[K, V]) Delete(key K) error {
 	r.mu.Lock()

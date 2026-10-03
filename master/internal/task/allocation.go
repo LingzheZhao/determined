@@ -646,7 +646,7 @@ func (a *allocation) resourcesAllocated(msg *sproto.ResourcesAllocated) error {
 		return errors.Wrap(err, "recording task queued stats")
 	}
 
-	if a.req.Preemption.Preemptible {
+	if a.req.Preemption.StopsGracefully() {
 		preemptible.Register(a.req.AllocationID.String())
 		a.closers = append(a.closers, func() {
 			preemptible.Unregister(a.req.AllocationID.String())
@@ -918,7 +918,7 @@ func (a *allocation) restoreResourceFailure(msg *sproto.ResourcesFailedError) {
 		a.syslog.WithError(err).Error("failed to mark allocation completed")
 	}
 
-	a.crash(msg)
+	a.crash(*msg)
 }
 
 // releaseResources prompts the allocate to release resources.
@@ -965,7 +965,7 @@ func (a *allocation) tryExitOrTerminate(reason string, forcePreemption bool) {
 	}
 
 	switch {
-	case a.req.Preemption.Preemptible && coalesceBool(a.model.IsReady, false) || forcePreemption:
+	case a.req.Preemption.StopsGracefully() && coalesceBool(a.model.IsReady, false) || forcePreemption:
 		a.preempt(reason)
 	default:
 		a.kill(reason)
@@ -1197,7 +1197,7 @@ func (a *allocation) calculateExitStatus(reason string) (
 	switch {
 	case a.killedWhileRunning:
 		return fmt.Sprintf("allocation killed after %s", reason), false, logrus.InfoLevel, nil
-	case a.req.Preemption.Preemptible && preemptible.Acknowledged(a.req.AllocationID.String()):
+	case a.req.Preemption.StopsGracefully() && preemptible.Acknowledged(a.req.AllocationID.String()):
 		return fmt.Sprintf("allocation preempted after %s", reason), false, logrus.InfoLevel, nil
 	case a.exitErr == nil && len(a.resources.exited()) > 0:
 		return fmt.Sprintf("allocation stopped early after %s", reason), true, logrus.InfoLevel, nil
@@ -1210,14 +1210,18 @@ func (a *allocation) calculateExitStatus(reason string) (
 					return "allocation terminated daemon processes as part of normal exit", false, logrus.InfoLevel, nil
 				}
 				return fmt.Sprintf("allocation failed: %s", err), false, logrus.ErrorLevel, err
-			case sproto.AgentError, sproto.AgentFailed:
+			case sproto.AgentError, sproto.AgentFailed, sproto.UnknownError:
 				return fmt.Sprintf("allocation failed due to agent failure: %s", err), false, logrus.ErrorLevel, err
 			case sproto.TaskAborted, sproto.ResourcesAborted:
 				return fmt.Sprintf("allocation aborted: %s", err.FailureType), false, logrus.InfoLevel, err
 			case sproto.RestoreError:
 				return fmt.Sprintf("allocation failed due to restore error: %s", err), false, logrus.ErrorLevel, err
+			case sproto.ResourcesMissing:
+				return fmt.Sprintf("allocation failed due to missing resources: %s", err),
+					false, logrus.ErrorLevel, err
 			default:
-				panic(fmt.Errorf("unexpected allocation failure: %w", err))
+				a.syslog.WithError(err).Error("allocation failed with an unexpected failure type")
+				return fmt.Sprintf("allocation failed: %s", err), false, logrus.ErrorLevel, err
 			}
 		default:
 			return fmt.Sprintf("allocation handler crashed due to error: %s", err), false, logrus.ErrorLevel, err
@@ -1226,7 +1230,9 @@ func (a *allocation) calculateExitStatus(reason string) (
 		return fmt.Sprintf("allocation aborted after %s", reason), false, logrus.InfoLevel, nil
 	default:
 		// If we ever exit without a reason and we have no exited resources, something has gone wrong.
-		panic("allocation exited early without a valid reason")
+		err := errors.Errorf("allocation exited early without a valid reason after %s", reason)
+		a.syslog.WithError(err).Error("allocation exited in an unexpected state")
+		return err.Error(), false, logrus.ErrorLevel, err
 	}
 }
 

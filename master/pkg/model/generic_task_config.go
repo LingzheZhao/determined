@@ -36,8 +36,13 @@ func DefaultConfigGenericTaskConfig(
 	return out
 }
 
+const maxGenericTaskNameLength = 255
+
 // GenericTaskConfig like expconf or command config but for generic tasks.
 type GenericTaskConfig struct {
+	// Name and Description are shown in the job queue and the task list; both are optional.
+	Name        string                  `json:"name,omitempty"`
+	Description string                  `json:"description,omitempty"`
 	BindMounts  BindMountsConfig        `json:"bind_mounts"`
 	Environment Environment             `json:"environment"`
 	Resources   expconf.ResourcesConfig `json:"resources"`
@@ -56,5 +61,7 @@ func (c *GenericTaskConfig) Validate() []error {
 		check.GreaterThanOrEqualTo(c.Resources.Slots(), 0,
 			"resources.slots must be >= 0"),
 		check.GreaterThan(len(c.Entrypoint), 0, "entrypoint must be non-empty"),
+		check.LessThanOrEqualTo(len(c.Name), maxGenericTaskNameLength,
+			"name must be at most 255 characters"),
 	}
 }

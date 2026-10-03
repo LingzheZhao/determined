@@ -61,7 +61,6 @@ import (
 	"github.com/determined-ai/determined/master/internal/rm/dispatcherrm"
 	"github.com/determined-ai/determined/master/internal/rm/kubernetesrm"
 	"github.com/determined-ai/determined/master/internal/rm/multirm"
-	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/saas/saasprovisioner"
 	"github.com/determined-ai/determined/master/internal/sproto"
 	"github.com/determined-ai/determined/master/internal/stream"
@@ -908,11 +907,16 @@ func (m *Master) restoreGenericTasks(ctx context.Context) error {
 			"task-type": snapshots[i].Task.TaskType,
 		}
 
-		priorityChange := func(priority int) error {
-			return nil
+		if snapshots[i].GenericTaskSpec.Base.TaskID == "" { // persisted before the spec stored its task ID
+			snapshots[i].GenericTaskSpec.Base.TaskID = string(taskID)
 		}
-		if err := tasklist.GroupPriorityChangeRegistry.Add(*jobID, priorityChange); err != nil {
-			return err
+		if err := registerGenericTaskJob(
+			m.rm, taskID, snapshots[i].AllocationID, *jobID, snapshots[i].GenericTaskSpec,
+		); err != nil {
+			// The task is registered; only its priority or weight did not reach the scheduler,
+			// which must not keep the rest of the tasks from being restored.
+			log.WithError(err).WithField("task-id", taskID).
+				Warn("restoring generic task scheduling parameters")
 		}
 
 		onAllocationExit := getGenericTaskOnAllocationExit(ctx, taskID, snapshots[i].AllocationID, *jobID, logCtx)
@@ -938,9 +942,16 @@ func (m *Master) restoreGenericTasks(ctx context.Context) error {
 				JobID:             *jobID,
 				JobSubmissionTime: snapshots[i].RegisteredTime,
 				IsUserVisible:     true,
-				Name:              fmt.Sprintf("Generic Task %s", taskID),
+				Name:              snapshots[i].GenericTaskSpec.DisplayName(),
 				SlotsNeeded:       *slots,
-				ResourcePool:      *resourcePool,
+				ProxyPorts: sproto.NewProxyPortConfig(
+					snapshots[i].GenericTaskSpec.ProxyPorts(), taskID),
+				Preemption: sproto.PreemptionConfig{
+					GracefulStop: true,
+					TimeoutDuration: time.Duration(
+						snapshots[i].GenericTaskSpec.GenericTaskConfig.PreemptionTimeout) * time.Second,
+				},
+				ResourcePool: *resourcePool,
 				FittingRequirements: sproto.FittingRequirements{
 					SingleAgent: isSingleNode,
 				},

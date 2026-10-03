@@ -74,7 +74,7 @@ func (a *ExperimentAuthZBasic) CanEditExperiment(
 		return nil
 	}
 	return authz.PermissionDeniedError{}.WithPrefix(
-		"non-admin users may not control other users' experiments",
+		"non-admin users may not control other users' experiments:",
 	)
 }
 
