@@ -18109,7 +18109,7 @@ def post_CreateGenericTask(
     *,
     body: "v1CreateGenericTaskRequest",
 ) -> "v1CreateGenericTaskResponse":
-    """Create an experiment."""
+    """Create a generic task."""
     _params = None
     _resp = session._do_request(
         method="POST",
@@ -19448,7 +19448,7 @@ def get_GetGenericTaskConfig(
     *,
     taskId: str,
 ) -> "v1GetGenericTaskConfigResponse":
-    """Get task config
+    """Get the config of a generic task.
 
     - taskId: The id of the task.
     """
@@ -21888,7 +21888,7 @@ def post_KillGenericTask(
     body: "v1KillGenericTaskRequest",
     taskId: str,
 ) -> None:
-    """Kill generic task
+    """Kill a generic task and its descendants, or its whole tree from the root.
 
     - taskId: The id of the task.
     """
@@ -22985,7 +22985,7 @@ def post_PauseGenericTask(
     *,
     taskId: str,
 ) -> None:
-    """Pause generic task
+    """Pause a generic task and its pausable descendants.
 
     - taskId: The id of the task.
     """
@@ -24969,7 +24969,7 @@ def post_UnpauseGenericTask(
     *,
     taskId: str,
 ) -> None:
-    """Unpause generic task
+    """Unpause a paused generic task and its descendants.
 
     - taskId: The id of the task.
     """

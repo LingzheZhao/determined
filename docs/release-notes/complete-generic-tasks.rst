@@ -28,6 +28,10 @@
    restart. Previously only a task that had been unpaused before got this timeout. The default
    timeout is 0, so tasks that do not set it are stopped at once, as before.
 
+-  API: The generic task endpoints (create, get config, kill, pause and unpause) are listed under
+   ``Tasks`` instead of ``Internal`` in the REST API reference, with their own descriptions. In the
+   TypeScript bindings they moved from ``InternalApi`` to ``TasksApi``.
+
 **Bug Fixes**
 
 -  Tasks: Access checks for generic tasks, and the task log webhooks of a generic task, now use the

@@ -389,7 +389,7 @@ service Determined {
     };
   }
 
-  // Create an experiment.
+  // Create a generic task.
   rpc CreateGenericTask(CreateGenericTaskRequest)
       returns (CreateGenericTaskResponse) {
     option (google.api.http) = {
@@ -397,7 +397,7 @@ service Determined {
       body: "*"
     };
     option (grpc.gateway.protoc_gen_swagger.options.openapiv2_operation) = {
-      tags: "Internal"
+      tags: "Tasks"
     };
   }
 
@@ -2630,18 +2630,18 @@ service Determined {
     };
   }
 
-  // Get task config
+  // Get the config of a generic task.
   rpc GetGenericTaskConfig(GetGenericTaskConfigRequest)
       returns (GetGenericTaskConfigResponse) {
     option (google.api.http) = {
       get: "/api/v1/tasks/{task_id}/config"
     };
     option (grpc.gateway.protoc_gen_swagger.options.openapiv2_operation) = {
-      tags: "Internal"
+      tags: "Tasks"
     };
   }
 
-  // Kill generic task
+  // Kill a generic task and its descendants, or its whole tree from the root.
   rpc KillGenericTask(KillGenericTaskRequest)
       returns (KillGenericTaskResponse) {
     option (google.api.http) = {
@@ -2649,29 +2649,29 @@ service Determined {
       body: "*"
     };
     option (grpc.gateway.protoc_gen_swagger.options.openapiv2_operation) = {
-      tags: "Internal"
+      tags: "Tasks"
     };
   }
 
-  // Pause generic task
+  // Pause a generic task and its pausable descendants.
   rpc PauseGenericTask(PauseGenericTaskRequest)
       returns (PauseGenericTaskResponse) {
     option (google.api.http) = {
       post: "/api/v1/tasks/{task_id}/pause"
     };
     option (grpc.gateway.protoc_gen_swagger.options.openapiv2_operation) = {
-      tags: "Internal"
+      tags: "Tasks"
     };
   }
 
-  // Unpause generic task
+  // Unpause a paused generic task and its descendants.
   rpc UnpauseGenericTask(UnpauseGenericTaskRequest)
       returns (UnpauseGenericTaskResponse) {
     option (google.api.http) = {
       post: "/api/v1/tasks/{task_id}/unpause"
     };
     option (grpc.gateway.protoc_gen_swagger.options.openapiv2_operation) = {
-      tags: "Internal"
+      tags: "Tasks"
     };
   }
 
