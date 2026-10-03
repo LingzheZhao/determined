@@ -309,7 +309,7 @@ args_description: List[Any] = [
             cli.Cmd(
                 "create",
                 create,
-                argparse.SUPPRESS,
+                "create a generic task from a config file",
                 [
                     cli.Arg(
                         "config_file", type=argparse.FileType("r"), help="task config file (.yaml)"
@@ -336,7 +336,11 @@ args_description: List[Any] = [
                         action="store_true",
                         help="follow the logs of the task that is created",
                     ),
-                    cli.Arg("--fork", type=str, help="id of parent task to fork from"),
+                    cli.Arg(
+                        "--fork",
+                        type=str,
+                        help="ID of a generic task whose config and context this task starts from",
+                    ),
                     cli.Arg(
                         "-p",
                         "--parent",
@@ -358,7 +362,7 @@ args_description: List[Any] = [
             cli.Cmd(
                 "config",
                 config,
-                argparse.SUPPRESS,
+                "print the config of a generic task",
                 [
                     cli.Arg("task_id", type=str, help="ID of task to pull config from"),
                     cli.Arg(
@@ -371,9 +375,9 @@ args_description: List[Any] = [
             cli.Cmd(
                 "fork",
                 fork,
-                argparse.SUPPRESS,
+                "create a generic task from the config and context of another one",
                 [
-                    cli.Arg("parent_task_id", type=str, help="Id of parent task to fork from"),
+                    cli.Arg("parent_task_id", type=str, help="ID of the generic task to fork from"),
                     cli.Arg(
                         "-f",
                         "--follow",
@@ -386,30 +390,30 @@ args_description: List[Any] = [
             cli.Cmd(
                 "kill",
                 kill,
-                argparse.SUPPRESS,
+                "kill a generic task and its child tasks",
                 [
-                    cli.Arg("task_id", type=str, help=""),
+                    cli.Arg("task_id", type=str, help="ID of the generic task"),
                     cli.Arg(
                         "--root",
                         action="store_true",
-                        help="",
+                        help="kill the whole tree, starting from the task's root task",
                     ),
                 ],
             ),
             cli.Cmd(
                 "pause",
                 pause,
-                argparse.SUPPRESS,
+                "pause a generic task and its pausable child tasks (stops their containers)",
                 [
-                    cli.Arg("task_id", type=str, help=""),
+                    cli.Arg("task_id", type=str, help="ID of the generic task"),
                 ],
             ),
             cli.Cmd(
                 "unpause",
                 unpause,
-                argparse.SUPPRESS,
+                "unpause a paused generic task; its entrypoint runs again in a new container",
                 [
-                    cli.Arg("task_id", type=str, help=""),
+                    cli.Arg("task_id", type=str, help="ID of the generic task"),
                 ],
             ),
         ],
