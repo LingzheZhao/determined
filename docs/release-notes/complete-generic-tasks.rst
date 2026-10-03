@@ -58,3 +58,9 @@
 -  Generic tasks: Creating a generic task with an unknown or mistyped config key, negative slots or
    a config that cannot be merged with the forked task's config now fails with an invalid-argument
    error (HTTP 400) instead of an internal error (HTTP 500).
+
+-  Generic tasks: A kill, pause or unpause that the master refuses now fails with a client error
+   instead of an internal error (HTTP 500): HTTP 404 for a task that does not exist or is not a
+   generic task, HTTP 400 for a task in a state that does not allow the change (for example pausing
+   a paused task, or a task with ``no_pause``), and HTTP 409 while another kill, pause or unpause, or
+   an unpause of the same tree, is in progress.

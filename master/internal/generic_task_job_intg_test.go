@@ -204,3 +204,54 @@ func TestCreateGenericTaskInvalidConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestGenericTaskMutationRefusalsAreClientErrors(t *testing.T) {
+	api, owner, ctx := setupAPITest(t, nil)
+	active := addGenericTaskForAuthZTest(ctx, t, owner, 1, nil, model.TaskStateActive)
+	paused := addGenericTaskForAuthZTest(ctx, t, owner, 1, nil, model.TaskStatePaused)
+	completed := addGenericTaskForAuthZTest(ctx, t, owner, 1, nil, model.TaskStateCompleted)
+	noPause := addGenericTaskForAuthZTest(ctx, t, owner, 1, nil, model.TaskStateActive)
+	_, err := db.Bun().NewUpdate().Table("tasks").Set("no_pause = true").
+		Where("task_id = ?", noPause).Exec(ctx)
+	require.NoError(t, err)
+
+	missing := model.NewTaskID().String()
+	for name, c := range map[string]struct {
+		call func() error
+		code codes.Code
+	}{
+		"kill missing task": {func() error {
+			_, err := api.KillGenericTask(ctx, &apiv1.KillGenericTaskRequest{TaskId: missing})
+			return err
+		}, codes.NotFound},
+		"pause missing task": {func() error {
+			_, err := api.PauseGenericTask(ctx, &apiv1.PauseGenericTaskRequest{TaskId: missing})
+			return err
+		}, codes.NotFound},
+		"unpause missing task": {func() error {
+			_, err := api.UnpauseGenericTask(ctx, &apiv1.UnpauseGenericTaskRequest{TaskId: missing})
+			return err
+		}, codes.NotFound},
+		"kill completed task": {func() error {
+			_, err := api.KillGenericTask(ctx, &apiv1.KillGenericTaskRequest{TaskId: completed.String()})
+			return err
+		}, codes.FailedPrecondition},
+		"pause paused task": {func() error {
+			_, err := api.PauseGenericTask(ctx, &apiv1.PauseGenericTaskRequest{TaskId: paused.String()})
+			return err
+		}, codes.FailedPrecondition},
+		"pause no_pause task": {func() error {
+			_, err := api.PauseGenericTask(ctx, &apiv1.PauseGenericTaskRequest{TaskId: noPause.String()})
+			return err
+		}, codes.FailedPrecondition},
+		"unpause active task": {func() error {
+			_, err := api.UnpauseGenericTask(ctx, &apiv1.UnpauseGenericTaskRequest{TaskId: active.String()})
+			return err
+		}, codes.FailedPrecondition},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := c.call()
+			require.Equal(t, c.code, status.Code(err), "%v", err)
+		})
+	}
+}

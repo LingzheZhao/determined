@@ -12,6 +12,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 	"golang.org/x/exp/slices"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/sproto"
@@ -59,7 +61,7 @@ func genericTaskResumeConflicts(ctx context.Context, tasks []model.Task) error {
 		return err
 	}
 	if n != 0 {
-		return fmt.Errorf("generic task resume is in progress")
+		return status.Error(codes.Aborted, "generic task resume is in progress")
 	}
 	return nil
 }
@@ -203,7 +205,7 @@ func makeGenericTaskResumePlan(ctx context.Context, rootID model.TaskID, members
 			return nil, err
 		}
 		if !ended {
-			return nil, fmt.Errorf("task %s allocation has not stopped", member.TaskID)
+			return nil, status.Errorf(codes.FailedPrecondition, "task %s allocation has not stopped", member.TaskID)
 		}
 		plan = append(plan, genericTaskResume{
 			RootTaskID: rootID, OperationID: operationID, TaskID: member.TaskID, OldAllocationID: oldAllocationID,
@@ -212,7 +214,7 @@ func makeGenericTaskResumePlan(ctx context.Context, rootID model.TaskID, members
 		})
 	}
 	if len(plan) == 0 {
-		return nil, fmt.Errorf("task %s has no paused members", rootID)
+		return nil, status.Errorf(codes.FailedPrecondition, "task %s has no paused members", rootID)
 	}
 	sort.SliceStable(plan, func(i, j int) bool { return plan[i].TaskID == rootID })
 	for i := range plan {
@@ -226,7 +228,7 @@ func makeGenericTaskResumePlan(ctx context.Context, rootID model.TaskID, members
 			return err
 		}
 		if state != model.TaskStatePaused {
-			return fmt.Errorf("task %s is no longer paused", rootID)
+			return status.Errorf(codes.Aborted, "task %s is no longer paused", rootID)
 		}
 		_, err := tx.NewInsert().Model(&plan).Exec(ctx)
 		return err

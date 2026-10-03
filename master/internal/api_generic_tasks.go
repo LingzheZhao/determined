@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strconv"
 	"time"
@@ -577,11 +578,23 @@ func (a *apiServer) SetTaskState(ctx context.Context, taskID model.TaskID, state
 	return err
 }
 
+// errGenericTaskMutationInProgress refuses a kill, pause or unpause while another one runs. It is a
+// conflict (HTTP 409) that the caller can retry, not a master failure.
+var errGenericTaskMutationInProgress = status.Error(codes.Aborted, "generic task mutation is in progress")
+
+// genericTaskLookupError reports a task that does not exist or is not a generic task as not found.
+func genericTaskLookupError(taskID string, err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return api.NotFoundErrs("generic task", taskID, true)
+	}
+	return fmt.Errorf("%s (make sure task is of type GENERIC)", err)
+}
+
 func (a *apiServer) KillGenericTask(
 	ctx context.Context, req *apiv1.KillGenericTaskRequest,
 ) (*apiv1.KillGenericTaskResponse, error) {
 	if !genericTaskMutation.TryLock() {
-		return nil, fmt.Errorf("generic task mutation is in progress")
+		return nil, errGenericTaskMutationInProgress
 	}
 	defer genericTaskMutation.Unlock()
 	killTaskID := model.TaskID(req.TaskId)
@@ -590,10 +603,10 @@ func (a *apiServer) KillGenericTask(
 		Where("task_id = ?", killTaskID).
 		Where("task_type = ?", model.TaskTypeGeneric).Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%s (make sure task is of type GENERIC)", err)
+		return nil, genericTaskLookupError(req.TaskId, err)
 	}
 	if taskModel.TaskType != model.TaskTypeGeneric {
-		return nil, fmt.Errorf("this operation is currently only supported for generic tasks")
+		return nil, status.Error(codes.InvalidArgument, "this operation is currently only supported for generic tasks")
 	}
 	overrideStates := []model.TaskState{model.TaskStateCanceled, model.TaskStateCompleted}
 	if req.KillFromRoot {
@@ -616,7 +629,8 @@ func (a *apiServer) KillGenericTask(
 		return nil, fmt.Errorf("task state is NULL")
 	}
 	if slices.Contains(overrideStates, *taskModel.State) {
-		return nil, fmt.Errorf("cannot cancel task %s as it is in state '%s'", req.TaskId, *taskModel.State)
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"cannot cancel task %s as it is in state '%s'", req.TaskId, *taskModel.State)
 	}
 	tasksToDelete = filterTasksByState(tasksToDelete, overrideStates)
 	resumeAllocations, err := cancelGenericTaskResumeMembers(ctx, tasksToDelete)
@@ -648,7 +662,7 @@ func (a *apiServer) PauseGenericTask(
 	ctx context.Context, req *apiv1.PauseGenericTaskRequest,
 ) (*apiv1.PauseGenericTaskResponse, error) {
 	if !genericTaskMutation.TryLock() {
-		return nil, fmt.Errorf("generic task mutation is in progress")
+		return nil, errGenericTaskMutationInProgress
 	}
 	defer genericTaskMutation.Unlock()
 	var taskModel model.Task
@@ -656,7 +670,7 @@ func (a *apiServer) PauseGenericTask(
 		Where("task_id = ?", req.TaskId).
 		Where("task_type = ?", model.TaskTypeGeneric).Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%s (make sure task is of type GENERIC)", err)
+		return nil, genericTaskLookupError(req.TaskId, err)
 	}
 	// Check if the task is in a state which allows pausing.
 	overrideStates := []model.TaskState{
@@ -685,11 +699,13 @@ func (a *apiServer) PauseGenericTask(
 		return nil, fmt.Errorf("task state is NULL")
 	}
 	if slices.Contains(overrideStates, *taskModel.State) {
-		return nil, fmt.Errorf("cannot pause task %s as it is in state '%s'", req.TaskId, *taskModel.State)
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"cannot pause task %s as it is in state '%s'", req.TaskId, *taskModel.State)
 	}
 	// Check for flag (default to false for root task)
 	if taskModel.NoPause != nil && *taskModel.NoPause {
-		return nil, fmt.Errorf("cannot pause task %s with `no_pause` set to true", req.TaskId)
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"cannot pause task %s with `no_pause` set to true", req.TaskId)
 	}
 	tasksToPause = filterTasksByState(tasksToPause, overrideStates)
 	// A child with no_pause unset defaults to not being paused. Keep its
@@ -729,7 +745,7 @@ func (a *apiServer) UnpauseGenericTask(
 	ctx context.Context, req *apiv1.UnpauseGenericTaskRequest,
 ) (*apiv1.UnpauseGenericTaskResponse, error) {
 	if !genericTaskMutation.TryLock() {
-		return nil, fmt.Errorf("generic task mutation is in progress")
+		return nil, errGenericTaskMutationInProgress
 	}
 	defer genericTaskMutation.Unlock()
 	var taskModel model.Task
@@ -737,7 +753,7 @@ func (a *apiServer) UnpauseGenericTask(
 		Where("task_id = ?", req.TaskId).
 		Where("task_type = ?", model.TaskTypeGeneric).Scan(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%s (make sure task is of type GENERIC)", err)
+		return nil, genericTaskLookupError(req.TaskId, err)
 	}
 	// Tasks (and child tasks) that are killed, completed, or exit with an error should not be resumed
 	overrideStates := []model.TaskState{
@@ -786,11 +802,13 @@ func (a *apiServer) UnpauseGenericTask(
 			return nil, err
 		}
 		if *taskModel.State != model.TaskStatePaused {
-			return nil, fmt.Errorf("cannot unpause task %s as it is not in paused state", req.TaskId)
+			return nil, status.Errorf(codes.FailedPrecondition,
+				"cannot unpause task %s as it is not in paused state", req.TaskId)
 		}
 		for _, member := range tasksToResume {
 			if member.State != nil && *member.State == model.TaskStateStoppingPaused {
-				return nil, fmt.Errorf("cannot unpause task %s while descendant %s is still stopping", req.TaskId, member.TaskID)
+				return nil, status.Errorf(codes.FailedPrecondition,
+					"cannot unpause task %s while descendant %s is still stopping", req.TaskId, member.TaskID)
 			}
 		}
 		plan, err = makeGenericTaskResumePlan(ctx, model.TaskID(req.TaskId), tasksToResume)

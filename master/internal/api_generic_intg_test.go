@@ -573,8 +573,10 @@ func TestGenericTaskResumeRejectsPauseAndKillDuringStart(t *testing.T) {
 	}
 	_, err := api.PauseGenericTask(ctx, &apiv1.PauseGenericTaskRequest{TaskId: id.String()})
 	require.ErrorContains(t, err, "generic task mutation is in progress")
+	require.Equal(t, codes.Aborted, status.Code(err))
 	_, err = api.KillGenericTask(ctx, &apiv1.KillGenericTaskRequest{TaskId: id.String()})
 	require.ErrorContains(t, err, "generic task mutation is in progress")
+	require.Equal(t, codes.Aborted, status.Code(err))
 	release()
 	require.NoError(t, <-done)
 }
