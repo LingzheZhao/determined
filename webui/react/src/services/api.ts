@@ -905,6 +905,18 @@ export const getShell = generateDetApi<
   Type.CommandTask
 >(Config.getShell);
 
+export const getJupyterLabConfig = generateDetApi<
+  Service.CommandIdParams,
+  Api.V1GetNotebookResponse,
+  RawJson
+>(Config.getJupyterLabConfig);
+
+export const getShellConfig = generateDetApi<
+  Service.CommandIdParams,
+  Api.V1GetShellResponse,
+  RawJson
+>(Config.getShellConfig);
+
 export const getTensorBoard = generateDetApi<
   Service.CommandIdParams,
   Api.V1GetTensorboardResponse,
@@ -956,6 +968,12 @@ export const previewJupyterLab = generateDetApi<
   Api.V1LaunchNotebookResponse,
   RawJson
 >(Config.previewJupyterLab);
+
+export const launchShell = generateDetApi<
+  Service.LaunchShellParams,
+  Api.V1LaunchShellResponse,
+  Type.CommandResponse
+>(Config.launchShell);
 
 export const launchTensorBoard = generateDetApi<
   Service.LaunchTensorBoardParams,

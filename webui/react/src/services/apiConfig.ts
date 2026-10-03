@@ -2007,6 +2007,30 @@ export const getShell: DetApi<Service.CommandIdParams, Api.V1GetShellResponse, T
   request: (params: Service.CommandIdParams) => detApi.Shells.getShell(params.commandId),
 };
 
+/**
+ * Returns only the merged config of a JupyterLab. The rest of the response
+ * (including the notebook's service token) is dropped.
+ */
+export const getJupyterLabConfig: DetApi<
+  Service.CommandIdParams,
+  Api.V1GetNotebookResponse,
+  RawJson
+> = {
+  name: 'getJupyterLabConfig',
+  postProcess: (response) => response.config ?? {},
+  request: (params: Service.CommandIdParams) => detApi.Notebooks.getNotebook(params.commandId),
+};
+
+/**
+ * Returns only the merged config of a shell. The response also carries the
+ * shell's SSH private key; it is never read or returned.
+ */
+export const getShellConfig: DetApi<Service.CommandIdParams, Api.V1GetShellResponse, RawJson> = {
+  name: 'getShellConfig',
+  postProcess: (response) => response.config ?? {},
+  request: (params: Service.CommandIdParams) => detApi.Shells.getShell(params.commandId),
+};
+
 export const getTensorBoard: DetApi<
   Service.CommandIdParams,
   Api.V1GetTensorboardResponse,
@@ -2090,6 +2114,7 @@ export const launchJupyterLab: DetApi<
   postProcess: (response) => {
     return {
       command: decoder.mapV1Notebook(response.notebook),
+      config: response.config,
       warnings: response.warnings || [],
     };
   },
@@ -2104,6 +2129,35 @@ export const previewJupyterLab: DetApi<
   name: 'previewJupyterLab',
   postProcess: (response) => response.config,
   request: (params: Service.LaunchJupyterLabParams) => detApi.Notebooks.launchNotebook(params),
+};
+
+/**
+ * Launches a shell. The master's response includes the shell's SSH private
+ * key (the CLI needs it); the web UI never does. The key fields are removed
+ * from the response object before anything else sees it, and the result only
+ * carries the decoded task, the merged config and the warnings.
+ */
+export const launchShell: DetApi<
+  Service.LaunchShellParams,
+  Api.V1LaunchShellResponse,
+  Type.CommandResponse
+> = {
+  name: 'launchShell',
+  postProcess: (response) => {
+    const shell = { ...response.shell };
+    delete shell.privateKey;
+    delete shell.publicKey;
+    if (response.shell) {
+      delete response.shell.privateKey;
+      delete response.shell.publicKey;
+    }
+    return {
+      command: decoder.mapV1Shell(shell),
+      config: response.config,
+      warnings: response.warnings || [],
+    };
+  },
+  request: (params: Service.LaunchShellParams) => detApi.Shells.launchShell(params),
 };
 
 export const launchTensorBoard: DetApi<

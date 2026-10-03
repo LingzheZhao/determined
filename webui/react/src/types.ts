@@ -932,6 +932,8 @@ export interface ExperimentTask extends Task {
 
 export interface CommandResponse {
   command: CommandTask;
+  /** The merged config the master launched the task with, when the launch API returns it. */
+  config?: RawJson;
   warnings?: V1LaunchWarning[];
 }
 
@@ -949,6 +951,7 @@ export const TaskAction = {
   Connect: 'Connect',
   CopyTaskID: 'Copy Task ID',
   Kill: 'Kill',
+  LaunchAgain: 'Launch Again',
   ViewLogs: 'View Logs',
   ViewResources: 'View Resources',
 } as const;
