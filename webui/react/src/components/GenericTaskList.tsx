@@ -50,15 +50,21 @@ const filterStates: GenericTaskState[] = [
   GenericTaskState.Error,
 ];
 
-const GenericTaskList: React.FC = () => {
+interface Props {
+  /* Lists the tasks of this workspace only; without it, of all workspaces the user can view. */
+  workspaceId?: number;
+}
+
+const GenericTaskList: React.FC<Props> = ({ workspaceId }: Props) => {
   const loadableCurrentUser = useObservable(userStore.currentUser);
   const currentUser = Loadable.getOrElse(undefined, loadableCurrentUser);
   const users = Loadable.getOrElse([], useObservable(userStore.getUsers()));
   const [response, setResponse] = useState<GenericTaskPagination>();
   const pageRef = useRef<HTMLElement>(null);
   const canceler = useRef(new AbortController());
+  const stgsConfig = useMemo(() => settingsConfig(workspaceId), [workspaceId]);
   const { activeSettings, resetSettings, settings, updateSettings } =
-    useSettings<Settings>(settingsConfig);
+    useSettings<Settings>(stgsConfig);
 
   const filterCount = useMemo(() => activeSettings(filterKeys).length, [activeSettings]);
 
@@ -73,6 +79,7 @@ const GenericTaskList: React.FC = () => {
           states: settings.state,
           userIds:
             settings.whose === WhoseGenericTasks.Mine && currentUser ? [currentUser.id] : undefined,
+          workspaceId,
         },
         { signal: canceler.current.signal },
       );
@@ -84,7 +91,14 @@ const GenericTaskList: React.FC = () => {
         type: ErrorType.Api,
       });
     }
-  }, [currentUser, settings.state, settings.tableLimit, settings.tableOffset, settings.whose]);
+  }, [
+    currentUser,
+    settings.state,
+    settings.tableLimit,
+    settings.tableOffset,
+    settings.whose,
+    workspaceId,
+  ]);
 
   usePolling(fetchTasks, { rerunOnNewFn: true });
 
@@ -258,7 +272,7 @@ const GenericTaskList: React.FC = () => {
           columns={columns}
           containerRef={pageRef}
           dataSource={response?.tasks}
-          defaultColumns={settingsConfig.settings.columns.defaultValue}
+          defaultColumns={stgsConfig.settings.columns.defaultValue}
           loading={response === undefined}
           pagination={getFullPaginationConfig(
             {

@@ -56,7 +56,12 @@ export interface Settings extends InteractiveTableSettings {
   whose: WhoseGenericTasks;
 }
 
-const config: SettingsConfig<Settings> = {
+/*
+ * The settings of the generic task list of all workspaces (no workspace ID), which shows the
+ * current user's tasks by default, or of one workspace, which shows all users' tasks like the
+ * workspace's other task list.
+ */
+const config = (workspaceId?: number): SettingsConfig<Settings> => ({
   settings: {
     columns: {
       defaultValue: DEFAULT_COLUMNS,
@@ -121,12 +126,12 @@ const config: SettingsConfig<Settings> = {
       type: number,
     },
     whose: {
-      defaultValue: WhoseGenericTasks.Mine,
+      defaultValue: workspaceId === undefined ? WhoseGenericTasks.Mine : WhoseGenericTasks.All,
       storageKey: 'whose',
       type: union([literal(WhoseGenericTasks.All), literal(WhoseGenericTasks.Mine)]),
     },
   },
-  storagePath: 'generic-task-list',
-};
+  storagePath: workspaceId === undefined ? 'generic-task-list' : `generic-task-list-${workspaceId}`,
+});
 
 export default config;
