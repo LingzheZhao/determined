@@ -652,6 +652,99 @@ searcher:
 		"override config is provided and experiment is not single searcher, got 'random' instead")
 }
 
+// TestCreateExperimentInvalidConfig checks that a config the caller has to fix is reported as
+// InvalidArgument, not as the Internal error of a master failure.
+func TestCreateExperimentInvalidConfig(t *testing.T) {
+	api, _, ctx := setupAPITest(t, nil)
+	api.m.config.CheckpointStorage = expconf.CheckpointStorageConfig{}
+
+	const checkpointStorage = `
+checkpoint_storage:
+  type: shared_fs
+  host_path: /tmp
+`
+	const valid = `
+entrypoint: test
+searcher:
+  metric: loss
+  name: single
+resources:
+  resource_pool: kubernetes
+` + checkpointStorage
+
+	_, err := api.CreateExperiment(ctx, &apiv1.CreateExperimentRequest{
+		Config:       valid,
+		ProjectId:    1,
+		ValidateOnly: true,
+	})
+	require.NoError(t, err)
+
+	for name, tc := range map[string]struct {
+		config   string
+		contains string
+	}{
+		"malformed": {
+			config:   "searcher: [\n",
+			contains: "invalid experiment configuration",
+		},
+		"incomplete": {
+			config: `
+entrypoint: test
+searcher:
+  metric: loss
+  name: single
+resources:
+  resource_pool: kubernetes
+`,
+			contains: "checkpoint_storage: type is a required property",
+		},
+		"resources.slots": {
+			config: `
+entrypoint: test
+searcher:
+  metric: loss
+  name: single
+resources:
+  resource_pool: kubernetes
+  slots: 1
+` + checkpointStorage,
+			contains: `additionalProperties "slots" not allowed`,
+		},
+		"removed searcher": {
+			config: `
+entrypoint: test
+searcher:
+  metric: loss
+  name: custom
+  unit: batches
+resources:
+  resource_pool: kubernetes
+` + checkpointStorage,
+			contains: "the 'custom' searcher has been removed",
+		},
+		"managed without entrypoint": {
+			config: `
+searcher:
+  metric: loss
+  name: single
+resources:
+  resource_pool: kubernetes
+` + checkpointStorage,
+			contains: "managed experiments require entrypoint",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := api.CreateExperiment(ctx, &apiv1.CreateExperimentRequest{
+				Config:       tc.config,
+				ProjectId:    1,
+				ValidateOnly: true,
+			})
+			require.Equal(t, codes.InvalidArgument, status.Code(err), err)
+			require.ErrorContains(t, err, tc.contains)
+		})
+	}
+}
+
 // nolint: exhaustruct
 func TestCreateExperimentCheckpointStorage(t *testing.T) {
 	mockRM := MockRM()
