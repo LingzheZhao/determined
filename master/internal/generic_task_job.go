@@ -3,10 +3,13 @@ package internal
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/determined-ai/determined/master/internal/configpolicy"
@@ -70,12 +73,40 @@ func registerGenericTaskJob(
 
 	genericTaskJobsMu.Lock()
 	defer genericTaskJobsMu.Unlock()
-	_ = tasklist.GroupPriorityChangeRegistry.Delete(jobID)
-	if err := tasklist.GroupPriorityChangeRegistry.Add(jobID, j.onPriorityChange); err != nil {
-		return fmt.Errorf("registering priority changes of generic task %s: %w", taskID, err)
-	}
+	// Replace, never delete and add: a delete tells the resource managers that the job stopped,
+	// and they would drop the scheduling group of an allocation that is still running, e.g. when
+	// an unpause is retried after its allocation started.
+	tasklist.GroupPriorityChangeRegistry.Upsert(jobID, j.onPriorityChange)
 	jobservice.DefaultService.RegisterJob(jobID, j)
 	genericTaskJobs[jobID] = j
+
+	// Like commands, apply the task's priority and weight before its allocation is requested, so
+	// that the scheduling group starts with them rather than with the pool's defaults.
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.applySchedulingLocked()
+}
+
+func (j *genericTaskJob) applySchedulingLocked() error {
+	res := j.spec.GenericTaskConfig.Resources
+	if p := res.Priority(); p != nil {
+		switch err := j.rm.SetGroupPriority(sproto.SetGroupPriority{
+			Priority: *p, ResourcePool: res.ResourcePool(), JobID: j.jobID,
+		}).(type) {
+		case nil, rmerrors.UnsupportedError:
+		default:
+			return fmt.Errorf("setting group priority for generic task %s: %w", j.taskID, err)
+		}
+	}
+	if w := res.RawWeight; w != nil {
+		switch err := j.rm.SetGroupWeight(sproto.SetGroupWeight{
+			Weight: *w, ResourcePool: res.ResourcePool(), JobID: j.jobID,
+		}).(type) {
+		case nil, rmerrors.UnsupportedError:
+		default:
+			return fmt.Errorf("setting group weight for generic task %s: %w", j.taskID, err)
+		}
+	}
 	return nil
 }
 
@@ -154,6 +185,9 @@ func (j *genericTaskJob) SetJobPriority(priority int) error {
 // SetWeight implements jobservice.Job: it applies the fair-share weight in the resource manager and
 // persists it.
 func (j *genericTaskJob) SetWeight(weight float64) error {
+	if weight <= 0 || math.IsNaN(weight) || math.IsInf(weight, 0) {
+		return status.Errorf(codes.InvalidArgument, "weight must be a positive finite number, got %v", weight)
+	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
 

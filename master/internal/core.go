@@ -913,7 +913,10 @@ func (m *Master) restoreGenericTasks(ctx context.Context) error {
 		if err := registerGenericTaskJob(
 			m.rm, taskID, snapshots[i].AllocationID, *jobID, snapshots[i].GenericTaskSpec,
 		); err != nil {
-			return err
+			// The task is registered; only its priority or weight did not reach the scheduler,
+			// which must not keep the rest of the tasks from being restored.
+			log.WithError(err).WithField("task-id", taskID).
+				Warn("restoring generic task scheduling parameters")
 		}
 
 		onAllocationExit := getGenericTaskOnAllocationExit(ctx, taskID, snapshots[i].AllocationID, *jobID, logCtx)
