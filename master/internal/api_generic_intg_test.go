@@ -143,6 +143,23 @@ func (s *lifecycleAllocationService) StartAllocation(
 	return nil
 }
 
+// startsOf returns the starts and their restore flags of one task's allocations. Recovery resumes
+// every pending resume in the database, including those other tests and earlier runs left behind
+// in the shared test database, so tests that recover look only at their own task.
+func (s *lifecycleAllocationService) startsOf(id model.TaskID) ([]model.AllocationID, []bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var starts []model.AllocationID
+	var restores []bool
+	for i, allocationID := range s.starts {
+		if allocationID.ToTaskID() == id {
+			starts = append(starts, allocationID)
+			restores = append(restores, s.restores[i])
+		}
+	}
+	return starts, restores
+}
+
 func TestGenericTaskTreePauseUnpauseKeepsNoPauseAllocations(t *testing.T) {
 	api, owner, ctx := setupAPITest(t, nil)
 	rootID := addGenericTaskForAuthZTest(ctx, t, owner, 11, nil, model.TaskStateActive)
@@ -373,12 +390,13 @@ func TestGenericTaskResumeRecoversClaimAndStartWindows(t *testing.T) {
 				service.running[plan[0].NewAllocationID] = false // a new master has an empty runtime registry
 			}
 			require.NoError(t, api.m.recoverGenericTaskResumes(ctx))
+			starts, restores := service.startsOf(id)
 			if started {
-				require.Equal(t, []model.AllocationID{plan[0].NewAllocationID, plan[0].NewAllocationID}, service.starts)
-				require.Equal(t, []bool{false, true}, service.restores)
+				require.Equal(t, []model.AllocationID{plan[0].NewAllocationID, plan[0].NewAllocationID}, starts)
+				require.Equal(t, []bool{false, true}, restores)
 			} else {
-				require.Equal(t, []model.AllocationID{plan[0].NewAllocationID}, service.starts)
-				require.Equal(t, []bool{false}, service.restores)
+				require.Equal(t, []model.AllocationID{plan[0].NewAllocationID}, starts)
+				require.Equal(t, []bool{false}, restores)
 			}
 			allocationID, _, err := getGenericTaskSpec(ctx, id)
 			require.NoError(t, err)
@@ -463,8 +481,9 @@ func TestGenericTaskResumeRestoresCanceledStartBeforeSnapshot(t *testing.T) {
 	_, err = api.KillGenericTask(ctx, &apiv1.KillGenericTaskRequest{TaskId: id.String()})
 	require.NoError(t, err)
 	require.NoError(t, api.m.recoverGenericTaskResumes(ctx))
-	require.Equal(t, []model.AllocationID{plan[0].NewAllocationID}, service.starts)
-	require.Equal(t, []bool{true}, service.restores)
+	starts, restores := service.startsOf(id)
+	require.Equal(t, []model.AllocationID{plan[0].NewAllocationID}, starts)
+	require.Equal(t, []bool{true}, restores)
 	require.NoError(t, finishCanceledGenericTaskResume(id, plan[0].NewAllocationID))
 	remaining, err := pendingGenericTaskResume(ctx, id)
 	require.NoError(t, err)
@@ -494,7 +513,8 @@ func TestGenericTaskResumeReconcilesEndedAllocationBeforeCallback(t *testing.T) 
 	got, err := db.TaskByID(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, model.TaskStateCompleted, *got.State)
-	require.Empty(t, service.starts)
+	starts, _ := service.startsOf(id)
+	require.Empty(t, starts)
 	allocationID, _, err := getGenericTaskSpec(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, plan[0].NewAllocationID.String(), allocationID)

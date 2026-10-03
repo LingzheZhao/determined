@@ -54,3 +54,7 @@
 
 -  Generic tasks: A finished generic task no longer stays registered in the job service and the
    scheduler's priority callbacks.
+
+-  Generic tasks: Creating a generic task with an unknown or mistyped config key, negative slots or
+   a config that cannot be merged with the forked task's config now fails with an invalid-argument
+   error (HTTP 400) instead of an internal error (HTTP 500).

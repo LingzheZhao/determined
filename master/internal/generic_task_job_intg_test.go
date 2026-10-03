@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/rm"
@@ -186,4 +188,19 @@ environment:
 	v1, err := j.ToV1Job()
 	require.NoError(t, err)
 	require.Equal(t, "notebook-server", v1.Name)
+}
+
+func TestCreateGenericTaskInvalidConfig(t *testing.T) {
+	api, _, ctx := setupAPITest(t, nil)
+	for name, config := range map[string]string{
+		"unknown key":    "entrypoint: [\"true\"]\nnot_a_key: 1\n",
+		"mistyped key":   "entrypoint: true\n",
+		"negative slots": "entrypoint: [\"true\"]\nresources:\n  slots: -1\n",
+		"no entrypoint":  "resources:\n  slots: 0\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := api.CreateGenericTask(ctx, &apiv1.CreateGenericTaskRequest{Config: config})
+			require.Equal(t, codes.InvalidArgument, status.Code(err), "%v", err)
+		})
+	}
 }

@@ -102,7 +102,7 @@ func (a *apiServer) getGenericTaskLaunchParameters(
 	resources := model.ParseJustResources(configBytes)
 
 	if resources.Slots < 0 {
-		return nil, nil, nil, fmt.Errorf("resource slots must be >= 0")
+		return nil, nil, nil, status.Error(codes.InvalidArgument, "resource slots must be >= 0")
 	}
 	isSingleNode := resources.IsSingleNode != nil && *resources.IsSingleNode
 	poolName, launchWarnings, err := a.m.ResolveResources(resources.ResourcePool,
@@ -121,7 +121,9 @@ func (a *apiServer) getGenericTaskLaunchParameters(
 	// Get the full configuration.
 	taskConfig := model.DefaultConfigGenericTaskConfig(&taskSpec.TaskContainerDefaults)
 	if err := yaml.UnmarshalStrict(configBytes, &taskConfig, yaml.DisallowUnknownFields); err != nil {
-		return nil, nil, nil, fmt.Errorf("yaml unmarshaling generic task config: %w", err)
+		// An unknown or mistyped key is the caller's error, not the master's.
+		return nil, nil, nil, status.Errorf(
+			codes.InvalidArgument, "yaml unmarshaling generic task config: %s", err)
 	}
 	workDirInDefaults := taskConfig.WorkDir
 
@@ -257,7 +259,7 @@ func (a *apiServer) CreateGenericTask(
 	}
 	configBytes, err := getConfigBytes([]byte(req.Config), forkedConfig)
 	if err != nil {
-		return nil, err
+		return nil, status.Errorf(codes.InvalidArgument, "parsing generic task config: %s", err)
 	}
 	genericTaskSpec, warnings, contextDirectoryBytes, err := a.getGenericTaskLaunchParameters(
 		ctx, req.ContextDirectory, projectID, configBytes,
