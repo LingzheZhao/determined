@@ -49,7 +49,7 @@ func addGenericTaskForAuthZTest(
 	taskID := model.NewTaskID()
 	require.NoError(t, db.AddTask(ctx, &model.Task{
 		TaskID: taskID, TaskType: model.TaskTypeGeneric, JobID: &jobID,
-		ParentID: parentID, State: ptrs.Ptr(state),
+		ParentID: parentID, State: ptrs.Ptr(state), NoPause: ptrs.Ptr(false),
 	}))
 	allocationID := model.AllocationID(taskID.String() + ".0")
 	now := time.Now().UTC()

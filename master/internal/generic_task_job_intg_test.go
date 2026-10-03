@@ -5,10 +5,12 @@ package internal
 
 import (
 	"context"
+	"math"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -19,11 +21,13 @@ import (
 	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/sproto"
 	"github.com/determined-ai/determined/master/internal/task"
+	"github.com/determined-ai/determined/master/internal/user"
 	"github.com/determined-ai/determined/master/pkg/logger"
 	"github.com/determined-ai/determined/master/pkg/model"
 	"github.com/determined-ai/determined/master/pkg/ptrs"
 	"github.com/determined-ai/determined/master/pkg/tasks"
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
+	"github.com/determined-ai/determined/proto/pkg/taskv1"
 )
 
 // addGenericTaskJobForTest persists a running generic task with a config and registers its job.
@@ -54,6 +58,12 @@ func TestGenericTaskJobPriorityWeightAndPool(t *testing.T) {
 	api, owner, ctx := setupAPITest(t, nil)
 	taskID, jobID, j := addGenericTaskJobForTest(ctx, t, api, owner, "sweep-a")
 
+	// Registration applies the task's priority before its allocation is requested.
+	api.m.rm.(interface {
+		AssertCalled(mock.TestingT, string, ...interface{}) bool
+	}).AssertCalled(
+		t, "SetGroupPriority", sproto.SetGroupPriority{Priority: 42, ResourcePool: "default", JobID: jobID})
+
 	v1, err := j.ToV1Job()
 	require.NoError(t, err)
 	require.Equal(t, "sweep-a", v1.Name)
@@ -72,6 +82,14 @@ func TestGenericTaskJobPriorityWeightAndPool(t *testing.T) {
 	require.Equal(t, 7, *persisted.GenericTaskConfig.Resources.RawPriority)
 
 	require.ErrorContains(t, j.SetJobPriority(0), "between 1 and 99")
+
+	// Invalid weights are refused before they reach the resource manager or the database.
+	for _, weight := range []float64{0, -1, math.NaN(), math.Inf(1)} {
+		require.Equal(t, codes.InvalidArgument, status.Code(j.SetWeight(weight)), "weight %v", weight)
+	}
+	_, persisted, err = getGenericTaskSpec(ctx, taskID)
+	require.NoError(t, err)
+	require.Nil(t, persisted.GenericTaskConfig.Resources.RawWeight)
 
 	// A weight change is persisted too.
 	require.NoError(t, j.SetWeight(2.5))
@@ -255,4 +273,90 @@ func TestGenericTaskMutationRefusalsAreClientErrors(t *testing.T) {
 			require.Equal(t, c.code, status.Code(err), "%v", err)
 		})
 	}
+}
+
+func TestGenericTasksAreNotPausableByDefault(t *testing.T) {
+	api, _, ctx := setupAPITest(t, nil)
+	service := &captureAllocationService{}
+	oldService := task.DefaultService
+	task.DefaultService = service
+	t.Cleanup(func() { task.DefaultService = oldService })
+
+	create := func(noPause *bool) model.TaskID {
+		resp, err := api.CreateGenericTask(ctx, &apiv1.CreateGenericTaskRequest{
+			Config: "entrypoint: [\"true\"]\nresources:\n  slots: 0\n", NoPause: noPause,
+		})
+		require.NoError(t, err)
+		return model.TaskID(resp.TaskId)
+	}
+	byDefault := create(nil)
+	pausable := create(ptrs.Ptr(false))
+
+	got, err := db.TaskByID(ctx, byDefault)
+	require.NoError(t, err)
+	require.True(t, *got.NoPause, "an unset no_pause must be stored as true")
+	_, err = api.PauseGenericTask(ctx, &apiv1.PauseGenericTaskRequest{TaskId: byDefault.String()})
+	require.Equal(t, codes.FailedPrecondition, status.Code(err), "%v", err)
+
+	got, err = db.TaskByID(ctx, pausable)
+	require.NoError(t, err)
+	require.False(t, *got.NoPause)
+}
+
+func TestGetGenericTasksFiltersByOwnerStateAndParent(t *testing.T) {
+	api, owner, ctx := setupAPITest(t, nil)
+	other, err := db.HackAddUser(ctx, &model.User{Username: uuid.NewString()})
+	require.NoError(t, err)
+	otherFull, err := user.ByID(ctx, other)
+	require.NoError(t, err)
+	otherUser := ptrs.Ptr(otherFull.ToUser())
+
+	root := addGenericTaskForAuthZTest(ctx, t, owner, 1, nil, model.TaskStateActive)
+	child := addGenericTaskForAuthZTest(ctx, t, owner, 1, &root, model.TaskStatePaused)
+	foreign := addGenericTaskForAuthZTest(ctx, t, *otherUser, 1, nil, model.TaskStateActive)
+
+	ids := func(resp *apiv1.GetGenericTasksResponse) []string {
+		var out []string
+		for _, task := range resp.Tasks {
+			out = append(out, task.TaskId)
+		}
+		return out
+	}
+
+	resp, err := api.GetGenericTasks(ctx, &apiv1.GetGenericTasksRequest{Users: []string{otherUser.Username}})
+	require.NoError(t, err)
+	require.Equal(t, []string{foreign.String()}, ids(resp))
+	require.Equal(t, otherUser.Username, resp.Tasks[0].Username)
+	require.Equal(t, int32(other), resp.Tasks[0].UserId)
+	require.Equal(t, "Generic Task "+foreign.String(), resp.Tasks[0].Name)
+	require.Equal(t, taskv1.GenericTaskState_GENERIC_TASK_STATE_ACTIVE, resp.Tasks[0].State)
+
+	resp, err = api.GetGenericTasks(ctx, &apiv1.GetGenericTasksRequest{UserIds: []int32{int32(owner.ID)}})
+	require.NoError(t, err)
+	require.Subset(t, ids(resp), []string{root.String(), child.String()})
+	require.NotContains(t, ids(resp), foreign.String())
+
+	resp, err = api.GetGenericTasks(ctx, &apiv1.GetGenericTasksRequest{ParentId: ptrs.Ptr(root.String())})
+	require.NoError(t, err)
+	require.Equal(t, []string{child.String()}, ids(resp))
+	require.Equal(t, root.String(), *resp.Tasks[0].ParentId)
+
+	resp, err = api.GetGenericTasks(ctx, &apiv1.GetGenericTasksRequest{
+		UserIds: []int32{int32(owner.ID)},
+		States:  []taskv1.GenericTaskState{taskv1.GenericTaskState_GENERIC_TASK_STATE_PAUSED},
+	})
+	require.NoError(t, err)
+	require.Contains(t, ids(resp), child.String())
+	require.NotContains(t, ids(resp), root.String())
+
+	resp, err = api.GetGenericTasks(ctx, &apiv1.GetGenericTasksRequest{
+		Users: []string{otherUser.Username}, Limit: 1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int32(1), resp.Pagination.Total)
+
+	_, err = api.GetGenericTasks(ctx, &apiv1.GetGenericTasksRequest{
+		States: []taskv1.GenericTaskState{taskv1.GenericTaskState_GENERIC_TASK_STATE_UNSPECIFIED},
+	})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
 }

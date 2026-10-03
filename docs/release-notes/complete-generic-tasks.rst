@@ -13,6 +13,11 @@
 -  Generic tasks: Ports listed in ``environment.proxy_ports`` are exposed and proxied through the
    master, as for commands, also after the task is unpaused or the master restarts.
 
+-  Generic tasks: ``det task list-generic`` and ``GET /api/v1/generic-tasks`` list generic tasks
+   with their owner, name, state and parent, filtered by owner (``--user``, ``--all``), workspace,
+   state or parent. Previously generic tasks could only be found through the running allocations of
+   ``det task list``, which do not show the owner.
+
 **Improvements**
 
 -  Generic tasks: A running generic task is now a regular entry of the job queue. Changing its
@@ -31,6 +36,11 @@
 -  API: The generic task endpoints (create, get config, kill, pause and unpause) are listed under
    ``Tasks`` instead of ``Internal`` in the REST API reference, with their own descriptions. In the
    TypeScript bindings they moved from ``InternalApi`` to ``TasksApi``.
+
+-  Generic tasks: A generic task can be paused only if it was created with ``--pausable``
+   (``no_pause: false`` in the API), because unpausing runs its entrypoint again from the start.
+   Previously a root task could be paused unless it was created with ``--no_pause``, which the CLI
+   still accepts and ignores. ``det task fork`` also accepts ``--pausable``.
 
 **Bug Fixes**
 
@@ -74,3 +84,10 @@
    parent task (its owner or an admin). Previously any user could add a child to another user's
    task, after which the owner could no longer pause or kill the tree without an admin, because
    those actions require control of every task in it.
+
+-  Generic tasks: The scheduler now starts a generic task's allocation with the task's saved priority
+   and weight, also after an unpause or a master restart, instead of the resource pool's defaults.
+   Setting a weight that is not a positive finite number is refused.
+
+-  Generic tasks: Retrying an unpause after the task's new allocation started no longer drops the
+   allocation's scheduling group, which left a running task without a group in the scheduler.

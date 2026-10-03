@@ -152,7 +152,7 @@ def create(args: argparse.Namespace) -> None:
         forkedFrom=args.fork,
         parentId=args.parent,
         inheritContext=args.inherit_context,
-        noPause=args.no_pause,
+        noPause=not args.pausable,
     )
     task_resp = bindings.post_CreateGenericTask(sess, body=req)
     task_creation_output(session=sess, task_resp=task_resp, follow=args.follow)
@@ -176,6 +176,7 @@ def fork(args: argparse.Namespace) -> None:
         projectId=args.project_id,
         forkedFrom=args.parent_task_id,
         inheritContext=False,
+        noPause=not args.pausable,
     )
     task_resp = bindings.post_CreateGenericTask(sess, body=req)
     task_creation_output(session=sess, task_resp=task_resp, follow=args.follow)
@@ -191,6 +192,33 @@ def unpause(args: argparse.Namespace) -> None:
     sess = cli.setup_session(args)
     bindings.post_UnpauseGenericTask(sess, taskId=args.task_id)
     print(f"Unpaused task: {args.task_id}")
+
+
+def list_generic(args: argparse.Namespace) -> None:
+    sess = cli.setup_session(args)
+    users = None if args.all else [args.user or sess.username]
+    states = [bindings.v1GenericTaskState(f"GENERIC_TASK_STATE_{s.upper()}") for s in args.state]
+    resp = bindings.get_GetGenericTasks(
+        sess, users=users, states=states or None, parentId=args.parent
+    )
+    if args.json:
+        render.print_json([t.to_json() for t in resp.tasks])
+        return
+    headers = ["Task ID", "Name", "Owner", "State", "Slots", "Pausable", "Parent", "Start Time"]
+    values = [
+        [
+            t.taskId,
+            t.name,
+            t.username,
+            t.state.value.replace("GENERIC_TASK_STATE_", ""),
+            t.slots,
+            not t.noPause,
+            t.parentId or "",
+            render.format_time(t.startTime),
+        ]
+        for t in resp.tasks
+    ]
+    render.tabulate_or_csv(headers, values, args.csv)
 
 
 def cleanup_logs(args: argparse.Namespace) -> None:
@@ -305,6 +333,37 @@ args_description: List[Any] = [
                     *common_log_options,
                 ],
             ),
+            cli.Cmd(
+                "list-generic",
+                list_generic,
+                "list generic tasks, newest first; your own unless --all or --user is given",
+                [
+                    cli.Arg("-a", "--all", action="store_true", help="list tasks of all users"),
+                    cli.Arg("-u", "--user", type=str, help="list tasks of this user"),
+                    cli.Arg(
+                        "--state",
+                        action="append",
+                        default=[],
+                        choices=[
+                            "active",
+                            "paused",
+                            "stopping_paused",
+                            "completed",
+                            "error",
+                            "canceled",
+                            "stopping_completed",
+                            "stopping_error",
+                            "stopping_canceled",
+                        ],
+                        help="list only tasks in this state; can be repeated",
+                    ),
+                    cli.Arg("--parent", type=str, help="list only direct children of this task"),
+                    cli.Group(
+                        cli.output_format_args["csv"],
+                        cli.output_format_args["json"],
+                    ),
+                ],
+            ),
             cli.Cmd("cleanup-logs", cleanup_logs, "cleanup expired task logs", []),
             cli.Cmd(
                 "create",
@@ -353,10 +412,13 @@ args_description: List[Any] = [
                         help="inherits context directory from parent task (parent flag required)",
                     ),
                     cli.Arg(
-                        "--no_pause",
+                        "--pausable",
                         action="store_true",
-                        help="make task unpausable",
+                        help="allow pausing the task; unpausing runs its entrypoint again from the "
+                        "start, so the task must be safe to rerun",
                     ),
+                    # Tasks are unpausable by default; the old opt-out is accepted and ignored.
+                    cli.Arg("--no_pause", action="store_true", help=argparse.SUPPRESS),
                 ],
             ),
             cli.Cmd(
@@ -385,6 +447,11 @@ args_description: List[Any] = [
                         help="follow the logs of the task that is created",
                     ),
                     cli.Arg("--project_id", type=int, help="place this task inside this project"),
+                    cli.Arg(
+                        "--pausable",
+                        action="store_true",
+                        help="allow pausing the new task; unpausing runs it again from the start",
+                    ),
                 ],
             ),
             cli.Cmd(

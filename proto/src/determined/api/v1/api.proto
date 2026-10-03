@@ -2630,6 +2630,18 @@ service Determined {
     };
   }
 
+  // Get a list of generic tasks, optionally filtered by owner, workspace, state
+  // or parent.
+  rpc GetGenericTasks(GetGenericTasksRequest)
+      returns (GetGenericTasksResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/generic-tasks"
+    };
+    option (grpc.gateway.protoc_gen_swagger.options.openapiv2_operation) = {
+      tags: "Tasks"
+    };
+  }
+
   // Get the config of a generic task.
   rpc GetGenericTaskConfig(GetGenericTaskConfigRequest)
       returns (GetGenericTaskConfigResponse) {

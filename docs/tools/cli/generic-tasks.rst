@@ -12,7 +12,7 @@ trials, searcher, metrics or checkpoints.
 +-------------------------------+-------------+-------------------------------+-----------------+
 |                               | Command     | Generic task                  | Experiment      |
 +===============================+=============+===============================+=================+
-| Pause and unpause             | no          | yes; unpause starts the       | yes, via trials |
+| Pause and unpause             | no          | opt-in; unpause starts the    | yes, via trials |
 |                               |             | entrypoint again              |                 |
 +-------------------------------+-------------+-------------------------------+-----------------+
 | Fork with changed settings    | no          | yes                           | yes             |
@@ -62,8 +62,11 @@ gets to exit after a pause before its container is killed; default 0). Unknown k
 uploads a directory as the working directory, as for commands. ``--project_id`` places the task in a
 project; the default is the default project.
 
-``det task config <task ID>`` prints a task's config, ``det task logs -f <task ID>`` follows its
-logs, and ``det task list`` lists tasks.
+``det task config <task ID>`` prints a task's config and ``det task logs -f <task ID>`` follows its
+logs. ``det task list-generic`` lists your generic tasks, newest first, with their owner, state and
+parent; ``--all`` or ``--user <name>`` lists other users' tasks, and ``--state`` and ``--parent``
+narrow the list. The same list is available from the REST API as ``GET /api/v1/generic-tasks``.
+``det task list`` lists the running allocations of all task types.
 
 *************************
  Forking and task trees
@@ -73,18 +76,26 @@ logs, and ``det task list`` lists tasks.
 one. ``det task create --fork <task ID> overrides.yaml`` merges the keys of ``overrides.yaml`` into
 the forked config, e.g. to run the same job with another seed.
 
-``det task create --parent <task ID>`` makes the new task a child of an existing task;
-``--inherit_context`` reuses the parent's context directory. ``det task kill`` and ``det task pause``
-act on a task and all its descendants; ``det task kill --root`` kills the whole tree from its root.
+``det task create --parent <task ID>`` makes the new task a child of an existing task, which needs
+permission to control the parent (its owner or an admin); ``--inherit_context`` reuses the parent's
+context directory. ``det task kill`` acts on a task and all its descendants, ``det task pause`` on a
+task and its pausable descendants; ``det task kill --root`` kills the whole tree from its root. All
+of them need permission to control every task they act on.
 
 ********************
  Pause and unpause
 ********************
 
-``det task pause <task ID>`` stops the task and its descendants and marks them ``PAUSED``. Each task
-is asked to stop through the Core API's preemption signal and its container is killed after
-``preemption_timeout`` seconds, at once by default. A child created with ``--no_pause`` keeps running. ``det task unpause <task ID>``
-starts the entrypoint again in a new container, with the same task ID.
+Unpausing a task runs its entrypoint again from the start, so a generic task can be paused only if
+it was created with ``--pausable`` (``no_pause: false`` in the API). Without it, the task runs once
+and pausing it fails.
+
+``det task pause <task ID>`` stops a pausable task and its pausable descendants and marks them
+``PAUSED``. Each is asked to stop through the Core API's preemption signal and its container is
+killed after ``preemption_timeout`` seconds, at once by default. Descendants created without
+``--pausable`` keep running, so a paused tree can still have running members. ``det task unpause
+<task ID>`` starts the entrypoint of the task and its paused descendants again in new containers,
+with the same task IDs. The scheduler never preempts a generic task; only a pause stops it.
 
 Nothing of the stopped process is kept except files the task wrote to shared storage. A task that is
 paused and unpaused therefore starts over; write it so that it can: skip work whose outputs are

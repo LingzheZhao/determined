@@ -336,7 +336,7 @@ func (a *apiServer) CreateGenericTask(
 			Config:     ptrs.Ptr(string(configBytesJSON)),
 			ParentID:   (*model.TaskID)(req.ParentId),
 			State:      ptrs.Ptr(model.TaskStateActive),
-			NoPause:    req.NoPause,
+			NoPause:    ptrs.Ptr(genericTaskNoPause(req.NoPause)),
 		}); err != nil {
 			return fmt.Errorf("persisting task %v: %w", taskID, err)
 		}
@@ -366,6 +366,7 @@ func (a *apiServer) CreateGenericTask(
 	allocationID := model.AllocationID(fmt.Sprintf("%s.%d", taskID, 1))
 	genericTaskSpec.Base.TaskID = string(taskID)
 	if err := registerGenericTaskJob(a.m.rm, taskID, allocationID, jobID, genericTaskSpec); err != nil {
+		unregisterGenericTaskJob(jobID, allocationID)
 		return nil, err
 	}
 	onAllocationExit := getGenericTaskOnAllocationExit(ctx, taskID, allocationID, jobID, logCtx)
@@ -719,10 +720,9 @@ func (a *apiServer) PauseGenericTask(
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"cannot pause task %s as it is in state '%s'", req.TaskId, *taskModel.State)
 	}
-	// Check for flag (default to false for root task)
-	if taskModel.NoPause != nil && *taskModel.NoPause {
+	if genericTaskNoPause(taskModel.NoPause) {
 		return nil, status.Errorf(codes.FailedPrecondition,
-			"cannot pause task %s with `no_pause` set to true", req.TaskId)
+			"cannot pause task %s: it was not created pausable (no_pause is not false)", req.TaskId)
 	}
 	tasksToPause = filterTasksByState(tasksToPause, overrideStates)
 	// A child with no_pause unset defaults to not being paused. Keep its
@@ -748,10 +748,16 @@ func (a *apiServer) PauseGenericTask(
 	return &apiv1.PauseGenericTaskResponse{}, nil
 }
 
+// genericTaskNoPause reports whether a task cannot be paused. Unpausing runs a task's entrypoint
+// again from the start, so a task is pausable only if it was created with no_pause set to false.
+func genericTaskNoPause(noPause *bool) bool {
+	return noPause == nil || *noPause
+}
+
 func filterPausableGenericTasks(tasks []model.Task, rootID model.TaskID) []model.Task {
 	pausable := make([]model.Task, 0, len(tasks))
 	for _, taskModel := range tasks {
-		if taskModel.TaskID == rootID || taskModel.NoPause != nil && !*taskModel.NoPause {
+		if taskModel.TaskID == rootID || !genericTaskNoPause(taskModel.NoPause) {
 			pausable = append(pausable, taskModel)
 		}
 	}

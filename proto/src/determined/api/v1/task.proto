@@ -368,6 +368,34 @@ message GetAllocationResponse {
   determined.task.v1.Allocation allocation = 1;
 }
 
+// List generic tasks, newest first.
+message GetGenericTasksRequest {
+  // Skip this many tasks before returning results.
+  int32 offset = 1;
+  // Limit the number of tasks. A value of 0 denotes no limit.
+  int32 limit = 2;
+  // Limit tasks to those owned by users with these usernames.
+  repeated string users = 3;
+  // Limit tasks to those owned by users with these IDs.
+  repeated int32 user_ids = 4;
+  // Limit tasks to this workspace; 0 for all accessible workspaces.
+  int32 workspace_id = 5;
+  // Limit tasks to these states.
+  repeated determined.task.v1.GenericTaskState states = 6;
+  // Limit tasks to the direct children of this task.
+  optional string parent_id = 7;
+}
+// Response to GetGenericTasksRequest.
+message GetGenericTasksResponse {
+  option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = {
+    json_schema: { required: [ "tasks", "pagination" ] }
+  };
+  // The generic tasks.
+  repeated determined.task.v1.GenericTask tasks = 1;
+  // Pagination information of the full result set.
+  Pagination pagination = 2;
+}
+
 // Gets task configuration JSON
 message GetGenericTaskConfigRequest {
   option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = {

@@ -3620,6 +3620,115 @@ export interface V1FlatRunExperiment {
     pachydermIntegration?: any;
 }
 /**
+ * GenericTask is a generic task with its owner and display fields, as listed by GetGenericTasks.
+ * @export
+ * @interface V1GenericTask
+ */
+export interface V1GenericTask {
+    /**
+     * Unique ID of the task.
+     * @type {string}
+     * @memberof V1GenericTask
+     */
+    taskId: string;
+    /**
+     * ID of the task's job in the job queue.
+     * @type {string}
+     * @memberof V1GenericTask
+     */
+    jobId: string;
+    /**
+     * State of the task.
+     * @type {V1GenericTaskState}
+     * @memberof V1GenericTask
+     */
+    state: V1GenericTaskState;
+    /**
+     * Display name: the config's name, or "Generic Task <task_id>" without one.
+     * @type {string}
+     * @memberof V1GenericTask
+     */
+    name: string;
+    /**
+     * The config's description; empty without one.
+     * @type {string}
+     * @memberof V1GenericTask
+     */
+    description: string;
+    /**
+     * ID of the user who owns the task.
+     * @type {number}
+     * @memberof V1GenericTask
+     */
+    userId: number;
+    /**
+     * Username of the user who owns the task.
+     * @type {string}
+     * @memberof V1GenericTask
+     */
+    username: string;
+    /**
+     * ID of the task's workspace.
+     * @type {number}
+     * @memberof V1GenericTask
+     */
+    workspaceId: number;
+    /**
+     * ID of the task's project.
+     * @type {number}
+     * @memberof V1GenericTask
+     */
+    projectId: number;
+    /**
+     * When the task was created.
+     * @type {Date | DateString}
+     * @memberof V1GenericTask
+     */
+    startTime: Date | DateString;
+    /**
+     * When the task ended, if it has.
+     * @type {Date | DateString}
+     * @memberof V1GenericTask
+     */
+    endTime?: Date | DateString;
+    /**
+     * ID of the parent task (empty for a root task).
+     * @type {string}
+     * @memberof V1GenericTask
+     */
+    parentId?: string;
+    /**
+     * ID of the task this one was forked from.
+     * @type {string}
+     * @memberof V1GenericTask
+     */
+    forkedFrom?: string;
+    /**
+     * Whether the task cannot be paused (and so is never rerun).
+     * @type {boolean}
+     * @memberof V1GenericTask
+     */
+    noPause: boolean;
+    /**
+     * Slots the task requests.
+     * @type {number}
+     * @memberof V1GenericTask
+     */
+    slots: number;
+    /**
+     * Resource pool the task runs in.
+     * @type {string}
+     * @memberof V1GenericTask
+     */
+    resourcePool: string;
+    /**
+     * ID of the task's current or last allocation.
+     * @type {string}
+     * @memberof V1GenericTask
+     */
+    allocationId?: string;
+}
+/**
  * State of a Generic task - GENERIC_TASK_STATE_UNSPECIFIED: The task state unknown  - GENERIC_TASK_STATE_ACTIVE: The task state unknown  - GENERIC_TASK_STATE_CANCELED: The task state unknown  - GENERIC_TASK_STATE_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_ERROR: The task state unknown  - GENERIC_TASK_STATE_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_CANCELED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_ERROR: The task state unknown
  * @export
  * @enum {string}
@@ -4012,6 +4121,25 @@ export interface V1GetGenericTaskConfigResponse {
      * @memberof V1GetGenericTaskConfigResponse
      */
     config: string;
+}
+/**
+ * Response to GetGenericTasksRequest.
+ * @export
+ * @interface V1GetGenericTasksResponse
+ */
+export interface V1GetGenericTasksResponse {
+    /**
+     * The generic tasks.
+     * @type {Array<V1GenericTask>}
+     * @memberof V1GetGenericTasksResponse
+     */
+    tasks: Array<V1GenericTask>;
+    /**
+     * Pagination information of the full result set.
+     * @type {V1Pagination}
+     * @memberof V1GetGenericTasksResponse
+     */
+    pagination: V1Pagination;
 }
 /**
  * Response to GetGlobalConfigPoliciesRequest.
@@ -31125,6 +31253,71 @@ export const TasksApiFetchParamCreator = function (configuration?: Configuration
         },
         /**
          * 
+         * @summary Get a list of generic tasks, optionally filtered by owner, workspace, state or parent.
+         * @param {number} [offset] Skip this many tasks before returning results.
+         * @param {number} [limit] Limit the number of tasks. A value of 0 denotes no limit.
+         * @param {Array<string>} [users] Limit tasks to those owned by users with these usernames.
+         * @param {Array<number>} [userIds] Limit tasks to those owned by users with these IDs.
+         * @param {number} [workspaceId] Limit tasks to this workspace; 0 for all accessible workspaces.
+         * @param {Array<V1GenericTaskState>} [states] Limit tasks to these states.   - GENERIC_TASK_STATE_UNSPECIFIED: The task state unknown  - GENERIC_TASK_STATE_ACTIVE: The task state unknown  - GENERIC_TASK_STATE_CANCELED: The task state unknown  - GENERIC_TASK_STATE_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_ERROR: The task state unknown  - GENERIC_TASK_STATE_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_CANCELED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_ERROR: The task state unknown
+         * @param {string} [parentId] Limit tasks to the direct children of this task.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        getGenericTasks(offset?: number, limit?: number, users?: Array<string>, userIds?: Array<number>, workspaceId?: number, states?: Array<V1GenericTaskState>, parentId?: string, options: any = {}): FetchArgs {
+            const localVarPath = `/api/v1/generic-tasks`;
+            const localVarUrlObj = new URL(localVarPath, BASE_PATH);
+            const localVarRequestOptions = { method: 'GET', ...options };
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+            
+            // authentication BearerToken required
+            if (configuration && configuration.apiKey) {
+                const localVarApiKeyValue = typeof configuration.apiKey === 'function'
+                    ? configuration.apiKey("Authorization")
+                    : configuration.apiKey;
+                localVarHeaderParameter["Authorization"] = localVarApiKeyValue;
+            }
+            
+            if (offset !== undefined) {
+                localVarQueryParameter['offset'] = offset
+            }
+            
+            if (limit !== undefined) {
+                localVarQueryParameter['limit'] = limit
+            }
+            
+            if (users) {
+                localVarQueryParameter['users'] = users
+            }
+            
+            if (userIds) {
+                localVarQueryParameter['userIds'] = userIds
+            }
+            
+            if (workspaceId !== undefined) {
+                localVarQueryParameter['workspaceId'] = workspaceId
+            }
+            
+            if (states) {
+                localVarQueryParameter['states'] = states
+            }
+            
+            if (parentId !== undefined) {
+                localVarQueryParameter['parentId'] = parentId
+            }
+            
+            objToSearchParams(localVarQueryParameter, localVarUrlObj.searchParams);
+            objToSearchParams(options.query || {}, localVarUrlObj.searchParams);
+            localVarRequestOptions.headers = { ...localVarHeaderParameter, ...options.headers };
+            
+            return {
+                url: `${localVarUrlObj.pathname}${localVarUrlObj.search}`,
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         * 
          * @summary Check the status of a requested task.
          * @param {string} taskId The requested task id.
          * @param {*} [options] Override http request option.
@@ -31653,6 +31846,31 @@ export const TasksApiFp = function (configuration?: Configuration) {
         },
         /**
          * 
+         * @summary Get a list of generic tasks, optionally filtered by owner, workspace, state or parent.
+         * @param {number} [offset] Skip this many tasks before returning results.
+         * @param {number} [limit] Limit the number of tasks. A value of 0 denotes no limit.
+         * @param {Array<string>} [users] Limit tasks to those owned by users with these usernames.
+         * @param {Array<number>} [userIds] Limit tasks to those owned by users with these IDs.
+         * @param {number} [workspaceId] Limit tasks to this workspace; 0 for all accessible workspaces.
+         * @param {Array<V1GenericTaskState>} [states] Limit tasks to these states.   - GENERIC_TASK_STATE_UNSPECIFIED: The task state unknown  - GENERIC_TASK_STATE_ACTIVE: The task state unknown  - GENERIC_TASK_STATE_CANCELED: The task state unknown  - GENERIC_TASK_STATE_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_ERROR: The task state unknown  - GENERIC_TASK_STATE_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_CANCELED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_ERROR: The task state unknown
+         * @param {string} [parentId] Limit tasks to the direct children of this task.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        getGenericTasks(offset?: number, limit?: number, users?: Array<string>, userIds?: Array<number>, workspaceId?: number, states?: Array<V1GenericTaskState>, parentId?: string, options?: any): (fetch?: FetchAPI, basePath?: string) => Promise<V1GetGenericTasksResponse> {
+            const localVarFetchArgs = TasksApiFetchParamCreator(configuration).getGenericTasks(offset, limit, users, userIds, workspaceId, states, parentId, options);
+            return (fetch: FetchAPI = window.fetch, basePath: string = BASE_PATH) => {
+                return fetch(basePath + localVarFetchArgs.url, localVarFetchArgs.options).then((response) => {
+                    if (response.status >= 200 && response.status < 300) {
+                        return response.json();
+                    } else {
+                        throw response;
+                    }
+                });
+            };
+        },
+        /**
+         * 
          * @summary Check the status of a requested task.
          * @param {string} taskId The requested task id.
          * @param {*} [options] Override http request option.
@@ -31899,6 +32117,22 @@ export const TasksApiFactory = function (configuration?: Configuration, fetch?: 
         },
         /**
          * 
+         * @summary Get a list of generic tasks, optionally filtered by owner, workspace, state or parent.
+         * @param {number} [offset] Skip this many tasks before returning results.
+         * @param {number} [limit] Limit the number of tasks. A value of 0 denotes no limit.
+         * @param {Array<string>} [users] Limit tasks to those owned by users with these usernames.
+         * @param {Array<number>} [userIds] Limit tasks to those owned by users with these IDs.
+         * @param {number} [workspaceId] Limit tasks to this workspace; 0 for all accessible workspaces.
+         * @param {Array<V1GenericTaskState>} [states] Limit tasks to these states.   - GENERIC_TASK_STATE_UNSPECIFIED: The task state unknown  - GENERIC_TASK_STATE_ACTIVE: The task state unknown  - GENERIC_TASK_STATE_CANCELED: The task state unknown  - GENERIC_TASK_STATE_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_ERROR: The task state unknown  - GENERIC_TASK_STATE_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_CANCELED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_ERROR: The task state unknown
+         * @param {string} [parentId] Limit tasks to the direct children of this task.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        getGenericTasks(offset?: number, limit?: number, users?: Array<string>, userIds?: Array<number>, workspaceId?: number, states?: Array<V1GenericTaskState>, parentId?: string, options?: any) {
+            return TasksApiFp(configuration).getGenericTasks(offset, limit, users, userIds, workspaceId, states, parentId, options)(fetch, basePath);
+        },
+        /**
+         * 
          * @summary Check the status of a requested task.
          * @param {string} taskId The requested task id.
          * @param {*} [options] Override http request option.
@@ -32058,6 +32292,24 @@ export class TasksApi extends BaseAPI {
      */
     public getGenericTaskConfig(taskId: string, options?: any) {
         return TasksApiFp(this.configuration).getGenericTaskConfig(taskId, options)(this.fetch, this.basePath)
+    }
+    
+    /**
+     * 
+     * @summary Get a list of generic tasks, optionally filtered by owner, workspace, state or parent.
+     * @param {number} [offset] Skip this many tasks before returning results.
+     * @param {number} [limit] Limit the number of tasks. A value of 0 denotes no limit.
+     * @param {Array<string>} [users] Limit tasks to those owned by users with these usernames.
+     * @param {Array<number>} [userIds] Limit tasks to those owned by users with these IDs.
+     * @param {number} [workspaceId] Limit tasks to this workspace; 0 for all accessible workspaces.
+     * @param {Array<V1GenericTaskState>} [states] Limit tasks to these states.   - GENERIC_TASK_STATE_UNSPECIFIED: The task state unknown  - GENERIC_TASK_STATE_ACTIVE: The task state unknown  - GENERIC_TASK_STATE_CANCELED: The task state unknown  - GENERIC_TASK_STATE_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_ERROR: The task state unknown  - GENERIC_TASK_STATE_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_CANCELED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_ERROR: The task state unknown
+     * @param {string} [parentId] Limit tasks to the direct children of this task.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     * @memberof TasksApi
+     */
+    public getGenericTasks(offset?: number, limit?: number, users?: Array<string>, userIds?: Array<number>, workspaceId?: number, states?: Array<V1GenericTaskState>, parentId?: string, options?: any) {
+        return TasksApiFp(this.configuration).getGenericTasks(offset, limit, users, userIds, workspaceId, states, parentId, options)(this.fetch, this.basePath)
     }
     
     /**

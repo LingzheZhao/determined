@@ -127,6 +127,64 @@ message Task {
   optional bool no_pause = 11;
 }
 
+// GenericTask is a generic task with its owner and display fields, as listed by
+// GetGenericTasks.
+message GenericTask {
+  option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = {
+    json_schema: {
+      required: [
+        "task_id",
+        "job_id",
+        "state",
+        "name",
+        "description",
+        "user_id",
+        "username",
+        "workspace_id",
+        "project_id",
+        "start_time",
+        "no_pause",
+        "slots",
+        "resource_pool"
+      ]
+    }
+  };
+  // Unique ID of the task.
+  string task_id = 1;
+  // ID of the task's job in the job queue.
+  string job_id = 2;
+  // State of the task.
+  GenericTaskState state = 3;
+  // Display name: the config's name, or "Generic Task <task_id>" without one.
+  string name = 4;
+  // The config's description; empty without one.
+  string description = 5;
+  // ID of the user who owns the task.
+  int32 user_id = 6;
+  // Username of the user who owns the task.
+  string username = 7;
+  // ID of the task's workspace.
+  int32 workspace_id = 8;
+  // ID of the task's project.
+  int32 project_id = 9;
+  // When the task was created.
+  google.protobuf.Timestamp start_time = 10;
+  // When the task ended, if it has.
+  optional google.protobuf.Timestamp end_time = 11;
+  // ID of the parent task (empty for a root task).
+  optional string parent_id = 12;
+  // ID of the task this one was forked from.
+  optional string forked_from = 13;
+  // Whether the task cannot be paused (and so is never rerun).
+  bool no_pause = 14;
+  // Slots the task requests.
+  int32 slots = 15;
+  // Resource pool the task runs in.
+  string resource_pool = 16;
+  // ID of the task's current or last allocation.
+  optional string allocation_id = 17;
+}
+
 // Address represents an exposed port on a container.
 message Address {
   // ContainerIP is the IP address from inside the container.

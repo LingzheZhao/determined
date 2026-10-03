@@ -4461,6 +4461,111 @@ class v1FlatRunExperiment(Printable):
             out["pachydermIntegration"] = self.pachydermIntegration
         return out
 
+class v1GenericTask(Printable):
+    """GenericTask is a generic task with its owner and display fields, as listed by
+    GetGenericTasks.
+    """
+    allocationId: "typing.Optional[str]" = None
+    endTime: "typing.Optional[str]" = None
+    forkedFrom: "typing.Optional[str]" = None
+    parentId: "typing.Optional[str]" = None
+
+    def __init__(
+        self,
+        *,
+        description: str,
+        jobId: str,
+        name: str,
+        noPause: bool,
+        projectId: int,
+        resourcePool: str,
+        slots: int,
+        startTime: str,
+        state: "v1GenericTaskState",
+        taskId: str,
+        userId: int,
+        username: str,
+        workspaceId: int,
+        allocationId: "typing.Union[str, None, Unset]" = _unset,
+        endTime: "typing.Union[str, None, Unset]" = _unset,
+        forkedFrom: "typing.Union[str, None, Unset]" = _unset,
+        parentId: "typing.Union[str, None, Unset]" = _unset,
+    ):
+        self.description = description
+        self.jobId = jobId
+        self.name = name
+        self.noPause = noPause
+        self.projectId = projectId
+        self.resourcePool = resourcePool
+        self.slots = slots
+        self.startTime = startTime
+        self.state = state
+        self.taskId = taskId
+        self.userId = userId
+        self.username = username
+        self.workspaceId = workspaceId
+        if not isinstance(allocationId, Unset):
+            self.allocationId = allocationId
+        if not isinstance(endTime, Unset):
+            self.endTime = endTime
+        if not isinstance(forkedFrom, Unset):
+            self.forkedFrom = forkedFrom
+        if not isinstance(parentId, Unset):
+            self.parentId = parentId
+
+    @classmethod
+    def from_json(cls, obj: Json) -> "v1GenericTask":
+        kwargs: "typing.Dict[str, typing.Any]" = {
+            "description": obj["description"],
+            "jobId": obj["jobId"],
+            "name": obj["name"],
+            "noPause": obj["noPause"],
+            "projectId": obj["projectId"],
+            "resourcePool": obj["resourcePool"],
+            "slots": obj["slots"],
+            "startTime": obj["startTime"],
+            "state": v1GenericTaskState(obj["state"]),
+            "taskId": obj["taskId"],
+            "userId": obj["userId"],
+            "username": obj["username"],
+            "workspaceId": obj["workspaceId"],
+        }
+        if "allocationId" in obj:
+            kwargs["allocationId"] = obj["allocationId"]
+        if "endTime" in obj:
+            kwargs["endTime"] = obj["endTime"]
+        if "forkedFrom" in obj:
+            kwargs["forkedFrom"] = obj["forkedFrom"]
+        if "parentId" in obj:
+            kwargs["parentId"] = obj["parentId"]
+        return cls(**kwargs)
+
+    def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
+        out: "typing.Dict[str, typing.Any]" = {
+            "description": self.description,
+            "jobId": self.jobId,
+            "name": self.name,
+            "noPause": self.noPause,
+            "projectId": self.projectId,
+            "resourcePool": self.resourcePool,
+            "slots": self.slots,
+            "startTime": self.startTime,
+            "state": self.state.value,
+            "taskId": self.taskId,
+            "userId": self.userId,
+            "username": self.username,
+            "workspaceId": self.workspaceId,
+        }
+        if not omit_unset or "allocationId" in vars(self):
+            out["allocationId"] = self.allocationId
+        if not omit_unset or "endTime" in vars(self):
+            out["endTime"] = self.endTime
+        if not omit_unset or "forkedFrom" in vars(self):
+            out["forkedFrom"] = self.forkedFrom
+        if not omit_unset or "parentId" in vars(self):
+            out["parentId"] = self.parentId
+        return out
+
 class v1GenericTaskState(DetEnum):
     """State of a Generic task
     - GENERIC_TASK_STATE_UNSPECIFIED: The task state unknown
@@ -5067,6 +5172,33 @@ class v1GetGenericTaskConfigResponse(Printable):
     def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
         out: "typing.Dict[str, typing.Any]" = {
             "config": self.config,
+        }
+        return out
+
+class v1GetGenericTasksResponse(Printable):
+    """Response to GetGenericTasksRequest."""
+
+    def __init__(
+        self,
+        *,
+        pagination: "v1Pagination",
+        tasks: "typing.Sequence[v1GenericTask]",
+    ):
+        self.pagination = pagination
+        self.tasks = tasks
+
+    @classmethod
+    def from_json(cls, obj: Json) -> "v1GetGenericTasksResponse":
+        kwargs: "typing.Dict[str, typing.Any]" = {
+            "pagination": v1Pagination.from_json(obj["pagination"]),
+            "tasks": [v1GenericTask.from_json(x) for x in obj["tasks"]],
+        }
+        return cls(**kwargs)
+
+    def to_json(self, omit_unset: bool = False) -> typing.Dict[str, typing.Any]:
+        out: "typing.Dict[str, typing.Any]" = {
+            "pagination": self.pagination.to_json(omit_unset),
+            "tasks": [x.to_json(omit_unset) for x in self.tasks],
         }
         return out
 
@@ -19469,6 +19601,62 @@ def get_GetGenericTaskConfig(
         return v1GetGenericTaskConfigResponse.from_json(_resp.json())
     raise APIHttpError("get_GetGenericTaskConfig", _resp)
 
+def get_GetGenericTasks(
+    session: "api.BaseSession",
+    *,
+    limit: "typing.Optional[int]" = None,
+    offset: "typing.Optional[int]" = None,
+    parentId: "typing.Optional[str]" = None,
+    states: "typing.Optional[typing.Sequence[v1GenericTaskState]]" = None,
+    userIds: "typing.Optional[typing.Sequence[int]]" = None,
+    users: "typing.Optional[typing.Sequence[str]]" = None,
+    workspaceId: "typing.Optional[int]" = None,
+) -> "v1GetGenericTasksResponse":
+    """Get a list of generic tasks, optionally filtered by owner, workspace, state
+    or parent.
+
+    - limit: Limit the number of tasks. A value of 0 denotes no limit.
+    - offset: Skip this many tasks before returning results.
+    - parentId: Limit tasks to the direct children of this task.
+    - states: Limit tasks to these states.
+
+ - GENERIC_TASK_STATE_UNSPECIFIED: The task state unknown
+ - GENERIC_TASK_STATE_ACTIVE: The task state unknown
+ - GENERIC_TASK_STATE_CANCELED: The task state unknown
+ - GENERIC_TASK_STATE_COMPLETED: The task state unknown
+ - GENERIC_TASK_STATE_ERROR: The task state unknown
+ - GENERIC_TASK_STATE_PAUSED: The task state unknown
+ - GENERIC_TASK_STATE_STOPPING_PAUSED: The task state unknown
+ - GENERIC_TASK_STATE_STOPPING_CANCELED: The task state unknown
+ - GENERIC_TASK_STATE_STOPPING_COMPLETED: The task state unknown
+ - GENERIC_TASK_STATE_STOPPING_ERROR: The task state unknown
+    - userIds: Limit tasks to those owned by users with these IDs.
+    - users: Limit tasks to those owned by users with these usernames.
+    - workspaceId: Limit tasks to this workspace; 0 for all accessible workspaces.
+    """
+    _params = {
+        "limit": limit,
+        "offset": offset,
+        "parentId": parentId,
+        "states": [x.value for x in states] if states is not None else None,
+        "userIds": userIds,
+        "users": users,
+        "workspaceId": workspaceId,
+    }
+    _resp = session._do_request(
+        method="GET",
+        path="/api/v1/generic-tasks",
+        params=_params,
+        json=None,
+        data=None,
+        headers=None,
+        timeout=None,
+        stream=False,
+    )
+    if _resp.status_code == 200:
+        return v1GetGenericTasksResponse.from_json(_resp.json())
+    raise APIHttpError("get_GetGenericTasks", _resp)
+
 def get_GetGlobalConfigPolicies(
     session: "api.BaseSession",
     *,
@@ -25090,6 +25278,7 @@ Paginated = typing.Union[
     v1GetExperimentCheckpointsResponse,
     v1GetExperimentTrialsResponse,
     v1GetExperimentsResponse,
+    v1GetGenericTasksResponse,
     v1GetGroupsResponse,
     v1GetJobsResponse,
     v1GetJobsV2Response,
