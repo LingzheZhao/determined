@@ -60,6 +60,7 @@
 
    CLI <cli/cli-ug>
    Commands and Shells <cli/commands-and-shells>
+   Generic Tasks <cli/generic-tasks>
    GenAI Studio <genai/_index>
    Notebooks <notebooks>
    Proxy Ports <proxy-ports>
