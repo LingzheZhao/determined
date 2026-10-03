@@ -336,6 +336,10 @@ func TestGetGenericTasksFiltersByOwnerStateAndParent(t *testing.T) {
 	require.Subset(t, ids(resp), []string{root.String(), child.String()})
 	require.NotContains(t, ids(resp), foreign.String())
 
+	resp, err = api.GetGenericTasks(ctx, &apiv1.GetGenericTasksRequest{TaskIds: []string{foreign.String()}})
+	require.NoError(t, err)
+	require.Equal(t, []string{foreign.String()}, ids(resp))
+
 	resp, err = api.GetGenericTasks(ctx, &apiv1.GetGenericTasksRequest{ParentId: ptrs.Ptr(root.String())})
 	require.NoError(t, err)
 	require.Equal(t, []string{child.String()}, ids(resp))

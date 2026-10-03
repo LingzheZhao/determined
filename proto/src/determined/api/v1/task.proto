@@ -384,6 +384,8 @@ message GetGenericTasksRequest {
   repeated determined.task.v1.GenericTaskState states = 6;
   // Limit tasks to the direct children of this task.
   optional string parent_id = 7;
+  // Limit tasks to these task IDs.
+  repeated string task_ids = 8;
 }
 // Response to GetGenericTasksRequest.
 message GetGenericTasksResponse {

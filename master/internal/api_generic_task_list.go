@@ -94,6 +94,9 @@ func (a *apiServer) GetGenericTasks(
 	if req.ParentId != nil {
 		query = query.Where("t.parent_id = ?", *req.ParentId)
 	}
+	if len(req.TaskIds) > 0 {
+		query = query.Where("t.task_id IN (?)", bun.In(req.TaskIds))
+	}
 
 	var rows []genericTaskListRow
 	if err := query.Scan(ctx, &rows); err != nil {

@@ -19608,6 +19608,7 @@ def get_GetGenericTasks(
     offset: "typing.Optional[int]" = None,
     parentId: "typing.Optional[str]" = None,
     states: "typing.Optional[typing.Sequence[v1GenericTaskState]]" = None,
+    taskIds: "typing.Optional[typing.Sequence[str]]" = None,
     userIds: "typing.Optional[typing.Sequence[int]]" = None,
     users: "typing.Optional[typing.Sequence[str]]" = None,
     workspaceId: "typing.Optional[int]" = None,
@@ -19630,6 +19631,7 @@ def get_GetGenericTasks(
  - GENERIC_TASK_STATE_STOPPING_CANCELED: The task state unknown
  - GENERIC_TASK_STATE_STOPPING_COMPLETED: The task state unknown
  - GENERIC_TASK_STATE_STOPPING_ERROR: The task state unknown
+    - taskIds: Limit tasks to these task IDs.
     - userIds: Limit tasks to those owned by users with these IDs.
     - users: Limit tasks to those owned by users with these usernames.
     - workspaceId: Limit tasks to this workspace; 0 for all accessible workspaces.
@@ -19639,6 +19641,7 @@ def get_GetGenericTasks(
         "offset": offset,
         "parentId": parentId,
         "states": [x.value for x in states] if states is not None else None,
+        "taskIds": taskIds,
         "userIds": userIds,
         "users": users,
         "workspaceId": workspaceId,

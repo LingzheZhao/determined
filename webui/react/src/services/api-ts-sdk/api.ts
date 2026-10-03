@@ -31261,10 +31261,11 @@ export const TasksApiFetchParamCreator = function (configuration?: Configuration
          * @param {number} [workspaceId] Limit tasks to this workspace; 0 for all accessible workspaces.
          * @param {Array<V1GenericTaskState>} [states] Limit tasks to these states.   - GENERIC_TASK_STATE_UNSPECIFIED: The task state unknown  - GENERIC_TASK_STATE_ACTIVE: The task state unknown  - GENERIC_TASK_STATE_CANCELED: The task state unknown  - GENERIC_TASK_STATE_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_ERROR: The task state unknown  - GENERIC_TASK_STATE_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_CANCELED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_ERROR: The task state unknown
          * @param {string} [parentId] Limit tasks to the direct children of this task.
+         * @param {Array<string>} [taskIds] Limit tasks to these task IDs.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        getGenericTasks(offset?: number, limit?: number, users?: Array<string>, userIds?: Array<number>, workspaceId?: number, states?: Array<V1GenericTaskState>, parentId?: string, options: any = {}): FetchArgs {
+        getGenericTasks(offset?: number, limit?: number, users?: Array<string>, userIds?: Array<number>, workspaceId?: number, states?: Array<V1GenericTaskState>, parentId?: string, taskIds?: Array<string>, options: any = {}): FetchArgs {
             const localVarPath = `/api/v1/generic-tasks`;
             const localVarUrlObj = new URL(localVarPath, BASE_PATH);
             const localVarRequestOptions = { method: 'GET', ...options };
@@ -31305,6 +31306,10 @@ export const TasksApiFetchParamCreator = function (configuration?: Configuration
             
             if (parentId !== undefined) {
                 localVarQueryParameter['parentId'] = parentId
+            }
+            
+            if (taskIds) {
+                localVarQueryParameter['taskIds'] = taskIds
             }
             
             objToSearchParams(localVarQueryParameter, localVarUrlObj.searchParams);
@@ -31854,11 +31859,12 @@ export const TasksApiFp = function (configuration?: Configuration) {
          * @param {number} [workspaceId] Limit tasks to this workspace; 0 for all accessible workspaces.
          * @param {Array<V1GenericTaskState>} [states] Limit tasks to these states.   - GENERIC_TASK_STATE_UNSPECIFIED: The task state unknown  - GENERIC_TASK_STATE_ACTIVE: The task state unknown  - GENERIC_TASK_STATE_CANCELED: The task state unknown  - GENERIC_TASK_STATE_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_ERROR: The task state unknown  - GENERIC_TASK_STATE_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_CANCELED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_ERROR: The task state unknown
          * @param {string} [parentId] Limit tasks to the direct children of this task.
+         * @param {Array<string>} [taskIds] Limit tasks to these task IDs.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        getGenericTasks(offset?: number, limit?: number, users?: Array<string>, userIds?: Array<number>, workspaceId?: number, states?: Array<V1GenericTaskState>, parentId?: string, options?: any): (fetch?: FetchAPI, basePath?: string) => Promise<V1GetGenericTasksResponse> {
-            const localVarFetchArgs = TasksApiFetchParamCreator(configuration).getGenericTasks(offset, limit, users, userIds, workspaceId, states, parentId, options);
+        getGenericTasks(offset?: number, limit?: number, users?: Array<string>, userIds?: Array<number>, workspaceId?: number, states?: Array<V1GenericTaskState>, parentId?: string, taskIds?: Array<string>, options?: any): (fetch?: FetchAPI, basePath?: string) => Promise<V1GetGenericTasksResponse> {
+            const localVarFetchArgs = TasksApiFetchParamCreator(configuration).getGenericTasks(offset, limit, users, userIds, workspaceId, states, parentId, taskIds, options);
             return (fetch: FetchAPI = window.fetch, basePath: string = BASE_PATH) => {
                 return fetch(basePath + localVarFetchArgs.url, localVarFetchArgs.options).then((response) => {
                     if (response.status >= 200 && response.status < 300) {
@@ -32125,11 +32131,12 @@ export const TasksApiFactory = function (configuration?: Configuration, fetch?: 
          * @param {number} [workspaceId] Limit tasks to this workspace; 0 for all accessible workspaces.
          * @param {Array<V1GenericTaskState>} [states] Limit tasks to these states.   - GENERIC_TASK_STATE_UNSPECIFIED: The task state unknown  - GENERIC_TASK_STATE_ACTIVE: The task state unknown  - GENERIC_TASK_STATE_CANCELED: The task state unknown  - GENERIC_TASK_STATE_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_ERROR: The task state unknown  - GENERIC_TASK_STATE_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_CANCELED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_ERROR: The task state unknown
          * @param {string} [parentId] Limit tasks to the direct children of this task.
+         * @param {Array<string>} [taskIds] Limit tasks to these task IDs.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        getGenericTasks(offset?: number, limit?: number, users?: Array<string>, userIds?: Array<number>, workspaceId?: number, states?: Array<V1GenericTaskState>, parentId?: string, options?: any) {
-            return TasksApiFp(configuration).getGenericTasks(offset, limit, users, userIds, workspaceId, states, parentId, options)(fetch, basePath);
+        getGenericTasks(offset?: number, limit?: number, users?: Array<string>, userIds?: Array<number>, workspaceId?: number, states?: Array<V1GenericTaskState>, parentId?: string, taskIds?: Array<string>, options?: any) {
+            return TasksApiFp(configuration).getGenericTasks(offset, limit, users, userIds, workspaceId, states, parentId, taskIds, options)(fetch, basePath);
         },
         /**
          * 
@@ -32304,12 +32311,13 @@ export class TasksApi extends BaseAPI {
      * @param {number} [workspaceId] Limit tasks to this workspace; 0 for all accessible workspaces.
      * @param {Array<V1GenericTaskState>} [states] Limit tasks to these states.   - GENERIC_TASK_STATE_UNSPECIFIED: The task state unknown  - GENERIC_TASK_STATE_ACTIVE: The task state unknown  - GENERIC_TASK_STATE_CANCELED: The task state unknown  - GENERIC_TASK_STATE_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_ERROR: The task state unknown  - GENERIC_TASK_STATE_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_PAUSED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_CANCELED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_COMPLETED: The task state unknown  - GENERIC_TASK_STATE_STOPPING_ERROR: The task state unknown
      * @param {string} [parentId] Limit tasks to the direct children of this task.
+     * @param {Array<string>} [taskIds] Limit tasks to these task IDs.
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      * @memberof TasksApi
      */
-    public getGenericTasks(offset?: number, limit?: number, users?: Array<string>, userIds?: Array<number>, workspaceId?: number, states?: Array<V1GenericTaskState>, parentId?: string, options?: any) {
-        return TasksApiFp(this.configuration).getGenericTasks(offset, limit, users, userIds, workspaceId, states, parentId, options)(this.fetch, this.basePath)
+    public getGenericTasks(offset?: number, limit?: number, users?: Array<string>, userIds?: Array<number>, workspaceId?: number, states?: Array<V1GenericTaskState>, parentId?: string, taskIds?: Array<string>, options?: any) {
+        return TasksApiFp(this.configuration).getGenericTasks(offset, limit, users, userIds, workspaceId, states, parentId, taskIds, options)(this.fetch, this.basePath)
     }
     
     /**
