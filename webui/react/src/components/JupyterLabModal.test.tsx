@@ -12,7 +12,7 @@ import { SettingsProvider } from 'hooks/useSettingsProvider';
 import authStore from 'stores/auth';
 import { WorkspaceState } from 'types';
 
-const SIMPLE_CONFIG_TEMPLATE_TEXT = 'Template';
+const SIMPLE_CONFIG_START_FROM_TEXT = 'Start from';
 const SHOW_SIMPLE_CONFIG_TEXT = 'Show Simple Config';
 
 vi.mock('services/api', () => ({
@@ -104,7 +104,7 @@ describe('JupyterLab Modal', () => {
   it('should show modal in simple form mode', async () => {
     await setup();
 
-    expect(await screen.findByText(SIMPLE_CONFIG_TEMPLATE_TEXT)).toBeInTheDocument();
+    expect(await screen.findByText(SIMPLE_CONFIG_START_FROM_TEXT)).toBeInTheDocument();
   });
 
   it('should switch modal to full config', async () => {

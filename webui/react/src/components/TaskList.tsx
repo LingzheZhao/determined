@@ -15,6 +15,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Badge, { BadgeType } from 'components/Badge';
 import FilterCounter from 'components/FilterCounter';
 import JupyterLabButton from 'components/JupyterLabButton';
+import JupyterLabModalComponent from 'components/JupyterLabModal';
+import ShellButton from 'components/ShellButton';
+import ShellLaunchedModalComponent from 'components/ShellLaunchedModal';
+import ShellModalComponent from 'components/ShellModal';
 import InteractiveTable, {
   ColumnDef,
   onRightClickableCell,
@@ -52,6 +56,7 @@ import userStore from 'stores/users';
 import workspaceStore from 'stores/workspaces';
 import {
   ExperimentAction as Action,
+  CommandResponse,
   CommandState,
   CommandTask,
   CommandType,
@@ -103,6 +108,14 @@ const TaskList: React.FC<Props> = ({ workspace }: Props) => {
   const entityCopyMap = f_flat_runs ? RunEntityCopyMap : ExperimentEntityCopyMap;
 
   const BatchActionConfirmModal = useModal(BatchActionConfirmModalComponent);
+  const JupyterLabAgainModal = useModal(JupyterLabModalComponent);
+  const ShellAgainModal = useModal(ShellModalComponent);
+  const ShellLaunchedModal = useModal(ShellLaunchedModalComponent);
+  const [launchAgainTask, setLaunchAgainTask] = useState<CommandTask>();
+  const [launchedShell, setLaunchedShell] = useState<CommandResponse>();
+  const openJupyterLabAgain = JupyterLabAgainModal.open;
+  const openShellAgain = ShellAgainModal.open;
+  const openShellLaunched = ShellLaunchedModal.open;
 
   useEffect(() => {
     if (sourcesModal) {
@@ -200,6 +213,24 @@ const TaskList: React.FC<Props> = ({ workspace }: Props) => {
   const handleSourceDismiss = useCallback(() => setSourcesModal(undefined), []);
 
   const handleActionComplete = useCallback(() => fetchTasks(), [fetchTasks]);
+
+  const handleLaunchAgain = useCallback(
+    (task: CommandTask) => {
+      setLaunchAgainTask(task);
+      if (task.type === CommandType.Shell) openShellAgain();
+      else if (task.type === CommandType.JupyterLab) openJupyterLabAgain();
+    },
+    [openJupyterLabAgain, openShellAgain],
+  );
+
+  const handleShellLaunched = useCallback(
+    (response: CommandResponse) => {
+      setLaunchedShell(response);
+      openShellLaunched();
+      fetchTasks();
+    },
+    [fetchTasks, openShellLaunched],
+  );
 
   const tableSearchIcon = useCallback(() => <Icon name="search" size="tiny" title="Search" />, []);
 
@@ -382,7 +413,12 @@ const TaskList: React.FC<Props> = ({ workspace }: Props) => {
     };
 
     const actionRenderer: TaskRenderer = (_, record) => (
-      <TaskActionDropdown task={record} onComplete={handleActionComplete} />
+      <TaskActionDropdown
+        curUser={currentUser}
+        task={record}
+        onComplete={handleActionComplete}
+        onLaunchAgain={handleLaunchAgain}
+      />
     );
 
     const cols = [
@@ -514,8 +550,10 @@ const TaskList: React.FC<Props> = ({ workspace }: Props) => {
 
     return cols;
   }, [
+    currentUser,
     entityCopyMap,
     handleActionComplete,
+    handleLaunchAgain,
     handleSourceShow,
     nameFilterSearch,
     stateFilterDropdown,
@@ -615,11 +653,12 @@ const TaskList: React.FC<Props> = ({ workspace }: Props) => {
         curUser={currentUser}
         task={record}
         onComplete={handleActionComplete}
+        onLaunchAgain={handleLaunchAgain}
         onVisibleChange={onVisibleChange}>
         {children}
       </TaskActionDropdown>
     ),
-    [currentUser, handleActionComplete],
+    [currentUser, handleActionComplete, handleLaunchAgain],
   );
 
   return (
@@ -630,6 +669,10 @@ const TaskList: React.FC<Props> = ({ workspace }: Props) => {
             <FilterCounter activeFilterCount={filterCount} onReset={resetFilters} />
           )}
           <JupyterLabButton
+            enabled={workspace ? canCreateWorkspaceNSC({ workspace }) : canCreateNSC}
+            workspace={workspace}
+          />
+          <ShellButton
             enabled={workspace ? canCreateWorkspaceNSC({ workspace }) : canCreateNSC}
             workspace={workspace}
           />
@@ -683,6 +726,22 @@ const TaskList: React.FC<Props> = ({ workspace }: Props) => {
         `}
         onClose={handleSourceDismiss}
       />
+      {launchAgainTask?.type === CommandType.JupyterLab && (
+        <JupyterLabAgainModal.Component
+          initialTask={launchAgainTask}
+          key={launchAgainTask.id}
+          workspace={workspace}
+        />
+      )}
+      {launchAgainTask?.type === CommandType.Shell && (
+        <ShellAgainModal.Component
+          initialTask={launchAgainTask}
+          key={launchAgainTask.id}
+          workspace={workspace}
+          onLaunched={handleShellLaunched}
+        />
+      )}
+      {launchedShell && <ShellLaunchedModal.Component response={launchedShell} />}
     </>
   );
 };

@@ -8,12 +8,13 @@ import { useToast } from 'hew/Toast';
 import { Loadable } from 'hew/utils/loadable';
 import yaml from 'js-yaml';
 import { useObservable } from 'micro-observables';
-import React, { useCallback, useEffect, useId, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useState } from 'react';
 
 import { createTaskTemplate, updateTaskTemplate, updateTaskTemplateName } from 'services/api';
 import workspaceStore from 'stores/workspaces';
-import { Template, Workspace } from 'types';
+import { RawJson, Template, Workspace } from 'types';
 import handleError, { DetError, ErrorLevel, ErrorType } from 'utils/error';
+import { sensitiveEnvNames } from 'utils/ntscConfig';
 
 const FORM_ID = 'create-template-form';
 
@@ -24,12 +25,22 @@ interface FormInputs {
 }
 
 interface Props {
+  /** Create mode only: YAML to start the new template from. */
+  initialConfig?: string;
+  /** Create mode only: preselected workspace that the user can still change. */
+  initialWorkspaceId?: number;
   workspaceId?: number;
   onSuccess?: () => void;
   template?: Template;
 }
 
-const TemplateCreateModalComponent: React.FC<Props> = ({ workspaceId, onSuccess, template }) => {
+const TemplateCreateModalComponent: React.FC<Props> = ({
+  initialConfig,
+  initialWorkspaceId,
+  workspaceId,
+  onSuccess,
+  template,
+}) => {
   const idPrefix = useId();
   const { openToast } = useToast();
   const [form] = Form.useForm<FormInputs>();
@@ -112,6 +123,22 @@ const TemplateCreateModalComponent: React.FC<Props> = ({ workspaceId, onSuccess,
     });
   }, [template, form]);
 
+  // Create mode with a starting config, e.g. "Save as Template" in the launch modal.
+  useEffect(() => {
+    if (template || initialConfig === undefined) return;
+    form.setFieldsValue({ config: initialConfig });
+  }, [form, initialConfig, template]);
+
+  const initialSensitiveEnv = useMemo(() => {
+    if (template || !initialConfig) return [];
+    try {
+      const parsed = yaml.load(initialConfig);
+      return parsed && typeof parsed === 'object' ? sensitiveEnvNames(parsed as RawJson) : [];
+    } catch {
+      return [];
+    }
+  }, [initialConfig, template]);
+
   return (
     <Modal
       cancel
@@ -124,6 +151,18 @@ const TemplateCreateModalComponent: React.FC<Props> = ({ workspaceId, onSuccess,
         text: `${template ? 'Edit' : 'Create'} Template`,
       }}
       title={`${template ? 'Edit' : 'New'} Template`}>
+      {!template && initialConfig !== undefined && (
+        <Alert
+          description={
+            initialSensitiveEnv.length > 0
+              ? `These environment variables look like credentials: ${initialSensitiveEnv.join(', ')}. Remove them unless every user may read them.`
+              : undefined
+          }
+          message="Other users can read templates. Review the config before you save it."
+          showIcon
+          type={initialSensitiveEnv.length > 0 ? 'warning' : 'info'}
+        />
+      )}
       <Form
         autoComplete="off"
         form={form}
@@ -138,7 +177,7 @@ const TemplateCreateModalComponent: React.FC<Props> = ({ workspaceId, onSuccess,
           <Input />
         </Form.Item>
         <Form.Item
-          initialValue={template?.workspaceId ?? workspaceId}
+          initialValue={template?.workspaceId ?? workspaceId ?? initialWorkspaceId}
           label="Workspace"
           name="workspaceId"
           rules={[{ message: 'Workspace is required', required: true, type: 'number' }]}>
@@ -174,7 +213,7 @@ const TemplateCreateModalComponent: React.FC<Props> = ({ workspaceId, onSuccess,
             },
           ]}>
           <CodeEditor
-            file={template?.config ? yaml.dump(template.config) : ''}
+            file={template?.config ? yaml.dump(template.config) : initialConfig ?? ''}
             files={[{ key: 'template.yaml' }]}
             height="40vh"
             onError={handleError}

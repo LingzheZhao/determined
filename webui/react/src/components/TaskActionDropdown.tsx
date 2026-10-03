@@ -23,12 +23,22 @@ interface Props {
   children?: React.ReactNode;
   curUser?: DetailedUser;
   onComplete?: (action?: Action) => void;
+  /** Offers "Launch Again" on the user's own shells and JupyterLabs when given. */
+  onLaunchAgain?: (task: CommandTask) => void;
   onVisibleChange?: (visible: boolean) => void;
   task: CommandTask;
 }
 
-const TaskActionDropdown: React.FC<Props> = ({ task, onComplete, children }: Props) => {
-  const { canModifyWorkspaceNSC } = usePermissions();
+const relaunchableTaskTypes: CommandType[] = [CommandType.JupyterLab, CommandType.Shell];
+
+const TaskActionDropdown: React.FC<Props> = ({
+  task,
+  curUser,
+  onComplete,
+  onLaunchAgain,
+  children,
+}: Props) => {
+  const { canCreateWorkspaceNSC, canModifyWorkspaceNSC } = usePermissions();
   const resourcesEnabled = useTaskResourcesEnabled();
   const { openToast } = useToast();
   const TaskConnectModal = useModal(TaskConnectModalComponent);
@@ -84,8 +94,25 @@ const TaskActionDropdown: React.FC<Props> = ({ task, onComplete, children }: Pro
     if (isConnectable(task)) {
       items.push({ key: Action.Connect, label: 'Connect' });
     }
+    // A UI rule only: the API lets anyone who can view a task read its config.
+    if (
+      onLaunchAgain &&
+      relaunchableTaskTypes.includes(task.type) &&
+      !!curUser &&
+      (curUser.id === task.userId || curUser.isAdmin) &&
+      canCreateWorkspaceNSC({ workspace: { id: task.workspaceId } })
+    ) {
+      items.push({ key: Action.LaunchAgain, label: 'Launch Again' });
+    }
     return items;
-  }, [task, canModifyWorkspaceNSC, resourcesEnabled]);
+  }, [
+    task,
+    canCreateWorkspaceNSC,
+    canModifyWorkspaceNSC,
+    curUser,
+    onLaunchAgain,
+    resourcesEnabled,
+  ]);
 
   const navigate = useNavigate();
 
@@ -94,6 +121,9 @@ const TaskActionDropdown: React.FC<Props> = ({ task, onComplete, children }: Pro
       switch (key) {
         case Action.Connect:
           TaskConnectModal.open();
+          break;
+        case Action.LaunchAgain:
+          onLaunchAgain?.(task);
           break;
         case Action.Kill:
           confirm({
