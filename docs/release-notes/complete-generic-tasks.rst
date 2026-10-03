@@ -69,3 +69,8 @@
    generic task ended as completed or errored instead of paused, so it was never resumed, even with
    ``no_pause``. Generic tasks still receive the preemption signal and their ``preemption_timeout``
    when they are paused.
+
+-  Generic tasks: Creating a generic task with ``--parent`` now requires permission to control the
+   parent task (its owner or an admin). Previously any user could add a child to another user's
+   task, after which the owner could no longer pause or kill the tree without an admin, because
+   those actions require control of every task in it.

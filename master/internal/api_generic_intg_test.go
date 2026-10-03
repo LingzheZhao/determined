@@ -18,6 +18,8 @@ import (
 	apiPkg "github.com/determined-ai/determined/master/internal/api"
 	authz2 "github.com/determined-ai/determined/master/internal/authz"
 	"github.com/determined-ai/determined/master/internal/db"
+	"github.com/determined-ai/determined/master/internal/mocks"
+	"github.com/determined-ai/determined/master/internal/project"
 	"github.com/determined-ai/determined/master/internal/rm"
 	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/sproto"
@@ -857,4 +859,34 @@ func TestGenericTaskMutationHidesTaskWithoutViewAuthorization(t *testing.T) {
 	require.ErrorIs(t, err, apiPkg.NotFoundErrs("task", taskID.String(), true))
 	authZ.AssertNotCalled(t, "CanControlGenericTask", mock.Anything, mock.Anything,
 		mock.Anything, mock.Anything)
+}
+
+func TestCreateGenericTaskChildRequiresControlOfParent(t *testing.T) {
+	api, authZ, curUser, ctx := setupNTSCAuthzTest(t)
+	parentID := addGenericTaskForAuthZTest(ctx, t, curUser, 11, nil, model.TaskStateActive)
+	create := func(parent string) error {
+		_, err := api.CreateGenericTask(ctx, &apiv1.CreateGenericTaskRequest{
+			Config: "entrypoint: [\"true\"]\n", ParentId: &parent,
+		})
+		return err
+	}
+
+	if pAuthZ == nil {
+		pAuthZ = &mocks.ProjectAuthZ{}
+		project.AuthZProvider.Register(mockType, pAuthZ)
+	}
+	pAuthZ.On("CanGetProject", mock.Anything, curUser, mock.Anything).Return(nil).Twice()
+	authZ.On("CanCreateGenericTask", mock.Anything, curUser, mock.Anything).Return(nil).Twice()
+	authZ.On("CanGetNSC", mock.Anything, curUser, model.AccessScopeID(11)).Return(nil).Once()
+	authZ.On("CanControlGenericTask", mock.Anything, curUser,
+		model.AccessScopeID(11), &curUser.ID).
+		Return(authz2.PermissionDeniedError{}).Once()
+	require.Equal(t, codes.PermissionDenied, status.Code(create(parentID.String())))
+
+	require.Equal(t, codes.NotFound, status.Code(create(model.NewTaskID().String())))
+
+	children, err := api.GetTaskChildren(ctx, parentID, nil)
+	require.NoError(t, err)
+	require.Len(t, children, 1, "no child may join the parent's tree")
+	authZ.AssertExpectations(t)
 }

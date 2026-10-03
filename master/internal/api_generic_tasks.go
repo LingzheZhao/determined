@@ -216,6 +216,16 @@ func (a *apiServer) canCreateGenericTask(ctx context.Context, projectID int) err
 	return nil
 }
 
+func (a *apiServer) canAddGenericTaskChild(ctx context.Context, parentID string) error {
+	var parent model.Task
+	if err := db.Bun().NewSelect().Model(&parent).
+		Where("task_id = ?", parentID).
+		Where("task_type = ?", model.TaskTypeGeneric).Scan(ctx); err != nil {
+		return genericTaskLookupError(parentID, err)
+	}
+	return a.authorizeGenericTaskMutation(ctx, parent.TaskID, []model.Task{parent})
+}
+
 func (a *apiServer) CreateGenericTask(
 	ctx context.Context, req *apiv1.CreateGenericTaskRequest,
 ) (*apiv1.CreateGenericTaskResponse, error) {
@@ -228,6 +238,13 @@ func (a *apiServer) CreateGenericTask(
 
 	if err := a.canCreateGenericTask(ctx, projectID); err != nil {
 		return nil, err
+	}
+	if req.ParentId != nil {
+		// A child joins its parent's tree, whose pause, unpause and kill need control of every
+		// member, so only those who may control the parent can add one.
+		if err := a.canAddGenericTaskChild(ctx, *req.ParentId); err != nil {
+			return nil, err
+		}
 	}
 
 	// forkedConfig denotes the config of the task we are forking from
