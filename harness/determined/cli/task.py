@@ -114,7 +114,7 @@ def kill(args: argparse.Namespace) -> None:
     sess = cli.setup_session(args)
     req = bindings.v1KillGenericTaskRequest(taskId=args.task_id, killFromRoot=args.root)
     bindings.post_KillGenericTask(sess, taskId=args.task_id, body=req)
-    print(f"Sucessfully killed task: {args.task_id}")
+    print(f"Successfully killed task: {args.task_id}")
 
 
 def task_creation_output(

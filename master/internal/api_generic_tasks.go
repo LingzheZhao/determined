@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"database/sql"
+	stderrors "errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -655,25 +656,52 @@ func (a *apiServer) KillGenericTask(
 	if err != nil {
 		return nil, err
 	}
+	// Every member is already STOPPING_CANCELED; keep going through the whole tree so that one
+	// member's failure does not leave the others marked as stopping while they keep running.
+	var errs []error
 	for _, childTask := range tasksToDelete {
 		if intendedID, found := resumeAllocations[childTask.TaskID]; found {
 			if slices.Contains(task.DefaultService.GetAllAllocationIDs(), intendedID) {
 				if err := task.DefaultService.Signal(intendedID, task.KillAllocation, "user requested task kill"); err != nil {
-					return nil, err
+					errs = append(errs, err)
 				}
 			}
 			continue
 		}
 		allocationID, err := getAllocationFromTaskID(ctx, childTask.TaskID)
 		if err != nil {
-			return nil, err
+			errs = append(errs, err)
+			continue
 		}
 		err = task.DefaultService.Signal(model.AllocationID(allocationID), task.KillAllocation, "user requested task kill")
-		if err != nil {
-			return nil, err
+		if err == nil {
+			continue
+		}
+		if slices.Contains(task.DefaultService.GetAllAllocationIDs(), model.AllocationID(allocationID)) {
+			errs = append(errs, err)
+			continue
+		}
+		// No allocation is running, e.g. the task is paused: no exit hook will finish the kill.
+		if err := finishGenericTaskKillWithoutAllocation(ctx, childTask.TaskID); err != nil {
+			errs = append(errs, err)
 		}
 	}
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("killing generic task %s: %w", req.TaskId, stderrors.Join(errs...))
+	}
 	return &apiv1.KillGenericTaskResponse{}, nil
+}
+
+// finishGenericTaskKillWithoutAllocation ends a task that is being killed but has no running
+// allocation, such as a paused task.
+func finishGenericTaskKillWithoutAllocation(ctx context.Context, taskID model.TaskID) error {
+	_, err := db.Bun().NewUpdate().Table("tasks").
+		Set("task_state = ?", model.TaskStateCanceled).
+		Set("end_time = ?", time.Now().UTC()).
+		Where("task_id = ?", taskID).
+		Where("task_state = ?", model.TaskStateStoppingCanceled).
+		Exec(ctx)
+	return err
 }
 
 func (a *apiServer) PauseGenericTask(

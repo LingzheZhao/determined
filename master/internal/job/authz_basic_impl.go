@@ -39,7 +39,7 @@ func (a *JobAuthZBasic) CanControlJobQueueUpdate(
 		return nil
 	}
 	return authz.PermissionDeniedError{}.WithPrefix(
-		"non-admin users may not control other users' jobs",
+		"non-admin users may not control other users' jobs:",
 	)
 }
 

@@ -109,7 +109,7 @@ func (a *NSCAuthZBasic) CanControlGenericTask(
 		return nil
 	}
 	return authz.PermissionDeniedError{}.WithPrefix(
-		"non-admin users may not control other users' tasks",
+		"non-admin users may not control other users' tasks:",
 	)
 }
 

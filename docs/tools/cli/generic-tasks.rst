@@ -103,7 +103,8 @@ complete, and resume or discard work that was interrupted. :doc:`Task continuity
 </maintenance/task-continuity>` describes how an unpause of a task tree is made safe across master restarts.
 
 A task is ``COMPLETED`` when its entrypoint exits with code 0 and ``ERROR`` otherwise, also when its
-agent is lost; generic tasks are not restarted automatically.
+agent is lost; generic tasks are not restarted automatically. A killed task, running or paused, ends
+as ``CANCELED``.
 
 ***********
  Job queue
@@ -132,6 +133,10 @@ the master, as for commands and experiments (see :ref:`proxy-ports`):
 .. code:: bash
 
    python -m determined.cli.tunnel --listener 8888 --auth $DET_MASTER $TASK_ID:8888
+
+An HTTP port is also reachable through the master at ``$DET_MASTER/proxy/<task ID>:<port>/`` with
+a Determined token. The proxy passes the full path, including the ``/proxy/<task ID>:<port>/``
+prefix, to the server in the task, so the server must serve under that prefix (or use the tunnel).
 
 *************
  Limitations

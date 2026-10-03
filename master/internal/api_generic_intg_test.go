@@ -890,3 +890,25 @@ func TestCreateGenericTaskChildRequiresControlOfParent(t *testing.T) {
 	require.Len(t, children, 1, "no child may join the parent's tree")
 	authZ.AssertExpectations(t)
 }
+
+// Killing a paused task, whose allocation is gone, must cancel it and still kill the rest of its
+// tree; it used to fail on the missing allocation and leave the tree stuck in STOPPING_CANCELED.
+func TestKillPausedGenericTaskCancelsTree(t *testing.T) {
+	api, owner, ctx := setupAPITest(t, nil)
+	root := addGenericTaskForAuthZTest(ctx, t, owner, 1, nil, model.TaskStatePaused)
+	child := addGenericTaskForAuthZTest(ctx, t, owner, 1, &root, model.TaskStateActive)
+	childAllocation := model.AllocationID(child.String() + ".0")
+	service := &lifecycleAllocationService{running: map[model.AllocationID]bool{childAllocation: true}}
+	oldService := task.DefaultService
+	task.DefaultService = service
+	t.Cleanup(func() { task.DefaultService = oldService })
+
+	_, err := api.KillGenericTask(ctx, &apiv1.KillGenericTaskRequest{TaskId: root.String()})
+	require.NoError(t, err)
+
+	got, err := db.TaskByID(ctx, root)
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStateCanceled, *got.State)
+	require.NotNil(t, got.EndTime)
+	require.False(t, service.running[childAllocation], "the running child was not killed")
+}

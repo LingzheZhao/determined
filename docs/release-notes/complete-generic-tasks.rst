@@ -91,3 +91,8 @@
 
 -  Generic tasks: Retrying an unpause after the task's new allocation started no longer drops the
    allocation's scheduling group, which left a running task without a group in the scheduler.
+
+-  Generic tasks: Killing a paused generic task, or a tree whose root is paused, now cancels it and
+   kills the rest of the tree. Previously the kill failed on the paused task's missing allocation,
+   left it in ``STOPPING_CANCELED`` for good, and marked its running descendants as stopping without
+   stopping them.
