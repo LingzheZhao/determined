@@ -6,7 +6,7 @@ import { ThemeProvider } from 'components/ThemeProvider';
 
 import JupyterLabButton from './JupyterLabButton';
 
-const SIMPLE_CONFIG_TEMPLATE_TEXT = 'Template';
+const SIMPLE_CONFIG_START_FROM_TEXT = 'Start from';
 
 vi.mock('services/api', () => ({
   getTaskTemplates: () => Promise.resolve([]),
@@ -55,6 +55,6 @@ describe('Dashboard', () => {
   it('opens JupyterLabModal', async () => {
     setup(true);
     await user.click(screen.getByRole('button'));
-    expect(screen.getByText(SIMPLE_CONFIG_TEMPLATE_TEXT)).toBeInTheDocument();
+    expect(screen.getByText(SIMPLE_CONFIG_START_FROM_TEXT)).toBeInTheDocument();
   });
 });
