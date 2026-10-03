@@ -24,7 +24,7 @@ import { useSettings } from 'hooks/useSettings';
 import useTaskResourcesEnabled from 'hooks/useTaskResourcesEnabled';
 import { columns as columnsFunc, SCHEDULING_VAL_KEY } from 'pages/JobQueue/JobQueue.table';
 import { paths } from 'routes/utils';
-import { cancelExperiment, getJobQ, killExperiment, killTask } from 'services/api';
+import { cancelExperiment, getJobQ, killExperiment, killGenericTask, killTask } from 'services/api';
 import * as Api from 'services/api-ts-sdk';
 import userStore from 'stores/users';
 import { DetailedUser, FullJob, Job, JobAction, JobState, JobType, ResourcePool } from 'types';
@@ -137,6 +137,15 @@ const JobQueue: React.FC<Props> = ({ rpStats, selectedRp, jobState }) => {
         }
         triggers[JobAction.ViewLog] = () => {
           routeToReactUrl(paths.taskLogs({ id: job.entityId, name: job.name, type: commandType }));
+        };
+      }
+
+      if (job.type === JobType.GENERIC) {
+        if (canControl) {
+          triggers[JobAction.Kill] = () => killGenericTask({ taskId: job.entityId });
+        }
+        triggers[JobAction.ViewLog] = () => {
+          routeToReactUrl(paths.genericTaskDetails(job.entityId, 'logs'));
         };
       }
 

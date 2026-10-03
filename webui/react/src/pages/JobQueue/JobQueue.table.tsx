@@ -9,7 +9,7 @@ import { createOmitableRenderer, relativeTimeRenderer } from 'components/Table/T
 import { paths } from 'routes/utils';
 import { getJupyterLabs, getTensorBoards } from 'services/api';
 import { CommandTask, FullJob, Job, JobType } from 'types';
-import { jobTypeIconName, jobTypeLabel } from 'utils/job';
+import { genericJobLabel, jobTypeIconName, jobTypeLabel } from 'utils/job';
 import { floatToPercent, truncate } from 'utils/string';
 import { openCommand } from 'utils/wait';
 
@@ -47,6 +47,8 @@ const linkToEntityPage = (job: Job, label: ReactNode): ReactNode => {
   switch (job.type) {
     case JobType.EXPERIMENT:
       return <Link path={paths.experimentDetails(job.entityId)}>{label}</Link>;
+    case JobType.GENERIC:
+      return <Link path={paths.genericTaskDetails(job.entityId)}>{label}</Link>;
     case JobType.NOTEBOOK:
     case JobType.TENSORBOARD:
       return (
@@ -107,6 +109,9 @@ export const columns: (f_flat_runs: boolean) => ColumnDef<Job>[] = (f_flat_runs)
           break;
         case JobType.EXTERNAL:
           label = <div>{record.name}</div>;
+          break;
+        case JobType.GENERIC:
+          label = <div>{genericJobLabel(record.name, record.entityId)}</div>;
           break;
         default:
           label = (

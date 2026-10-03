@@ -7,7 +7,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import Page from 'components/Page';
 import TaskResourcesLink from 'components/TaskResourcesLink';
 import { commandTypeToLabel } from 'constants/states';
-import { useSettings } from 'hooks/useSettings';
+import { ResetSettings, UpdateSettings, useSettings } from 'hooks/useSettings';
 import { DateString, decode, optional } from 'ioTypes';
 import { paths, serverAddress } from 'routes/utils';
 import { getTask } from 'services/api';
@@ -36,19 +36,26 @@ export const TaskLogsWrapper: React.FC = () => {
   const { taskId, taskType } = useParams<Params>();
   return <TaskLogs taskId={taskId ?? ''} taskType={taskType ?? ''} />;
 };
-const TaskLogs: React.FC<Props> = ({ taskId, taskType, onCloseLogs, headerComponent }: Props) => {
+interface ViewerProps {
+  onCloseLogs?: () => void;
+  resetSettings: ResetSettings;
+  settings: Settings;
+  taskId: string;
+  updateSettings: UpdateSettings<Settings>;
+}
+
+/*
+ * The log viewer of a task with its filters, without a page around it. The caller owns the log
+ * settings so that it can also read them, e.g. for the selected allocation.
+ */
+export const TaskLogsViewer: React.FC<ViewerProps> = ({
+  onCloseLogs,
+  resetSettings,
+  settings,
+  taskId,
+  updateSettings,
+}: ViewerProps) => {
   const [filterOptions, setFilterOptions] = useState<Filters>({});
-  const [task, setTask] = useState<TaskItem>();
-  const [searchParams] = useSearchParams();
-
-  const taskTypeLabel =
-    taskType === 'generic' ? 'Generic Task' : commandTypeToLabel[taskType as CommandType];
-  const title = `${searchParams.has('id') ? `${searchParams.get('id')} ` : ''}Logs`;
-
-  const taskSettingsConfig = useMemo(() => settingsConfigForTask(taskId), [taskId]);
-  const { resetSettings, settings, updateSettings } = useSettings<Settings>(taskSettingsConfig);
-  const selectedAllocation =
-    settings.allocationId?.length === 1 ? settings.allocationId[0] : undefined;
 
   const filterValues: Filters = useMemo(
     () => ({
@@ -126,21 +133,6 @@ const TaskLogs: React.FC<Props> = ({ taskId, taskType, onCloseLogs, headerCompon
   );
 
   useEffect(() => {
-    let active = true;
-    setTask(undefined);
-    getTask({ taskId })
-      .then((value) => {
-        if (active) setTask(value);
-      })
-      .catch(() => {
-        // Logs remain available even if the task metadata request fails.
-      });
-    return () => {
-      active = false;
-    };
-  }, [taskId]);
-
-  useEffect(() => {
     const canceler = new AbortController();
 
     readStream(
@@ -164,16 +156,59 @@ const TaskLogs: React.FC<Props> = ({ taskId, taskType, onCloseLogs, headerCompon
   );
 
   return (
+    <LogViewer
+      decoder={mapV1LogsResponse}
+      handleCloseLogs={onCloseLogs}
+      serverAddress={serverAddress}
+      title={logFilters}
+      onError={handleError}
+      onFetch={handleFetch}
+    />
+  );
+};
+
+const TaskLogs: React.FC<Props> = ({ taskId, taskType, onCloseLogs, headerComponent }: Props) => {
+  const [task, setTask] = useState<TaskItem>();
+  const [searchParams] = useSearchParams();
+
+  const taskTypeLabel =
+    taskType === 'generic' ? 'Generic Task' : commandTypeToLabel[taskType as CommandType];
+  const title = `${searchParams.has('id') ? `${searchParams.get('id')} ` : ''}Logs`;
+
+  const taskSettingsConfig = useMemo(() => settingsConfigForTask(taskId), [taskId]);
+  const { resetSettings, settings, updateSettings } = useSettings<Settings>(taskSettingsConfig);
+  const selectedAllocation =
+    settings.allocationId?.length === 1 ? settings.allocationId[0] : undefined;
+
+  useEffect(() => {
+    let active = true;
+    setTask(undefined);
+    getTask({ taskId })
+      .then((value) => {
+        if (active) setTask(value);
+      })
+      .catch(() => {
+        // Logs remain available even if the task metadata request fails.
+      });
+    return () => {
+      active = false;
+    };
+  }, [taskId]);
+
+  return (
     <Page
       bodyNoPadding
       breadcrumb={[
         { breadcrumbName: 'Tasks', path: paths.taskList() },
         {
           breadcrumbName: `${taskTypeLabel} ${taskId.substring(0, 8)}`,
-          path: paths.taskLogs({
-            id: taskId,
-            type: taskType,
-          } as CommandTask),
+          path:
+            taskType === 'generic'
+              ? paths.genericTaskDetails(taskId)
+              : paths.taskLogs({
+                  id: taskId,
+                  type: taskType,
+                } as CommandTask),
         },
       ]}
       headerComponent={headerComponent}
@@ -192,13 +227,12 @@ const TaskLogs: React.FC<Props> = ({ taskId, taskType, onCloseLogs, headerCompon
         )
       }
       title={title}>
-      <LogViewer
-        decoder={mapV1LogsResponse}
-        handleCloseLogs={onCloseLogs}
-        serverAddress={serverAddress}
-        title={logFilters}
-        onError={handleError}
-        onFetch={handleFetch}
+      <TaskLogsViewer
+        resetSettings={resetSettings}
+        settings={settings}
+        taskId={taskId}
+        updateSettings={updateSettings}
+        onCloseLogs={onCloseLogs}
       />
     </Page>
   );

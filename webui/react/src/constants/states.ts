@@ -6,6 +6,7 @@ import {
   CommandState,
   CommandType,
   CompoundRunState,
+  GenericTaskState,
   JobState,
   ResourceState,
   RunState,
@@ -102,6 +103,45 @@ export const runStateToLabel: { [key in RunState]: string } = {
   [RunState.Pulling]: 'Pulling Image',
   [RunState.Starting]: 'Running (preparing env)',
 };
+
+export const genericTaskStateToLabel: { [key in GenericTaskState]: string } = {
+  [GenericTaskState.Active]: 'Active',
+  [GenericTaskState.Canceled]: 'Canceled',
+  [GenericTaskState.Completed]: 'Completed',
+  [GenericTaskState.Error]: 'Errored',
+  [GenericTaskState.Paused]: 'Paused',
+  [GenericTaskState.StoppingCanceled]: 'Canceling',
+  [GenericTaskState.StoppingCompleted]: 'Completing',
+  [GenericTaskState.StoppingError]: 'Erroring',
+  [GenericTaskState.StoppingPaused]: 'Pausing',
+  [GenericTaskState.Unspecified]: 'Unspecified',
+};
+
+/* The run state whose color a generic task state is shown with. */
+export const genericTaskStateToRunState: { [key in GenericTaskState]: RunState } = {
+  [GenericTaskState.Active]: RunState.Active,
+  [GenericTaskState.Canceled]: RunState.Canceled,
+  [GenericTaskState.Completed]: RunState.Completed,
+  [GenericTaskState.Error]: RunState.Error,
+  [GenericTaskState.Paused]: RunState.Paused,
+  [GenericTaskState.StoppingCanceled]: RunState.StoppingCanceled,
+  [GenericTaskState.StoppingCompleted]: RunState.StoppingCompleted,
+  [GenericTaskState.StoppingError]: RunState.StoppingError,
+  [GenericTaskState.StoppingPaused]: RunState.Paused,
+  [GenericTaskState.Unspecified]: RunState.Unspecified,
+};
+
+export const killableGenericTaskStates: Set<GenericTaskState> = new Set([
+  GenericTaskState.Active,
+  GenericTaskState.Paused,
+  GenericTaskState.StoppingPaused,
+]);
+
+export const terminalGenericTaskStates: Set<GenericTaskState> = new Set([
+  GenericTaskState.Canceled,
+  GenericTaskState.Completed,
+  GenericTaskState.Error,
+]);
 
 export const V1ResourcePoolTypeToLabel: { [key in V1ResourcePoolType]: string } = {
   [V1ResourcePoolType.UNSPECIFIED]: 'Unspecified',

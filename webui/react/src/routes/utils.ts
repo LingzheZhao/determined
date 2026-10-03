@@ -115,6 +115,13 @@ export const paths = {
   experimentResources: (experimentId: number | string): string => {
     return `/experiments/${encodeURIComponent(experimentId)}/resources`;
   },
+  genericTaskDetails: (taskId: string, tab?: string): string => {
+    const path = `/generic-tasks/${encodeURIComponent(taskId)}`;
+    return tab ? `${path}/${tab}` : path;
+  },
+  genericTaskList: (): string => {
+    return '/tasks/generic';
+  },
   interactive: (command: CommandTask, maxSlotsExceeded = false): string => {
     const path = [
       'interactive',

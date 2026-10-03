@@ -11,7 +11,6 @@ import ConfigPolicies from 'components/ConfigPolicies';
 import ModelRegistry from 'components/ModelRegistry';
 import Page from 'components/Page';
 import PageNotFound from 'components/PageNotFound';
-import TaskList from 'components/TaskList';
 import useFeature from 'hooks/useFeature';
 import usePermissions from 'hooks/usePermissions';
 import usePolling from 'hooks/usePolling';
@@ -29,6 +28,7 @@ import TemplateList from './Templates/TemplatesList';
 import ResourcePoolsBound from './WorkspaceDetails/ResourcePoolsBound';
 import WorkspaceMembers from './WorkspaceDetails/WorkspaceMembers';
 import WorkspaceProjects from './WorkspaceDetails/WorkspaceProjects';
+import WorkspaceTasks from './WorkspaceDetails/WorkspaceTasks';
 import { useWorkspaceActionMenu } from './WorkspaceList/WorkspaceActionDropdown';
 
 type Params = {
@@ -182,7 +182,7 @@ const WorkspaceDetails: React.FC = () => {
         label: 'Projects',
       },
       {
-        children: <TaskList workspace={workspace} />,
+        children: <WorkspaceTasks workspace={workspace} />,
         key: WorkspaceDetailsTab.Tasks,
         label: 'Tasks',
       },
