@@ -23,7 +23,7 @@ func TestToTaskSpec(t *testing.T) {
 		taskSpec             GenericTaskSpec
 	}{
 		"basicTestCase": {
-			expectedDescription:  "generic-task",
+			expectedDescription:  "Generic Task", // DisplayName of an unnamed spec without a task ID
 			expectedSlots:        1,
 			expectedIsSingleNode: true,
 			expectedEntrypoint:   "/run/determined/generic-task-entrypoint.sh",

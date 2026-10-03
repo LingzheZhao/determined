@@ -21,11 +21,9 @@ import (
 	"github.com/determined-ai/determined/master/internal/command"
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/grpcutil"
-	"github.com/determined-ai/determined/master/internal/job/jobservice"
 	"github.com/determined-ai/determined/master/internal/project"
 	"github.com/determined-ai/determined/master/internal/rbac/audit"
 	"github.com/determined-ai/determined/master/internal/rm"
-	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/sproto"
 	"github.com/determined-ai/determined/master/internal/task"
 	"github.com/determined-ai/determined/master/internal/user"
@@ -160,6 +158,7 @@ func (a *apiServer) getGenericTaskLaunchParameters(
 
 	genericTaskSpec.Base = taskSpec
 	genericTaskSpec.GenericTaskConfig = taskConfig
+	genericTaskSpec.MakeEnvPorts()
 
 	genericTaskSpec.Base.ExtraEnvVars = map[string]string{
 		"DET_TASK_TYPE": string(model.TaskTypeGeneric),
@@ -344,14 +343,11 @@ func (a *apiServer) CreateGenericTask(
 		"task-id":   taskID,
 		"task-type": model.TaskTypeGeneric,
 	}
-	priorityChange := func(priority int) error {
-		return nil
-	}
-	if err = tasklist.GroupPriorityChangeRegistry.Add(jobID, priorityChange); err != nil {
+	allocationID := model.AllocationID(fmt.Sprintf("%s.%d", taskID, 1))
+	genericTaskSpec.Base.TaskID = string(taskID)
+	if err := registerGenericTaskJob(a.m.rm, taskID, allocationID, jobID, genericTaskSpec); err != nil {
 		return nil, err
 	}
-
-	allocationID := model.AllocationID(fmt.Sprintf("%s.%d", taskID, 1))
 	onAllocationExit := getGenericTaskOnAllocationExit(ctx, taskID, allocationID, jobID, logCtx)
 	isSingleNode := genericTaskSpec.GenericTaskConfig.Resources.IsSingleNode() != nil &&
 		*genericTaskSpec.GenericTaskConfig.Resources.IsSingleNode()
@@ -361,7 +357,7 @@ func (a *apiServer) CreateGenericTask(
 		JobID:             jobID,
 		JobSubmissionTime: startTime,
 		IsUserVisible:     true,
-		Name:              fmt.Sprintf("Generic Task %s", taskID),
+		Name:              genericTaskSpec.DisplayName(),
 
 		SlotsNeeded:  *genericTaskSpec.GenericTaskConfig.Resources.Slots(),
 		ResourcePool: genericTaskSpec.GenericTaskConfig.Resources.ResourcePool(),
@@ -369,9 +365,16 @@ func (a *apiServer) CreateGenericTask(
 			SingleAgent: isSingleNode,
 		},
 
+		ProxyPorts: sproto.NewProxyPortConfig(genericTaskSpec.ProxyPorts(), taskID),
+		Preemption: sproto.PreemptionConfig{
+			Preemptible:     true,
+			TimeoutDuration: time.Duration(genericTaskSpec.GenericTaskConfig.PreemptionTimeout) * time.Second,
+		},
+
 		Restore: false,
 	}, a.m.db, a.m.rm, genericTaskSpec, onAllocationExit)
 	if err != nil {
+		unregisterGenericTaskJob(jobID, allocationID)
 		return nil, err
 	}
 
@@ -379,8 +382,6 @@ func (a *apiServer) CreateGenericTask(
 	if err != nil {
 		return nil, err
 	}
-
-	jobservice.DefaultService.RegisterJob(jobID, genericTaskSpec)
 
 	return &apiv1.CreateGenericTaskResponse{
 		TaskId:   string(taskID),

@@ -14,7 +14,6 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/determined-ai/determined/master/internal/db"
-	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/sproto"
 	"github.com/determined-ai/determined/master/internal/task"
 	"github.com/determined-ai/determined/master/pkg/logger"
@@ -336,11 +335,11 @@ func (a *apiServer) runGenericTaskResume(ctx context.Context, plan []genericTask
 				return fmt.Errorf("cannot claim paused task %s", member.TaskID)
 			}
 		}
-		if _, found := tasklist.GroupPriorityChangeRegistry.Load(*t.JobID); !found {
-			priorityChange := func(priority int) error { spec.GenericTaskConfig.Resources.SetPriority(&priority); return nil }
-			if err := tasklist.GroupPriorityChangeRegistry.Add(*t.JobID, priorityChange); err != nil {
-				return err
-			}
+		if spec.Base.TaskID == "" { // specs persisted before the task ID was stored in them
+			spec.Base.TaskID = string(member.TaskID)
+		}
+		if err := registerGenericTaskJob(a.m.rm, member.TaskID, member.NewAllocationID, *t.JobID, spec); err != nil {
+			return err
 		}
 		live := slices.Contains(task.DefaultService.GetAllAllocationIDs(), member.NewAllocationID)
 		if !live {
@@ -371,7 +370,8 @@ func (a *apiServer) startGenericTaskResumeAllocation(
 	return task.DefaultService.StartAllocation(logCtx, sproto.AllocateRequest{
 		AllocationID: member.NewAllocationID, TaskID: member.TaskID, JobID: *t.JobID,
 		JobSubmissionTime: now, RequestTime: now, IsUserVisible: true,
-		Name:                fmt.Sprintf("Generic Task %s", member.TaskID),
+		Name:                spec.DisplayName(),
+		ProxyPorts:          sproto.NewProxyPortConfig(spec.ProxyPorts(), member.TaskID),
 		SlotsNeeded:         *spec.GenericTaskConfig.Resources.Slots(),
 		ResourcePool:        spec.GenericTaskConfig.Resources.ResourcePool(),
 		FittingRequirements: sproto.FittingRequirements{SingleAgent: singleNode},

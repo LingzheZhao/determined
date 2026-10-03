@@ -15,7 +15,6 @@ import (
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/grpcutil"
 	"github.com/determined-ai/determined/master/internal/rm"
-	"github.com/determined-ai/determined/master/internal/rm/tasklist"
 	"github.com/determined-ai/determined/master/internal/sproto"
 	"github.com/determined-ai/determined/master/internal/task"
 	"github.com/determined-ai/determined/master/internal/user"
@@ -143,6 +142,7 @@ func getGenericTaskOnAllocationExit(
 ) func(ae *task.AllocationExited) {
 	return func(ae *task.AllocationExited) {
 		syslog := logrus.WithField("component", "genericTask").WithFields(logCtx.Fields())
+		defer unregisterGenericTaskJob(jobID, allocationID)
 		defer func() {
 			if err := finishCanceledGenericTaskResume(taskID, allocationID); err != nil {
 				syslog.WithError(err).Error("finishing canceled task resume")
@@ -152,9 +152,6 @@ func getGenericTaskOnAllocationExit(
 			err := db.SetErrorState(taskID, time.Now().UTC())
 			if err != nil {
 				syslog.WithError(err).Error("setting task to error state")
-			}
-			if err := tasklist.GroupPriorityChangeRegistry.Delete(jobID); err != nil {
-				syslog.WithError(err).Error("deleting group priority change registry")
 			}
 			return
 		}
@@ -171,9 +168,6 @@ func getGenericTaskOnAllocationExit(
 		}
 		if err := db.CompleteGenericTask(taskID, time.Now().UTC()); err != nil {
 			syslog.WithError(err).Error("marking generic task complete")
-		}
-		if err := tasklist.GroupPriorityChangeRegistry.Delete(jobID); err != nil {
-			syslog.WithError(err).Error("deleting group priority change registry")
 		}
 	}
 }
