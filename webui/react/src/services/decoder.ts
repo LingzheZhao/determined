@@ -243,6 +243,21 @@ export const mapV1Template = (template: Sdk.V1Template): types.Template => {
   return { config: template.config, name: template.name, workspaceId: template.workspaceId };
 };
 
+const GENERIC_TASK_STATE_PREFIX = 'GENERIC_TASK_STATE_';
+
+export const mapV1GenericTaskState = (state: Sdk.V1GenericTaskState): types.GenericTaskState => {
+  const name = state.startsWith(GENERIC_TASK_STATE_PREFIX)
+    ? state.slice(GENERIC_TASK_STATE_PREFIX.length)
+    : state;
+  return (Object.values(types.GenericTaskState) as string[]).includes(name)
+    ? (name as types.GenericTaskState)
+    : types.GenericTaskState.Unspecified;
+};
+
+export const encodeGenericTaskState = (state: types.GenericTaskState): Sdk.V1GenericTaskState => {
+  return `${GENERIC_TASK_STATE_PREFIX}${state}` as Sdk.V1GenericTaskState;
+};
+
 export const mapV1Task = (task: Sdk.V1Task): types.TaskItem => {
   return {
     allocations:
@@ -258,15 +273,64 @@ export const mapV1Task = (task: Sdk.V1Task): types.TaskItem => {
           }[String(a?.state) || 'STATE_QUEUED'] || types.CommandState.Queued;
 
         return {
+          allocationId: a.allocationId,
+          endTime: a.endTime,
+          exitReason: a.exitReason,
           isReady: a.isReady || false,
+          slots: a.slots,
+          startTime: a.startTime,
           state: setState,
+          statusCode: a.statusCode,
           taskId: a.taskId,
         };
       }) || [],
     endTime: task.endTime as string | undefined,
+    forkedFrom: task.forkedFrom || undefined,
+    noPause: task.noPause,
+    parentId: task.parentId || undefined,
     startTime: task.startTime as string,
     taskId: task.taskId || '',
+    taskState: task.taskState ? mapV1GenericTaskState(task.taskState) : undefined,
+    taskType: task.taskType,
   };
+};
+
+export const mapV1GenericTask = (task: Sdk.V1GenericTask): types.GenericTask => {
+  return {
+    allocationId: task.allocationId || undefined,
+    description: task.description ?? '',
+    endTime: (task.endTime as string | undefined) || undefined,
+    forkedFrom: task.forkedFrom || undefined,
+    jobId: task.jobId,
+    name: task.name || `Generic Task ${task.taskId}`,
+    noPause: task.noPause ?? true,
+    parentId: task.parentId || undefined,
+    projectId: task.projectId,
+    resourcePool: task.resourcePool ?? '',
+    slots: task.slots ?? 0,
+    startTime: task.startTime as string,
+    state: mapV1GenericTaskState(task.state),
+    taskId: task.taskId,
+    userId: task.userId,
+    username: task.username ?? '',
+    workspaceId: task.workspaceId,
+  };
+};
+
+export const mapV1GenericTasksResponse = (
+  data: Sdk.V1GetGenericTasksResponse,
+): types.GenericTaskPagination => {
+  return {
+    pagination: mapV1Pagination(data.pagination),
+    tasks: (data.tasks || []).map(mapV1GenericTask),
+  };
+};
+
+/* The master returns a generic task's config as a JSON string. */
+export const mapGenericTaskConfig = (config: string): RawJson => {
+  const parsed: unknown = JSON.parse(config || '{}');
+  if (!isObject(parsed)) throw new Error('Generic task config is not an object.');
+  return parsed as RawJson;
 };
 
 export const mapV1Model = (model: Sdk.V1Model): types.ModelItem => {

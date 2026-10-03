@@ -1273,6 +1273,74 @@ export const getTaskAcceleratorData: DetApi<
     detApi.Internal.getTaskAcceleratorData(params.taskId, options),
 };
 
+/* Generic Tasks */
+
+export const getGenericTasks: DetApi<
+  Service.GetGenericTasksParams,
+  Api.V1GetGenericTasksResponse,
+  Type.GenericTaskPagination
+> = {
+  name: 'getGenericTasks',
+  postProcess: (response) => decoder.mapV1GenericTasksResponse(response),
+  request: (params: Service.GetGenericTasksParams, options) =>
+    detApi.Tasks.getGenericTasks(
+      params.offset,
+      params.limit,
+      params.users,
+      params.userIds,
+      params.workspaceId,
+      params.states?.map(decoder.encodeGenericTaskState),
+      params.parentId,
+      params.taskIds,
+      options,
+    ),
+};
+
+export const getGenericTaskConfig: DetApi<
+  Service.GetTaskParams,
+  Api.V1GetGenericTaskConfigResponse,
+  RawJson
+> = {
+  name: 'getGenericTaskConfig',
+  postProcess: (response) => decoder.mapGenericTaskConfig(response.config),
+  request: (params: Service.GetTaskParams, options) =>
+    detApi.Tasks.getGenericTaskConfig(params.taskId, options),
+};
+
+export const killGenericTask: DetApi<
+  Service.KillGenericTaskParams,
+  Api.V1KillGenericTaskResponse,
+  void
+> = {
+  name: 'killGenericTask',
+  postProcess: noOp,
+  request: (params: Service.KillGenericTaskParams, options) =>
+    detApi.Tasks.killGenericTask(
+      params.taskId,
+      { killFromRoot: params.killFromRoot ?? false, taskId: params.taskId },
+      options,
+    ),
+};
+
+export const pauseGenericTask: DetApi<Service.GetTaskParams, Api.V1PauseGenericTaskResponse, void> =
+  {
+    name: 'pauseGenericTask',
+    postProcess: noOp,
+    request: (params: Service.GetTaskParams, options) =>
+      detApi.Tasks.pauseGenericTask(params.taskId, options),
+  };
+
+export const unpauseGenericTask: DetApi<
+  Service.GetTaskParams,
+  Api.V1UnpauseGenericTaskResponse,
+  void
+> = {
+  name: 'unpauseGenericTask',
+  postProcess: noOp,
+  request: (params: Service.GetTaskParams, options) =>
+    detApi.Tasks.unpauseGenericTask(params.taskId, options),
+};
+
 /* Webhooks */
 
 export const createWebhook: DetApi<Api.V1Webhook, Api.V1PostWebhookResponse, Type.Webhook> = {

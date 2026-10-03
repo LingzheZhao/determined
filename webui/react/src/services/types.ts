@@ -3,6 +3,7 @@ import { Dayjs } from 'dayjs';
 import {
   DetailedUser,
   FetchOptions,
+  GenericTaskState,
   Job,
   Metadata,
   Metric,
@@ -165,6 +166,20 @@ export interface SearchRunsParams extends PaginationParams {
 }
 
 export interface GetTaskParams {
+  taskId: string;
+}
+
+export interface GetGenericTasksParams extends PaginationParams {
+  parentId?: string;
+  states?: GenericTaskState[];
+  taskIds?: string[];
+  userIds?: number[];
+  users?: string[];
+  workspaceId?: number;
+}
+
+export interface KillGenericTaskParams {
+  killFromRoot?: boolean;
   taskId: string;
 }
 

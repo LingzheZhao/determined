@@ -1,6 +1,11 @@
 import _ from 'lodash';
 
-import { killableCommandStates, killableRunStates, terminalCommandStates } from 'constants/states';
+import {
+  killableCommandStates,
+  killableGenericTaskStates,
+  killableRunStates,
+  terminalCommandStates,
+} from 'constants/states';
 import { LaunchTensorBoardParams } from 'services/types';
 import * as Type from 'types';
 import { CommandState, RunState, State } from 'types';
@@ -112,6 +117,34 @@ export const isCommandTask = (obj: Type.Command | Type.CommandTask): obj is Type
 
 export const isExperimentTask = (task: Type.AnyTask): task is Type.ExperimentTask => {
   return 'archived' in task && !('type' in task);
+};
+
+/* The first group of a task's UUID, as the tables show it. */
+export const shortTaskId = (taskId: string): string => taskId.split('-')[0];
+
+/*
+ * A generic task can be paused only while active and only if it was created pausable, because
+ * unpausing runs its entrypoint again from the start. The master refuses anything else.
+ */
+export const canPauseGenericTask = (
+  task: { noPause?: boolean; state?: Type.GenericTaskState },
+  canControl: boolean,
+): boolean => {
+  return canControl && task.noPause === false && task.state === Type.GenericTaskState.Active;
+};
+
+export const canUnpauseGenericTask = (
+  task: { state?: Type.GenericTaskState },
+  canControl: boolean,
+): boolean => {
+  return canControl && task.state === Type.GenericTaskState.Paused;
+};
+
+export const canKillGenericTask = (
+  task: { state?: Type.GenericTaskState },
+  canControl: boolean,
+): boolean => {
+  return canControl && !!task.state && killableGenericTaskStates.has(task.state);
 };
 
 export const isTaskKillable = (

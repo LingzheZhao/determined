@@ -1,0 +1,25 @@
+.header {
+  align-items: center;
+  background-color: var(--theme-stage);
+  color: var(--theme-stage-on);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 8px 16px;
+
+  .title {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    min-width: 0;
+
+    h1 {
+      font-size: 18px;
+      margin: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+}

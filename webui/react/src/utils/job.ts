@@ -8,12 +8,28 @@ export const jobTypeIconName = (jobType: JobType): IconName => {
   if (jobType === JobType.EXTERNAL) {
     return 'external';
   }
+  if (jobType === JobType.GENERIC) {
+    return 'tasks';
+  }
   const type = jobTypeToCommandType(jobType);
   return type ?? 'experiment';
 };
 
 export const jobTypeLabel = (jobType: JobType): string => {
+  if (jobType === JobType.GENERIC) {
+    return 'Generic Task';
+  }
   return capitalize(jobTypeIconName(jobType));
+};
+
+/*
+ * The job name of a generic task with its short task ID. The master names a task without a name
+ * "Generic Task <task ID>", which already contains the ID.
+ */
+export const genericJobLabel = (name: string, taskId: string): string => {
+  if (!name || name === 'Generic Task') return `Generic Task ${taskId}`;
+  if (name.includes(taskId)) return name;
+  return `${name} (${taskId.split('-')[0]})`;
 };
 
 // translate JobType to CommandType

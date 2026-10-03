@@ -848,16 +848,68 @@ export interface ExperimentBase extends ProjectExperiment {
 }
 
 interface Allocation {
+  allocationId?: string;
+  endTime?: string;
+  exitReason?: string;
   isReady: boolean;
+  slots?: number;
+  startTime?: string;
   state: CommandState;
+  statusCode?: number;
   taskId?: string;
 }
 
 export interface TaskItem {
   allocations: Allocation[];
   endTime?: string;
+  forkedFrom?: string;
+  noPause?: boolean;
+  parentId?: string;
   startTime: string;
   taskId: string;
+  taskState?: GenericTaskState;
+  taskType?: Api.V1TaskType;
+}
+
+/* The state of a generic task, without the API's GENERIC_TASK_STATE_ prefix. */
+export const GenericTaskState = {
+  Active: 'ACTIVE',
+  Canceled: 'CANCELED',
+  Completed: 'COMPLETED',
+  Error: 'ERROR',
+  Paused: 'PAUSED',
+  StoppingCanceled: 'STOPPING_CANCELED',
+  StoppingCompleted: 'STOPPING_COMPLETED',
+  StoppingError: 'STOPPING_ERROR',
+  StoppingPaused: 'STOPPING_PAUSED',
+  Unspecified: 'UNSPECIFIED',
+} as const;
+
+export type GenericTaskState = ValueOf<typeof GenericTaskState>;
+
+export interface GenericTask {
+  allocationId?: string;
+  description: string;
+  endTime?: string;
+  forkedFrom?: string;
+  jobId: string;
+  name: string;
+  noPause: boolean;
+  parentId?: string;
+  projectId: number;
+  resourcePool: string;
+  slots: number;
+  startTime: string;
+  state: GenericTaskState;
+  taskId: string;
+  userId: number;
+  username: string;
+  workspaceId: number;
+}
+
+export interface GenericTaskPagination {
+  pagination: Pagination;
+  tasks: GenericTask[];
 }
 
 export interface TaskCounts {

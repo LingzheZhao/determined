@@ -142,6 +142,6 @@ prefix, to the server in the task, so the server must serve under that prefix (o
  Limitations
 *************
 
--  The web UI has no detail page for generic tasks; they appear in the job queue and their logs can
-   be viewed by task ID.
+-  The web UI lists generic tasks on the Tasks page and shows, pauses, unpauses and kills them on
+   their detail page, but cannot create or fork them.
 -  A paused or unpaused task starts its entrypoint from the beginning (see above).
