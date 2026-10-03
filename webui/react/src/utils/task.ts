@@ -133,11 +133,17 @@ export const canPauseGenericTask = (
   return canControl && task.noPause === false && task.state === Type.GenericTaskState.Active;
 };
 
+/*
+ * A paused task can be unpaused. After an unpause failed part way, the master finishes it when
+ * unpause is retried on the same root task, also once that task is active again, so a retry is
+ * offered whatever the state and the master decides.
+ */
 export const canUnpauseGenericTask = (
   task: { state?: Type.GenericTaskState },
   canControl: boolean,
+  isRetry = false,
 ): boolean => {
-  return canControl && task.state === Type.GenericTaskState.Paused;
+  return canControl && (isRetry || task.state === Type.GenericTaskState.Paused);
 };
 
 export const canKillGenericTask = (

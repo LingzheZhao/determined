@@ -82,6 +82,11 @@ describe('generic task actions', () => {
     expect(canUnpauseGenericTask({ state: GenericTaskState.Paused }, false)).toBe(false);
   });
 
+  it('retries a failed unpause whatever the state', () => {
+    expect(canUnpauseGenericTask({ state: GenericTaskState.Active }, true, true)).toBe(true);
+    expect(canUnpauseGenericTask({ state: GenericTaskState.Active }, false, true)).toBe(false);
+  });
+
   it('kills tasks that have not ended', () => {
     expect(canKillGenericTask({ state: GenericTaskState.Active }, true)).toBe(true);
     expect(canKillGenericTask({ state: GenericTaskState.Paused }, true)).toBe(true);

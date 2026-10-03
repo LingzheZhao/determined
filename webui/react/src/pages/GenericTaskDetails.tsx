@@ -88,10 +88,19 @@ const GenericTaskDetails: React.FC = () => {
       setTaskError(undefined);
     } catch (e) {
       if (!isAborted(e) && currentTaskId.current === taskId) setTaskError(e as Error);
-      return;
     }
+  }, [taskId]);
+
+  const isGeneric = task?.taskType === V1TaskType.GENERIC;
+  const parentId = task?.parentId;
+
+  const fetchChildren = useCallback(async () => {
+    if (!isGeneric) return;
     try {
-      const { tasks } = await getGenericTasks({ limit: 0, parentId: taskId }, options);
+      const { tasks } = await getGenericTasks(
+        { limit: 0, parentId: taskId },
+        { signal: canceler.current.signal },
+      );
       if (currentTaskId.current !== taskId) return;
       setChildTasks((prev) => (_.isEqual(prev, tasks) ? prev : tasks));
     } catch (e) {
@@ -101,18 +110,29 @@ const GenericTaskDetails: React.FC = () => {
         type: ErrorType.Api,
       });
     }
-  }, [taskId]);
-
-  const { stopPolling } = usePolling(fetchTask, { rerunOnNewFn: true });
+  }, [isGeneric, taskId]);
 
   // A completed, errored or canceled task does not change any more.
   const isTerminal = !!task?.taskState && terminalGenericTaskStates.has(task.taskState);
-  useEffect(() => {
-    if (isTerminal) stopPolling();
-  }, [isTerminal, stopPolling]);
+  // Children can outlive their parent, so they are refreshed until they have ended too.
+  const childrenEnded =
+    isTerminal && !!childTasks?.every((child) => terminalGenericTaskStates.has(child.state));
 
-  const isGeneric = task?.taskType === V1TaskType.GENERIC;
-  const parentId = task?.parentId;
+  const { stopPolling: stopTaskPolling } = usePolling(fetchTask, { rerunOnNewFn: true });
+  const { stopPolling: stopChildPolling } = usePolling(fetchChildren, { rerunOnNewFn: true });
+
+  useEffect(() => {
+    if (isTerminal) stopTaskPolling();
+  }, [isTerminal, stopTaskPolling]);
+
+  useEffect(() => {
+    if (childrenEnded) stopChildPolling();
+  }, [childrenEnded, stopChildPolling]);
+
+  const handleActionComplete = useCallback(() => {
+    fetchTask();
+    fetchChildren();
+  }, [fetchChildren, fetchTask]);
 
   // Owner, name and resources are only in the generic task list; look the task up once.
   useEffect(() => {
@@ -248,7 +268,7 @@ const GenericTaskDetails: React.FC = () => {
             <GenericTaskActions
               canControl={canControl}
               task={{ name, noPause, parentId, state, taskId }}
-              onComplete={fetchTask}
+              onComplete={handleActionComplete}
             />
           </div>
         )

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { DefaultTheme, UIProvider } from 'hew/Theme';
 import { ConfirmationProvider } from 'hew/useConfirm';
 import { HelmetProvider } from 'react-helmet-async';
@@ -69,10 +69,11 @@ const setup = () =>
     </BrowserRouter>,
   );
 
-const pollTwice = async () => {
-  for (let i = 0; i < 2; i++) {
+/* Runs polls, in steps so that React renders the responses in between as in a browser. */
+const poll = async (times: number) => {
+  for (let i = 0; i < times * 10; i++) {
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(5000);
+      await vi.advanceTimersByTimeAsync(500);
     });
   }
 };
@@ -105,15 +106,47 @@ describe('GenericTaskDetails', () => {
     vi.mocked(getTask).mockResolvedValue(taskItem(GenericTaskState.Active));
     setup();
     await screen.findByTestId('generic-task-name');
-    await pollTwice();
+    await poll(2);
     expect(vi.mocked(getTask).mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('keeps refreshing a child that outlives its completed parent', async () => {
+    const child: GenericTask = { ...summary, name: 'child-task', parentId: TASK_ID, taskId: 'c1' };
+    const children = (state: GenericTaskState) => ({
+      pagination: { limit: 0, offset: 0, total: 1 },
+      tasks: [{ ...child, state }],
+    });
+    vi.mocked(getTask).mockResolvedValue(taskItem(GenericTaskState.Completed));
+    // The child ends only after several refreshes, so they must go on after the parent's stop.
+    vi.mocked(getGenericTasks)
+      .mockResolvedValueOnce(children(GenericTaskState.Active))
+      .mockResolvedValueOnce(children(GenericTaskState.Active))
+      .mockResolvedValueOnce(children(GenericTaskState.Active))
+      .mockResolvedValue(children(GenericTaskState.Error));
+    setup();
+    const childRow = (await screen.findByText('child-task')).closest('tr') as HTMLElement;
+    expect(within(childRow).getByText('Active')).toBeInTheDocument();
+
+    await poll(4);
+    expect(getTask).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(
+        within(screen.getByText('child-task').closest('tr') as HTMLElement).getByText('Errored'),
+      ).toBeInTheDocument(),
+    );
+
+    // Once the child has ended too, the children are not fetched any more.
+    const calls = vi.mocked(getGenericTasks).mock.calls.length;
+    await poll(2);
+    expect(getGenericTasks).toHaveBeenCalledTimes(calls);
   });
 
   it('stops polling once the task is completed', async () => {
     vi.mocked(getTask).mockResolvedValue(taskItem(GenericTaskState.Completed));
     setup();
     await screen.findByTestId('generic-task-name');
-    await pollTwice();
+    await poll(2);
     expect(getTask).toHaveBeenCalledTimes(1);
+    expect(getGenericTasks).toHaveBeenCalledTimes(1);
   });
 });

@@ -100,6 +100,54 @@ describe('GenericTaskActions', () => {
     );
   });
 
+  it('offers a retry on the same task after an unpause failed', async () => {
+    vi.mocked(unpauseGenericTask).mockRejectedValueOnce(new Error('resume failed'));
+    const { rerender } = render(
+      <UIProvider theme={DefaultTheme.Light}>
+        <ConfirmationProvider>
+          <GenericTaskActions canControl task={{ ...TASK, state: GenericTaskState.Paused }} />
+        </ConfirmationProvider>
+      </UIProvider>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Unpause' }));
+    let buttons = await screen.findAllByRole('button', { name: 'Unpause' });
+    await user.click(buttons[buttons.length - 1]);
+    await waitFor(() => expect(handleError).toHaveBeenCalled());
+    // The confirmation stays open after a failure; close it.
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Unpause' })).not.toBeInTheDocument(),
+    );
+
+    // The failed unpause started the root, so it reads active now.
+    const rerenderWith = (task: GenericTaskActionTarget) =>
+      rerender(
+        <UIProvider theme={DefaultTheme.Light}>
+          <ConfirmationProvider>
+            <GenericTaskActions canControl task={task} />
+          </ConfirmationProvider>
+        </UIProvider>,
+      );
+    rerenderWith({ ...TASK, state: GenericTaskState.Active });
+    const retry = await screen.findByRole('button', { name: 'Retry Unpause' });
+    expect(retry).toBeEnabled();
+
+    // Another task does not inherit the retry.
+    rerenderWith({ ...TASK, state: GenericTaskState.Active, taskId: 'task-2' });
+    expect(screen.getByRole('button', { name: 'Unpause' })).toBeDisabled();
+    rerenderWith({ ...TASK, state: GenericTaskState.Active });
+
+    await user.click(screen.getByRole('button', { name: 'Retry Unpause' }));
+    buttons = await screen.findAllByRole('button', { name: 'Retry Unpause' });
+    await user.click(buttons[buttons.length - 1]);
+    await waitFor(() => expect(unpauseGenericTask).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(unpauseGenericTask).mock.calls[0][0]).toStrictEqual({ taskId: 'task-1' });
+    expect(vi.mocked(unpauseGenericTask).mock.calls[1][0]).toStrictEqual({ taskId: 'task-1' });
+
+    // After the retry succeeded, an active task cannot be unpaused again.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Unpause' })).toBeDisabled());
+  });
+
   it("reports the master's reason when an action is refused", async () => {
     const refusal = Object.assign(new Error('Request unpauseGenericTask failed.'), {
       publicMessage: 'cannot unpause task task-1 as it is not in paused state',
