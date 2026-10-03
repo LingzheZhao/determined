@@ -25,7 +25,8 @@
       picker.
 
    -  **Templates**: picking a template now also fills in its resource pool and slots, which the
-      master does not apply from a template for shells and JupyterLabs.
+      master does not apply from a template for shells and JupyterLabs. The template of your last
+      launch is preselected, with your last slots.
 
 -  WebUI: **Launch Again** on your own shell and JupyterLab rows in the task list opens the launch
    form filled from that task's config. Administrators see it on every shell and JupyterLab.

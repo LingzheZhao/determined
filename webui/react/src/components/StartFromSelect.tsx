@@ -250,25 +250,17 @@ const StartFromSelect: React.FC<Props> = ({
   }, [autoSelect, initialTask, onAutoSelected, onChange, resolveTask]);
 
   // Otherwise preselect the template of the user's last launch once the
-  // templates load, unless something was picked already.
+  // templates load, unless something was picked already. Only the picker is
+  // set: the form already holds the user's last pool and slots, so the
+  // template's resources are not copied in as they are on an explicit pick.
   useEffect(() => {
     if (!autoSelect || initialTask || !templates) return;
     onAutoSelected();
     if (value || !defaultTemplate) return;
-    const template = templates.find((item) => item.name === defaultTemplate);
-    if (!template) return;
-    onChange?.(startFromTemplateValue(template.name));
-    onResolve({ kind: 'template', template });
-  }, [
-    autoSelect,
-    defaultTemplate,
-    initialTask,
-    onAutoSelected,
-    onChange,
-    onResolve,
-    templates,
-    value,
-  ]);
+    if (templates.some((item) => item.name === defaultTemplate)) {
+      onChange?.(startFromTemplateValue(defaultTemplate));
+    }
+  }, [autoSelect, defaultTemplate, initialTask, onAutoSelected, onChange, templates, value]);
 
   return (
     <div>

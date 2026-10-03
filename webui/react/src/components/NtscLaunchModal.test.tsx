@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import Button from 'hew/Button';
 import { useModal } from 'hew/Modal';
 import { DefaultTheme, UIProvider } from 'hew/Theme';
-import { Loadable } from 'hew/utils/loadable';
+import { Loadable, NotLoaded } from 'hew/utils/loadable';
 import React, { useEffect } from 'react';
 import { BrowserRouter } from 'react-router-dom';
 
@@ -12,6 +12,7 @@ import { ThemeProvider } from 'components/ThemeProvider';
 import { SettingsProvider } from 'hooks/useSettingsProvider';
 import authStore from 'stores/auth';
 import userStore from 'stores/users';
+import userSettings from 'stores/userSettings';
 import { CommandState, CommandTask, CommandType, RawJson, WorkspaceState } from 'types';
 import { listLaunchHistory, recordLaunch } from 'utils/launchHistory';
 
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   getShellConfig: vi.fn(),
   getShells: vi.fn(),
   getTaskTemplates: vi.fn(),
+  getUserSetting: vi.fn(),
   launchJupyterLab: vi.fn(),
   launchShell: vi.fn(),
   makeToast: vi.fn(),
@@ -43,7 +45,7 @@ vi.mock('services/api', () => ({
   getShells: mocks.getShells,
   getTaskTemplates: mocks.getTaskTemplates,
   getUsers: () => Promise.resolve({ users: [] }),
-  getUserSetting: () => Promise.resolve({ settings: [] }),
+  getUserSetting: mocks.getUserSetting,
   getWorkspaces: () => Promise.resolve({ workspaces: [] }),
   launchJupyterLab: mocks.launchJupyterLab,
   launchShell: mocks.launchShell,
@@ -234,6 +236,7 @@ describe('NtscLaunchModal', () => {
     mocks.launchJupyterLab.mockReset();
     mocks.launchShell.mockReset().mockResolvedValue(launchedShell);
     mocks.makeToast.mockReset();
+    mocks.getUserSetting.mockReset().mockResolvedValue({ settings: [] });
     mocks.openCommandResponse.mockReset();
     mocks.previewJupyterLab.mockReset().mockImplementation(previewFor);
     userStore.updateCurrentUser({ id: USER_ID, isActive: true, isAdmin: false, username: 'me' });
@@ -462,6 +465,33 @@ describe('NtscLaunchModal', () => {
       await launch(user);
       await waitFor(() => expect(onLaunched).toHaveBeenCalledWith(launchedShell));
     });
+  });
+
+  it('restores the last template and slots without applying the template’s resources', async () => {
+    mocks.getUserSetting.mockResolvedValue({
+      settings: [
+        { key: 'template', storagePath: 'shell-launch', value: JSON.stringify('gpu-template') },
+        { key: 'slots', storagePath: 'shell-launch', value: JSON.stringify(2) },
+      ],
+    });
+    const stopPolling = userSettings.startPolling();
+    try {
+      await waitFor(() => expect(Loadable.isLoaded(userSettings.getAll().get())).toBe(true));
+      const { onLaunched, user } = await setup();
+      expect(await screen.findByTitle('gpu-template')).toBeInTheDocument();
+      await launch(user);
+
+      await waitFor(() => expect(onLaunched).toHaveBeenCalled());
+      expect(mocks.launchShell).toHaveBeenCalledWith({
+        config: { description: undefined, resources: { resource_pool: undefined, slots: 2 } },
+        templateName: 'gpu-template',
+        workspaceId: WORKSPACE.id,
+      });
+    } finally {
+      stopPolling();
+      // Do not leak loaded settings into the other tests.
+      userSettings._forUseSettingsOnly().set(NotLoaded);
+    }
   });
 
   describe('JupyterLab', () => {
