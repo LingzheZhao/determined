@@ -87,10 +87,12 @@
 
 -  Generic tasks: The scheduler now starts a generic task's allocation with the task's saved priority
    and weight, also after an unpause or a master restart, instead of the resource pool's defaults.
-   Setting a weight that is not a positive finite number is refused.
+   A priority outside 1 to 99, a weight that is not a positive finite number, or a priority beyond
+   the task config policy's limit for NTSC workloads is refused, at creation as in later updates.
 
--  Generic tasks: Retrying an unpause after the task's new allocation started no longer drops the
-   allocation's scheduling group, which left a running task without a group in the scheduler.
+-  Generic tasks: An unpaused task no longer loses its scheduling group. Retrying an unpause after the
+   new allocation started, or the cleanup of a pause finishing after the unpause, dropped the group
+   of the running allocation. A paused task now keeps its scheduling registration until it ends.
 
 -  Generic tasks: Killing a paused generic task, or a tree whose root is paused, now cancels it and
    kills the rest of the tree. Previously the kill failed on the paused task's missing allocation,

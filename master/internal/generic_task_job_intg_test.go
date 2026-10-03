@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/determined-ai/determined/master/internal/configpolicy"
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/rm"
 	"github.com/determined-ai/determined/master/internal/rm/tasklist"
@@ -363,4 +364,121 @@ func TestGetGenericTasksFiltersByOwnerStateAndParent(t *testing.T) {
 		States: []taskv1.GenericTaskState{taskv1.GenericTaskState_GENERIC_TASK_STATE_UNSPECIFIED},
 	})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+// watchJobStopped registers a delete callback on the job's priority registration, as the resource
+// managers do (OnDelete → JobStopped), and returns a channel closed when it fires.
+func watchJobStopped(jobID model.JobID) <-chan struct{} {
+	stopped := make(chan struct{})
+	tasklist.GroupPriorityChangeRegistry.OnDelete(jobID, func() { close(stopped) })
+	return stopped
+}
+
+func requireNotStopped(t *testing.T, stopped <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-stopped:
+		t.Fatal("the resource managers were told that the job stopped")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func requireStopped(t *testing.T, stopped <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("the resource managers were not told that the job stopped")
+	}
+}
+
+// A pause must not end the job's priority registration: the resource managers drop the
+// scheduling group asynchronously when it is deleted, which could land after an unpause has
+// registered the next allocation.
+func TestGenericTaskPauseKeepsSchedulingRegistrationUntilTheTaskEnds(t *testing.T) {
+	api, owner, ctx := setupAPITest(t, nil)
+	_, jobID, j := addGenericTaskJobForTest(ctx, t, api, owner, "pausable")
+	first := j.allocationID
+	stopped := watchJobStopped(jobID)
+
+	genericTaskAllocationExited(jobID, first, true) // paused
+	requireNotStopped(t, stopped)
+	_, ok := tasklist.GroupPriorityChangeRegistry.Load(jobID)
+	require.True(t, ok)
+
+	second := model.AllocationID(string(j.taskID) + ".2")
+	require.NoError(t, registerGenericTaskJob(api.m.rm, j.taskID, second, jobID, j.spec))
+	genericTaskAllocationExited(jobID, first, false) // a late exit of the old allocation
+	requireNotStopped(t, stopped)
+
+	genericTaskAllocationExited(jobID, second, false) // the task ends
+	requireStopped(t, stopped)
+	_, ok = tasklist.GroupPriorityChangeRegistry.Load(jobID)
+	require.False(t, ok)
+}
+
+func TestKillPausedGenericTaskEndsItsSchedulingRegistration(t *testing.T) {
+	api, owner, ctx := setupAPITest(t, nil)
+	taskID := addGenericTaskForAuthZTest(ctx, t, owner, 1, nil, model.TaskStatePaused)
+	allocationID, spec, err := getGenericTaskSpec(ctx, taskID)
+	require.NoError(t, err)
+	spec.GenericTaskConfig = model.DefaultConfigGenericTaskConfig(nil)
+	spec.GenericTaskConfig.Resources.SetResourcePool("default")
+	require.NoError(t, registerGenericTaskJob(
+		api.m.rm, taskID, model.AllocationID(allocationID), spec.JobID, spec))
+	genericTaskAllocationExited(spec.JobID, model.AllocationID(allocationID), true)
+	stopped := watchJobStopped(spec.JobID)
+
+	service := &lifecycleAllocationService{running: map[model.AllocationID]bool{}}
+	oldService := task.DefaultService
+	task.DefaultService = service
+	t.Cleanup(func() { task.DefaultService = oldService })
+	_, err = api.KillGenericTask(ctx, &apiv1.KillGenericTaskRequest{TaskId: taskID.String()})
+	require.NoError(t, err)
+	requireStopped(t, stopped)
+}
+
+func TestCreateGenericTaskRefusesInvalidSchedulingParameters(t *testing.T) {
+	api, _, ctx := setupAPITest(t, nil)
+	service := &captureAllocationService{}
+	oldService := task.DefaultService
+	task.DefaultService = service
+	t.Cleanup(func() { task.DefaultService = oldService })
+	create := func(resources string) error {
+		_, err := api.CreateGenericTask(ctx, &apiv1.CreateGenericTaskRequest{
+			Config: "entrypoint: [\"true\"]\nresources:\n  slots: 0\n" + resources,
+		})
+		return err
+	}
+	for _, resources := range []string{
+		"  weight: 0\n", "  weight: -1\n", "  priority: 0\n", "  priority: 100\n",
+	} {
+		require.Equal(t, codes.InvalidArgument, status.Code(create(resources)), resources)
+	}
+
+	// The NTSC priority limit of the task config policy applies at creation, as to updates.
+	admin, err := user.ByUsername(ctx, "admin")
+	require.NoError(t, err)
+	require.NoError(t, configpolicy.SetTaskConfigPolicies(ctx, &model.TaskConfigPolicies{
+		WorkloadType: model.NTSCType, LastUpdatedBy: admin.ID,
+		Constraints: ptrs.Ptr(`{"priority_limit": 42}`),
+	}))
+	t.Cleanup(func() {
+		require.NoError(t, configpolicy.DeleteConfigPolicies(context.Background(), nil, model.NTSCType))
+	})
+	smallerHigher, err := api.m.rm.SmallerValueIsHigherPriority()
+	require.NoError(t, err)
+	beyond, within := "  priority: 1\n", "  priority: 50\n"
+	if !smallerHigher {
+		beyond, within = within, beyond
+	}
+	require.Equal(t, codes.InvalidArgument, status.Code(create(beyond)))
+	require.Empty(t, service.reqs, "no task may be started by a refused create")
+	require.NoError(t, create(within))
+}
+
+func TestGetGenericTasksRefusesANegativeLimit(t *testing.T) {
+	api, _, ctx := setupAPITest(t, nil)
+	_, err := api.GetGenericTasks(ctx, &apiv1.GetGenericTasksRequest{Limit: -1})
+	require.Equal(t, codes.InvalidArgument, status.Code(err), "%v", err)
 }

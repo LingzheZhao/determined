@@ -110,15 +110,41 @@ func (j *genericTaskJob) applySchedulingLocked() error {
 	return nil
 }
 
-// unregisterGenericTaskJob removes a generic task from the job service and the priority-change
-// registry when its allocation exits. It does nothing if the job is not registered or is registered
-// for another allocation of the task (an unpause started a new one).
-func unregisterGenericTaskJob(jobID model.JobID, allocationID model.AllocationID) {
+// genericTaskAllocationExited updates a generic task's job when one of its allocations exits. It
+// does nothing if the job is registered for another allocation of the task (an unpause started a
+// new one).
+//
+// A paused task leaves the job service but keeps its priority-change registration. Deleting the
+// registration tells the resource managers that the job stopped, and they act on that
+// asynchronously (OnDelete → JobStopped, which drops the job's scheduling group by job ID), so a
+// deletion at pause time could drop the group of the allocation that a quick unpause registers.
+// The registration ends only when the task does: any other exit, or endGenericTaskJob.
+func genericTaskAllocationExited(jobID model.JobID, allocationID model.AllocationID, paused bool) {
 	genericTaskJobsMu.Lock()
 	defer genericTaskJobsMu.Unlock()
 	if j, ok := genericTaskJobs[jobID]; !ok || j.allocationID != allocationID {
 		return
 	}
+	jobservice.DefaultService.UnregisterJob(jobID)
+	if paused {
+		return
+	}
+	delete(genericTaskJobs, jobID)
+	_ = tasklist.GroupPriorityChangeRegistry.Delete(jobID)
+}
+
+// unregisterGenericTaskJob ends the job of an allocation that exits for good, or that failed to
+// start.
+func unregisterGenericTaskJob(jobID model.JobID, allocationID model.AllocationID) {
+	genericTaskAllocationExited(jobID, allocationID, false)
+}
+
+// endGenericTaskJob ends the job of a task that ends without an allocation exit, such as a paused
+// task that is killed. Callers hold genericTaskMutation, so no unpause registers a new allocation
+// meanwhile.
+func endGenericTaskJob(jobID model.JobID) {
+	genericTaskJobsMu.Lock()
+	defer genericTaskJobsMu.Unlock()
 	delete(genericTaskJobs, jobID)
 	jobservice.DefaultService.UnregisterJob(jobID)
 	_ = tasklist.GroupPriorityChangeRegistry.Delete(jobID)

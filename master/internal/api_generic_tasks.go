@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	stderrors "errors"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/determined-ai/determined/master/internal/api/apiutils"
 	"github.com/determined-ai/determined/master/internal/authz"
 	"github.com/determined-ai/determined/master/internal/command"
+	"github.com/determined-ai/determined/master/internal/configpolicy"
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/grpcutil"
 	"github.com/determined-ai/determined/master/internal/project"
@@ -34,6 +36,7 @@ import (
 	"github.com/determined-ai/determined/master/pkg/logger"
 	"github.com/determined-ai/determined/master/pkg/model"
 	"github.com/determined-ai/determined/master/pkg/ptrs"
+	"github.com/determined-ai/determined/master/pkg/schemas/expconf"
 	"github.com/determined-ai/determined/master/pkg/tasks"
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
 	"github.com/determined-ai/determined/proto/pkg/projectv1"
@@ -128,6 +131,14 @@ func (a *apiServer) getGenericTaskLaunchParameters(
 			codes.InvalidArgument, "yaml unmarshaling generic task config: %s", err)
 	}
 	workDirInDefaults := taskConfig.WorkDir
+
+	// Check the user's scheduling parameters before any default is applied, as updates through the
+	// job queue are checked, including the workspace's task config policy for NTSC workloads.
+	if err := validateGenericTaskScheduling(
+		ctx, genericTaskSpec.WorkspaceID, taskConfig.Resources, resources.Slots, a.m.rm,
+	); err != nil {
+		return nil, nil, nil, err
+	}
 
 	// Copy discovered (default) resource pool name and slot count.
 
@@ -665,6 +676,9 @@ func (a *apiServer) KillGenericTask(
 				if err := task.DefaultService.Signal(intendedID, task.KillAllocation, "user requested task kill"); err != nil {
 					errs = append(errs, err)
 				}
+			} else if childTask.JobID != nil {
+				// The resumed allocation never started, so no exit hook ends the job.
+				endGenericTaskJob(*childTask.JobID)
 			}
 			continue
 		}
@@ -684,6 +698,9 @@ func (a *apiServer) KillGenericTask(
 		// No allocation is running, e.g. the task is paused: no exit hook will finish the kill.
 		if err := finishGenericTaskKillWithoutAllocation(ctx, childTask.TaskID); err != nil {
 			errs = append(errs, err)
+		}
+		if childTask.JobID != nil {
+			endGenericTaskJob(*childTask.JobID)
 		}
 	}
 	if len(errs) > 0 {
@@ -774,6 +791,30 @@ func (a *apiServer) PauseGenericTask(
 		}
 	}
 	return &apiv1.PauseGenericTaskResponse{}, nil
+}
+
+// validateGenericTaskScheduling refuses a priority outside 1..99, a weight that is not positive
+// and finite, and a priority or slot count that the workspace's task config policy forbids.
+func validateGenericTaskScheduling(
+	ctx context.Context,
+	workspaceID int,
+	res expconf.ResourcesConfig,
+	slots int,
+	resourceManager rm.ResourceManager,
+) error {
+	if p := res.RawPriority; p != nil && (*p < 1 || *p > 99) {
+		return status.Errorf(codes.InvalidArgument, "resources.priority must be between 1 and 99, got %d", *p)
+	}
+	if w := res.RawWeight; w != nil && (*w <= 0 || math.IsNaN(*w) || math.IsInf(*w, 0)) {
+		return status.Errorf(codes.InvalidArgument,
+			"resources.weight must be a positive finite number, got %v", *w)
+	}
+	if err := configpolicy.CheckNTSCConstraints(ctx, workspaceID, model.CommandConfig{
+		Resources: model.ResourcesConfig{Slots: slots, MaxSlots: res.RawMaxSlots, Priority: res.RawPriority},
+	}, resourceManager); err != nil {
+		return status.Errorf(codes.InvalidArgument, "failed constraint check: %v", err)
+	}
+	return nil
 }
 
 // genericTaskNoPause reports whether a task cannot be paused. Unpausing runs a task's entrypoint

@@ -45,6 +45,9 @@ type genericTaskListRow struct {
 func (a *apiServer) GetGenericTasks(
 	ctx context.Context, req *apiv1.GetGenericTasksRequest,
 ) (*apiv1.GetGenericTasksResponse, error) {
+	if err := grpcutil.ValidateRequest(grpcutil.ValidateLimit(req.Limit)); err != nil {
+		return nil, err
+	}
 	curUser, _, err := grpcutil.GetUser(ctx)
 	if err != nil {
 		return nil, err

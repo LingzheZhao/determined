@@ -142,7 +142,8 @@ func getGenericTaskOnAllocationExit(
 ) func(ae *task.AllocationExited) {
 	return func(ae *task.AllocationExited) {
 		syslog := logrus.WithField("component", "genericTask").WithFields(logCtx.Fields())
-		defer unregisterGenericTaskJob(jobID, allocationID)
+		paused := false
+		defer func() { genericTaskAllocationExited(jobID, allocationID, paused) }()
 		defer func() {
 			if err := finishCanceledGenericTaskResume(taskID, allocationID); err != nil {
 				syslog.WithError(err).Error("finishing canceled task resume")
@@ -160,6 +161,7 @@ func getGenericTaskOnAllocationExit(
 			syslog.WithError(err).Error("checking if a task is paused")
 		}
 		if isPaused {
+			paused = true
 			err = db.SetPausedState(taskID, time.Now().UTC())
 			if err != nil {
 				syslog.WithError(err).Error("setting task to paused state")
