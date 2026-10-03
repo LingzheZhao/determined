@@ -64,3 +64,8 @@
    generic task, HTTP 400 for a task in a state that does not allow the change (for example pausing
    a paused task, or a task with ``no_pause``), and HTTP 409 while another kill, pause or unpause, or
    an unpause of the same tree, is in progress.
+
+-  Generic tasks: A scheduler with preemption enabled no longer preempts generic tasks. A preempted
+   generic task ended as completed or errored instead of paused, so it was never resumed, even with
+   ``no_pause``. Generic tasks still receive the preemption signal and their ``preemption_timeout``
+   when they are paused.

@@ -646,7 +646,7 @@ func (a *allocation) resourcesAllocated(msg *sproto.ResourcesAllocated) error {
 		return errors.Wrap(err, "recording task queued stats")
 	}
 
-	if a.req.Preemption.Preemptible {
+	if a.req.Preemption.StopsGracefully() {
 		preemptible.Register(a.req.AllocationID.String())
 		a.closers = append(a.closers, func() {
 			preemptible.Unregister(a.req.AllocationID.String())
@@ -965,7 +965,7 @@ func (a *allocation) tryExitOrTerminate(reason string, forcePreemption bool) {
 	}
 
 	switch {
-	case a.req.Preemption.Preemptible && coalesceBool(a.model.IsReady, false) || forcePreemption:
+	case a.req.Preemption.StopsGracefully() && coalesceBool(a.model.IsReady, false) || forcePreemption:
 		a.preempt(reason)
 	default:
 		a.kill(reason)
@@ -1197,7 +1197,7 @@ func (a *allocation) calculateExitStatus(reason string) (
 	switch {
 	case a.killedWhileRunning:
 		return fmt.Sprintf("allocation killed after %s", reason), false, logrus.InfoLevel, nil
-	case a.req.Preemption.Preemptible && preemptible.Acknowledged(a.req.AllocationID.String()):
+	case a.req.Preemption.StopsGracefully() && preemptible.Acknowledged(a.req.AllocationID.String()):
 		return fmt.Sprintf("allocation preempted after %s", reason), false, logrus.InfoLevel, nil
 	case a.exitErr == nil && len(a.resources.exited()) > 0:
 		return fmt.Sprintf("allocation stopped early after %s", reason), true, logrus.InfoLevel, nil

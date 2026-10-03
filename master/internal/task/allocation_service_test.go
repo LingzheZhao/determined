@@ -413,6 +413,40 @@ func TestPreemption(t *testing.T) {
 	}
 }
 
+// A graceful-stop allocation that the scheduler may not preempt, such as a generic task, still gets
+// the preemption signal when it is terminated, e.g. by a pause.
+func TestGracefulStopWithoutPreemptible(t *testing.T) {
+	closeDB, _, id, q, exitFuture := requireStarted(t, func(ar *sproto.AllocateRequest) {
+		ar.Preemption.Preemptible = false
+		ar.Preemption.GracefulStop = true
+	})
+	defer closeDB()
+	defer requireKilled(t, id, exitFuture)
+
+	rID, _ := requireAssigned(t, id, q)
+	q.Put(&sproto.ResourcesStateChanged{
+		ResourcesID:      rID,
+		ResourcesState:   sproto.Running,
+		ResourcesStarted: &sproto.ResourcesStarted{},
+	})
+	requireState(t, id, model.AllocationStateRunning)
+	require.NoError(t, DefaultService.SetReady(context.Background(), id))
+
+	require.NoError(t, DefaultService.Signal(id, TerminateAllocation, "user requested pause"))
+	preempted, err := DefaultService.WatchPreemption(context.Background(), id)
+	require.NoError(t, err)
+	require.True(t, preempted)
+	require.NoError(t, DefaultService.AckPreemption(context.Background(), id))
+
+	q.Put(&sproto.ResourcesStateChanged{
+		ResourcesID:      rID,
+		ResourcesState:   sproto.Terminated,
+		ResourcesStopped: &sproto.ResourcesStopped{},
+	})
+	exit := requireTerminated(t, id, exitFuture)
+	require.NoError(t, exit.Err)
+}
+
 func TestSignalBeforeLaunch(t *testing.T) {
 	type args struct {
 		sig AllocationSignal

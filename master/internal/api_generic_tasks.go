@@ -370,7 +370,7 @@ func (a *apiServer) CreateGenericTask(
 
 		ProxyPorts: sproto.NewProxyPortConfig(genericTaskSpec.ProxyPorts(), taskID),
 		Preemption: sproto.PreemptionConfig{
-			Preemptible:     true,
+			GracefulStop:    true,
 			TimeoutDuration: time.Duration(genericTaskSpec.GenericTaskConfig.PreemptionTimeout) * time.Second,
 		},
 

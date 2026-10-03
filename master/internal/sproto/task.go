@@ -64,7 +64,12 @@ type (
 
 	// PreemptionConfig configures task preemption.
 	PreemptionConfig struct {
-		Preemptible     bool
+		// Preemptible allows the scheduler to preempt the allocation for other work. It implies
+		// GracefulStop.
+		Preemptible bool
+		// GracefulStop makes the allocation receive preemption signals and stop gracefully,
+		// within TimeoutDuration, when it is terminated, without letting the scheduler preempt it.
+		GracefulStop    bool
 		TimeoutDuration time.Duration
 	}
 
@@ -403,4 +408,10 @@ func NewProxyPortConfig(input expconf.ProxyPortsConfig, taskID model.TaskID) []*
 	}
 
 	return out
+}
+
+// StopsGracefully returns whether a terminated allocation is asked to stop through its preemption
+// signal and given TimeoutDuration to exit, instead of being killed at once.
+func (p PreemptionConfig) StopsGracefully() bool {
+	return p.Preemptible || p.GracefulStop
 }

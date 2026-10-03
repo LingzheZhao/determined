@@ -377,7 +377,7 @@ func (a *apiServer) startGenericTaskResumeAllocation(
 		SlotsNeeded:         *spec.GenericTaskConfig.Resources.Slots(),
 		ResourcePool:        spec.GenericTaskConfig.Resources.ResourcePool(),
 		FittingRequirements: sproto.FittingRequirements{SingleAgent: singleNode},
-		Preemption: sproto.PreemptionConfig{Preemptible: true,
+		Preemption: sproto.PreemptionConfig{GracefulStop: true,
 			TimeoutDuration: time.Duration(spec.GenericTaskConfig.PreemptionTimeout) * time.Second},
 		Restore: restore,
 	}, a.m.db, a.m.rm, spec,

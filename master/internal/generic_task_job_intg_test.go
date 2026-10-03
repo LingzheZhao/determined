@@ -166,7 +166,8 @@ environment:
 	require.Len(t, service.reqs, 1)
 	req := service.reqs[0]
 	require.Equal(t, "notebook-server", req.Name)
-	require.True(t, req.Preemption.Preemptible, "a paused task must get its preemption timeout")
+	require.False(t, req.Preemption.Preemptible, "the scheduler must not preempt a generic task")
+	require.True(t, req.Preemption.GracefulStop, "a paused task must get its preemption timeout")
 	ports := map[int]bool{}
 	for _, p := range req.ProxyPorts {
 		ports[p.Port] = true
